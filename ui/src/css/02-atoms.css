@@ -1,0 +1,74 @@
+/* ---- §2 原子 Atoms ------------------------------------------------- */
+/* 2.1 布局原子 */
+.row{display:flex;align-items:center}
+.col{display:flex;flex-direction:column}
+.wrap{flex-wrap:wrap}
+.grow{flex:1;min-width:0}
+.center{justify-content:center}
+.gap4{gap:4px}.gap6{gap:6px}.gap8{gap:8px}.gap10{gap:10px}.gap12{gap:12px}
+/* 2.2 文本原子 */
+.mut{color:var(--fg2)}.dim{color:var(--fg3)}
+.strong{font-weight:700}
+.small{font-size:12px}.tiny{font-size:11px}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.num{font-variant-numeric:tabular-nums}
+.trunc{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* 2.3 表面原子（扁平面板 / 分隔线） */
+.metal{background:var(--bg2);border:1px solid var(--line);border-radius:var(--radius-s)}
+.divider{height:1px;flex:none;background:var(--line);margin:10px 0}
+.divider.v{width:1px;height:auto;align-self:stretch;margin:0 10px}
+/* 2.4 标记原子 */
+.pill{display:inline-flex;align-items:center;gap:5px;padding:2px 9px;border-radius:999px;
+  font-size:11px;font-weight:600;letter-spacing:.02em;
+  background:var(--raise);color:var(--fg2);border:1px solid var(--line)}
+.pill.accent{background:var(--accent-soft);color:var(--accent);border-color:transparent}
+.pill.ok{color:var(--ok)}.pill.bad{color:var(--bad)}.pill.warn{color:var(--warn)}.pill.run{color:var(--run)}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--fg3);flex:none}
+.dot.ok{background:var(--ok)}.dot.bad{background:var(--bad)}.dot.run{background:var(--run)}
+.dot.warn{background:var(--warn)}
+.kbd{font-family:var(--mono);font-size:10.5px;padding:1px 5px;border-radius:4px;
+  background:var(--raise);border:1px solid var(--line);color:var(--fg2)}
+.badge{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;
+  padding:0 5px;border-radius:999px;color:#fff;font-size:10px;font-weight:700;background:var(--accent)}
+/* 2.5 按钮原子（扁平；primary = 黑白反转，accent 只做高亮） */
+.btn{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:var(--radius-s);
+  background:var(--raise);border:1px solid var(--line);color:var(--fg);
+  transition:background var(--dur) var(--ease),border-color var(--dur) var(--ease),opacity var(--dur) var(--ease)}
+.btn:hover{background:var(--line);border-color:var(--line2)}
+.btn:active{background:var(--line2)}
+.btn.primary{background:var(--fg);color:var(--bg);border-color:var(--fg);font-weight:600}
+.btn.primary:hover{opacity:.85;background:var(--fg);border-color:var(--fg)}
+.btn.primary:active{opacity:.7}
+.btn.ghost{background:transparent;border-color:transparent;color:var(--fg2)}
+.btn.ghost:hover{background:var(--raise);color:var(--fg)}
+.btn.danger{color:var(--bad);border-color:transparent;background:transparent}
+.btn.danger:hover{background:color-mix(in srgb,var(--bad) 10%,transparent)}
+.btn.sm{padding:3px 8px;font-size:12px}
+.btn[disabled]{opacity:.45;pointer-events:none}
+/* 2.6 表单原子（细边输入槽，焦点蓝环） */
+.field{display:flex;flex-direction:column;gap:4px}
+.field label{font-size:11px;color:var(--fg2);font-weight:600;letter-spacing:.02em}
+input[type=text],input[type=password],input[type=number],textarea,select{
+  width:100%;padding:7px 10px;border-radius:var(--radius-s);
+  background:var(--bg2);border:1px solid var(--line);color:var(--fg);
+  transition:border-color var(--dur) var(--ease),box-shadow var(--dur) var(--ease)}
+input:focus,textarea:focus,select:focus{outline:none;border-color:var(--accent);
+  box-shadow:0 0 0 3px var(--accent-soft)}
+input[type=range]{width:100%;accent-color:var(--accent)}
+textarea{resize:vertical;font-family:inherit}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:var(--radius-s);
+  overflow:hidden;background:var(--bg2)}
+.seg button{padding:5px 11px;font-size:12px;color:var(--fg2);border-right:1px solid var(--line);
+  transition:all var(--dur) var(--ease)}
+.seg button:last-child{border-right:none}
+.seg button.on{background:var(--accent-soft);color:var(--accent);font-weight:650}
+.seg button:hover:not(.on){background:var(--raise)}
+.switch{position:relative;width:38px;height:21px;border-radius:999px;
+  background:var(--line2);flex:none;transition:background var(--dur) var(--ease)}
+.switch::after{content:"";position:absolute;top:3px;left:3px;width:15px;height:15px;border-radius:50%;
+  background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.25);transition:transform var(--dur) var(--ease)}
+.switch.on{background:var(--accent)}
+.switch.on::after{transform:translateX(17px)}
+/* 2.7 卡片原子 */
+.card{background:var(--bg2);border:1px solid var(--line);border-radius:var(--radius);padding:13px}
+.card+.card{margin-top:10px}

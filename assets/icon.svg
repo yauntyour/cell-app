@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500" width="100%" height="100%">
+  <!-- cell 品牌标识：外框正方形 + 内部「阶梯折线」（拐点落在 1/4、2/4、3/4 上）
+       本文件是应用图标（icon.ico）的栅格化来源：渐变底板 + 白色描边。
+       WebUI 内的品牌 logo 用同一组坐标，但描边取 currentColor（随主题深浅）。 -->
+  <defs>
+    <linearGradient id="cellGrad" gradientUnits="userSpaceOnUse" x1="50" y1="50" x2="450" y2="450">
+      <stop offset="0%" stop-color="#2563EB" />
+      <stop offset="100%" stop-color="#7C3AED" />
+    </linearGradient>
+  </defs>
+
+  <!-- 底板：品牌渐变圆角方块 -->
+  <rect width="500" height="500" rx="112" fill="url(#cellGrad)" />
+
+  <!-- 标识本体：原始坐标 50..450 等比缩到 90..410（×0.8 + 90），白色描边 -->
+  <g fill="none" stroke="#ffffff" stroke-width="14" stroke-linejoin="miter" stroke-linecap="square">
+    <rect x="90" y="90" width="320" height="320" />
+    <path d="M 170 170 L 170 330 L 250 330 L 250 170 L 330 170 L 330 410" />
+  </g>
+</svg>

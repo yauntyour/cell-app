@@ -1,0 +1,81 @@
+/* =====================================================================
+   §0 设计令牌 —— 与 cell.cpp /export 导出页同一套
+
+   默认外观就是参考页（导出页）的形式：`:root` 是浅色，深浅跟随系统
+   （prefers-color-scheme，导出页亦然），没有任何内置主题可切换。
+   角色令牌（--user/--assistant/--tool/--system/--other）与排版令牌
+   （--line-soft/--code-bg/--link）逐值抄自导出页，保证「界面里的会话」
+   与「导出的会话」同源。
+
+   两组令牌的分工：
+     · 导出页令牌（--bg/--fg/--line/--line-soft/--code-bg/--link/--ok/
+       --run/--bad/--user/--assistant/--tool/--system/--other）：消息流的
+       语义色，正文与角色点只用它们。
+     · 外壳令牌（--bg2/--panel/--raise/--line2/--fg2/--fg3/--accent/…）：
+       桌面壳的骨架（侧栏 / 标签栏 / dock / 弹窗 / 浮窗），全部由上面这组
+       中性色派生，不引入第二套色相；--accent 就等于 --link，是界面里
+       唯一的高亮色。
+   第三方主题（<exe 目录>/.cell/theme/<name>/theme.css）由 Theme 模块注入
+   <style id="theme-ext">，位置在本文件之后，同特异性下后写者胜——因此只
+   重定义变量即可完整换肤，深浅也不例外。
+   ===================================================================== */
+:root{
+  color-scheme:light dark;
+  /* ---- 导出页原值 · 浅色 ------------------------------------------- */
+  --bg:#ffffff;
+  --fg:#1f2328; --fg2:#5c6570; --fg3:#8b939c;   /* = --fg-dim / --fg-faint */
+  --line:#e7e9ec; --line-soft:#f1f2f4; --code-bg:#f6f7f8;
+  --link:#1a6ee5;
+  --ok:#0f7b4f; --run:#a8730c; --bad:#c0392b;
+  --user:#3b82f6; --assistant:#10a37f; --tool:#7c6cf0;
+  --system:#c9871f; --other:#a8b0b9;
+
+  /* ---- 外壳派生 · 浅色（全部取自上面这组中性色） ------------------- */
+  --bg2:#fafbfc; --bg3:#f6f7f8;             /* 面板 / 代码底 */
+  --panel:#fafbfc; --panel2:#ffffff;         /* 侧栏·导航 / 浮层 */
+  --raise:#f1f2f4;                           /* 悬停 = --line-soft */
+  --line2:#d7dade;                           /* 强边框：输入槽 / 悬停 */
+  --accent:#1a6ee5; --accent-soft:rgba(26,110,229,.09);
+  --warn:#a8730c;                            /* = --run（导出页的琥珀） */
+  --shadow:0 8px 24px rgba(31,35,40,.10),0 1px 2px rgba(31,35,40,.06);
+  --shadow-sm:0 1px 2px rgba(31,35,40,.06);
+
+  /* ---- 形状 · 字体 · 动效 ------------------------------------------ */
+  --radius:10px; --radius-s:6px;             /* 导出页 .fbox / pre.code */
+  --mono:ui-monospace,"Cascadia Mono","JetBrains Mono",SFMono-Regular,Consolas,"Liberation Mono",monospace;
+  --sans:system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+  --ease:cubic-bezier(.22,.61,.36,1);
+  --dur:180ms;
+  /* ---- 流式排版：与导出页 .stream / .msg + .msg 同一节奏 -------------- */
+  --stream-pad:26px; --stream-gap:26px;
+  /* 正文列宽（消息流使用的最大值） */
+  --chat-max:1180px;
+  /* 悬浮输入卡（含斜杠面板）的宽度上限：比正文列窄，只影响输入区，
+     消息列不受影响（用户反馈输入栏贴满中区显得过宽） */
+  --composer-max:760px;
+  /* 悬浮输入卡的高度，由 #rzComposer 拖动写入（见 03-layout.js） */
+  --composer-h:148px;
+}
+
+/* 深色跟随系统：与导出页的 @media (prefers-color-scheme:dark) 同一份取值。
+   第三方主题的 <style> 追加在本文件之后，同特异性下覆盖这里的每一个值。 */
+@media (prefers-color-scheme:dark){
+  :root{
+    --bg:#0f1115;
+    --fg:#e7e9ec; --fg2:#a2a9b4; --fg3:#767e88;
+    --line:#23262c; --line-soft:#1c1f24; --code-bg:#16181d;
+    --link:#79b0f7;
+    --ok:#4bbf8a; --run:#dcae52; --bad:#e2705f;
+    --user:#6aa8f5; --assistant:#3ecfa4; --tool:#a795fb;
+    --system:#e0b062; --other:#767e88;
+
+    --bg2:#14171b; --bg3:#16181d;
+    --panel:#14171b; --panel2:#1a1e23;
+    --raise:#1c1f24;
+    --line2:#333840;
+    --accent:#79b0f7; --accent-soft:rgba(121,176,247,.14);
+    --warn:#dcae52;
+    --shadow:0 8px 24px rgba(0,0,0,.50),0 1px 2px rgba(0,0,0,.40);
+    --shadow-sm:0 1px 2px rgba(0,0,0,.40);
+  }
+}

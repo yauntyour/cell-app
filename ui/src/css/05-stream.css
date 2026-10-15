@@ -1,0 +1,223 @@
+/* =====================================================================
+   §5 消息流（会话正文）—— 与 cell.cpp 的 /export 导出页面同一套排版语义
+
+   设计要点（直接沿用导出页）：
+     · 消息之间用一条极弱的分隔线（--line-soft）+ 留白分隔，而不是气泡；
+       连续的消息读起来是一篇文档；
+     · 每条消息一个「角色点 + 等宽小型大写角色名」的头部，角色色只出现
+       在这里（--user/--assistant/--tool/--system/--other），正文不着色；
+     · 正文走 prose：段落 / 标题 / 列表 / 引用 / 分割线 / 代码块 / 表格，
+       与导出页的 .prose .md-h .md-list .md-q .md-hr .codeblock .md-tab
+       同名同义；
+     · 折叠块（思考 / 摘要）用 <details>-式的按钮 + 面板，点击即开；
+       工具结果与工具调用直接用 <details>（见 5.4b），主会话与子代理浮窗
+       共用 renderContentHtml / renderMarkdown，两处排版逐字一致。
+   深浅跟随系统（prefers-color-scheme），与导出页同一套令牌（见 00-tokens.css）。
+   ===================================================================== */
+
+/* ---- 5.1 流容器 ----------------------------------------------------
+   底部留白 = 悬浮输入卡的高度（--composer-h）+ 余量，滚动到最后一条
+   消息时不会被卡片压住；--composer-h 由 #rzComposer 拖动改写。      */
+.chat{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;
+  padding:22px 0 calc(var(--composer-h) + 34px);
+  scroll-behavior:smooth}
+.chatwrap{max-width:var(--chat-max);margin:0 auto;padding:0 22px;
+  container-type:inline-size;container-name:stream}
+
+/* ---- 5.2 消息骨架 -------------------------------------------------- */
+.msg{margin:var(--stream-gap) 0 0;padding:var(--stream-gap) 0 0;
+  border-top:1px solid var(--line-soft);animation:msgIn var(--dur) var(--ease)}
+.msg:first-child{border-top:0;margin-top:0;padding-top:0}
+.msg:last-child{padding-bottom:2px}
+/* 没有头像列：一条消息 = 头部 + 正文（与 /export 的 .msg/.head/.body 相同） */
+.msg .body{min-width:0}
+/* 头部：角色点 + 角色名 + 序号 + 状态 + 时间 + 折叠按钮 */
+.msg .head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 8px}
+.head .dot{width:6px;height:6px;flex:none;border-radius:50%;background:var(--other)}
+.head .dot.user{background:var(--user)}
+.head .dot.assistant{background:var(--assistant)}
+.head .dot.tool{background:var(--tool)}
+.head .dot.system{background:var(--system)}
+.head .role{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--fg3)}
+.head .ix{font-family:var(--mono);font-size:10.5px;color:var(--fg3)}
+.head .st{font-family:var(--mono);font-size:10.5px;color:var(--fg3)}
+.head .st.ok{color:var(--ok)}.head .st.run{color:var(--run)}
+.head .st.bad{color:var(--bad)}.head .st.warn{color:var(--warn)}
+.head .mtime{font-size:10.5px;color:var(--fg3)}
+.head .grow{flex:1 1 auto;min-width:0}
+/* 折叠开关（思考 / 摘要 / 存档 / 系统提示）：整条头部的按钮化控制 */
+.head .fold{display:inline-flex;align-items:center;gap:5px;padding:1px 7px;border-radius:999px;
+  font-size:10.5px;font-family:var(--mono);color:var(--fg2);background:transparent;
+  border:1px solid var(--line);transition:all var(--dur) var(--ease)}
+.head .fold:hover{border-color:var(--line2);color:var(--fg);background:var(--raise)}
+.head .fold .tri{font-size:9px;color:var(--fg3);transition:transform var(--dur) var(--ease)}
+.head .fold[aria-expanded="true"] .tri{transform:rotate(90deg)}
+/* 正文：markdown 渲染结果 */
+.msg .prose{min-width:0;font-size:14.5px;line-height:1.72;color:var(--fg)}
+.msg.user .prose{font-size:14.5px}
+.msg.reason .prose{font-size:12.5px;color:var(--fg2);font-style:italic}
+.msg.status .prose,.msg.notice .prose{font-size:12.5px;color:var(--fg2)}
+.msg.error .prose{color:var(--bad)}
+.msg.summary .prose{font-size:13px;color:var(--fg2)}
+.msg.toolres .prose{font-size:12.5px;color:var(--fg2)}
+
+/* ---- 5.3 prose / markdown（与 /export 同名同义） ------------------- */
+.prose .md-p{margin:0 0 12px;white-space:pre-wrap;overflow-wrap:anywhere}
+.prose .md-p:last-child{margin-bottom:0}
+.prose h1.md-h,.prose h2.md-h,.prose h3.md-h,.prose h4.md-h,
+.prose h5.md-h,.prose h6.md-h{margin:20px 0 10px;font-weight:600;line-height:1.4;
+  letter-spacing:-.01em;color:var(--fg)}
+.prose h1.md-h{font-size:19px}
+.prose h2.md-h{font-size:17px}
+.prose h3.md-h{font-size:15.5px}
+.prose h4.md-h{font-size:14.5px}
+.prose h5.md-h,.prose h6.md-h{font-size:13px;color:var(--fg2);text-transform:uppercase;
+  letter-spacing:.05em}
+.prose .md-hr{border:0;border-top:1px solid var(--line);margin:20px 0}
+.prose .md-q{margin:0 0 14px;padding-left:14px;border-left:2px solid var(--line);color:var(--fg2)}
+.prose .md-q:last-child{margin-bottom:0}
+.prose .md-list{margin:0 0 12px;padding-left:20px}
+.prose .md-list li{margin:4px 0;white-space:pre-wrap;overflow-wrap:anywhere}
+.prose .md-list li::marker{color:var(--fg3)}
+.prose .md-list .md-list{margin:4px 0 0}
+.prose code.ic{font-family:var(--mono);font-size:.88em;background:var(--code-bg);
+  border-radius:4px;padding:1px 4px;overflow-wrap:anywhere}
+.prose strong{font-weight:650}
+.prose em{font-style:italic}
+.prose a{color:var(--link)}
+.prose .codeblock{margin:0 0 14px}
+.prose .codeblock:last-child{margin-bottom:0}
+.prose .lang{display:block;margin-bottom:6px;font-family:var(--mono);font-size:11px;
+  letter-spacing:.04em;text-transform:lowercase;color:var(--fg3)}
+.prose pre.code{margin:0;padding:12px 14px;background:var(--code-bg);border-radius:6px;
+  overflow-x:auto;white-space:pre;font-family:var(--mono);font-size:12.5px;line-height:1.65;
+  color:var(--fg);border:1px solid var(--line-soft)}
+/* 表格：导出页的 .md-tab（表头上分割线 + 每行下细线） */
+.prose .tabwrap{margin:0 0 16px;overflow-x:auto}
+.prose .md-tab{width:100%;border-collapse:collapse;font-size:13.5px}
+.prose .md-tab th,.prose .md-tab td{padding:7px 14px 7px 0;text-align:left;vertical-align:top;
+  white-space:pre-wrap;border-bottom:1px solid var(--line-soft)}
+.prose .md-tab thead th{border-bottom:1px solid var(--line);color:var(--fg2);font-size:11.5px;
+  font-weight:600;letter-spacing:.05em;text-transform:uppercase}
+.prose .md-tab tbody tr:last-child td{border-bottom:0}
+.prose .md-tab th:last-child,.prose .md-tab td:last-child{padding-right:0}
+/* 流式光标 */
+.prose .cursor::after,.cursor::after{content:"";display:inline-block;width:7px;height:14px;
+  margin-left:2px;vertical-align:-2px;background:var(--fg);animation:blink 1s steps(1) infinite}
+
+/* ---- 5.4 折叠块：思考过程 ------------------------------------------ */
+.msg.reason .foldpanel{border-left:2px solid var(--line);padding-left:12px}
+.msg.reason .foldpanel[hidden]{display:none}
+
+/* ---- 5.4b <details> 折叠卡（工具结果 / 工具调用 / 思考） -------------
+   与导出页的 details > summary::before 三角同一套：▸ 折叠 / ▾ 展开。
+   主会话与子代理浮窗共用，因此两处排版完全一致。                      */
+.prose details{margin:0 0 12px}
+.prose details:last-child{margin-bottom:0}
+.prose summary{display:block;cursor:pointer;list-style:none;padding:2px 0;
+  font-family:var(--mono);font-size:11.5px;color:var(--fg2);
+  overflow-wrap:anywhere;transition:color var(--dur) var(--ease)}
+.prose summary::-webkit-details-marker{display:none}
+.prose summary::before{content:"\25B8";display:inline-block;width:15px;color:var(--fg3)}
+.prose details[open]>summary::before{content:"\25BE"}
+.prose details[open]>summary{margin-bottom:8px}
+.prose summary:hover{color:var(--fg)}
+.prose details > pre.code{margin:0;max-height:min(58vh,620px);overflow:auto}
+.prose details.think > .prose{padding-left:12px;border-left:2px solid var(--line);
+  color:var(--fg2);font-size:13px}
+/* 工具结果/调用卡：折叠时是一行等宽摘要，展开后正文是代码块 */
+.prose details.toolresult > summary,
+.prose details.toolcall > summary{color:var(--tool)}
+.prose details.toolresult[open] > summary,
+.prose details.toolcall[open] > summary{margin-bottom:8px}
+
+/* ---- 5.5 卡片式消息：上下文摘要 / 系统提示 -------------------------- */
+.msg.cardmsg .body{background:var(--bg2);border:1px solid var(--line);
+  border-radius:var(--radius);padding:10px 14px 12px}
+.msg.summary .body{background:linear-gradient(180deg,
+  color-mix(in srgb,var(--system) 6%,var(--bg2)),var(--bg2));
+  border-color:color-mix(in srgb,var(--system) 32%,var(--line))}
+.msg.summary .head .role{color:color-mix(in srgb,var(--system) 70%,var(--fg2))}
+.msg.sys .body{background:var(--bg3)}
+/* 折叠面板通用 */
+.foldpanel[hidden]{display:none}
+
+/* ---- 5.6 工具调用卡 ------------------------------------------------ */
+.tool{margin:var(--stream-gap) 0 0;padding:var(--stream-gap) 0 0;border-top:1px solid var(--line-soft);
+  animation:msgIn var(--dur) var(--ease)}
+.tool:first-child{border-top:0;margin-top:0;padding-top:0}
+.tool .tbox{border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;
+  background:var(--bg2);transition:border-color var(--dur) var(--ease)}
+.tool:hover .tbox{border-color:var(--line2)}
+.tool.running .tbox{border-color:color-mix(in srgb,var(--run) 45%,var(--line))}
+.tool.ok .tbox{border-color:color-mix(in srgb,var(--ok) 35%,var(--line))}
+.tool.bad .tbox{border-color:color-mix(in srgb,var(--bad) 45%,var(--line))}
+.toolhead{display:flex;align-items:center;gap:9px;padding:7px 12px;cursor:pointer;user-select:none}
+.toolhead .tname{font-family:var(--mono);font-size:12px;font-weight:650;color:var(--fg)}
+.toolhead .tmeta{font-size:10.5px;color:var(--fg3);font-family:var(--mono)}
+.toolhead .chev{margin-left:auto;color:var(--fg3);transition:transform var(--dur) var(--ease)}
+.tool.expanded .chev{transform:rotate(90deg)}
+/* 真折叠：展开与否用 hidden 切换，不用 max-height（后者会裁切长输出） */
+.toolbody{overflow:hidden}
+.toolbody[hidden]{display:none}
+.toolbody pre{margin:0;padding:10px 12px;font-family:var(--mono);font-size:11.5px;color:var(--fg2);
+  white-space:pre-wrap;word-break:break-word;border-top:1px solid var(--line);
+  background:var(--bg3);max-height:340px;overflow:auto}
+.toolbody .lbl{padding:7px 12px 0;font-size:10.5px;color:var(--fg3);font-weight:700;letter-spacing:.04em}
+/* 工具结果：与消息流里的工具结果同一张折叠卡（见 5.4b） */
+.toolbody .toolres{min-width:0;padding:0 12px 10px}
+.toolbody .toolres:empty{display:none}
+.toolbody .toolres details{margin:0}
+.spin{width:12px;height:12px;border-radius:50%;border:2px solid var(--line2);border-top-color:var(--fg);
+  animation:spin .8s linear infinite;flex:none}
+.parallel{margin:var(--stream-gap) 0 0;padding:10px 12px;border:1px dashed var(--line2);
+  border-radius:var(--radius);background:var(--bg2);position:relative}
+.parallel .plabel{font-size:10.5px;color:var(--fg3);font-weight:700;margin-bottom:7px;letter-spacing:.04em}
+.parallel .lane{display:flex;gap:8px;flex-wrap:wrap}
+.parallel .lane .tool{flex:1;min-width:180px;margin:0;padding:0;border-top:0}
+
+/* ---- 5.6b 流程分组卡：思考过程 / 工具调用（收纳） --------------------
+   一轮回合里的零散思考块与工具调用分别收进一张折叠卡，头部带聚合统计；
+   流式（思考）/ 运行中（工具）自动展开，用户手动接管后不再自动改写。   */
+.tgrp .foldpanel{padding-left:12px;border-left:2px solid var(--line)}
+.tgrp.think .foldpanel{border-left-color:color-mix(in srgb,var(--other) 45%,var(--line))}
+.tgrp .tmeta{font-size:10.5px;color:var(--fg3);font-family:var(--mono)}
+.tgrp .head .dot.tool{background:var(--tool)}
+.tgrp.run .head .dot{background:var(--run);animation:pulseRing 1.4s var(--ease) infinite}
+.tgrp.ok .head .dot{background:var(--ok)}
+.tgrp.bad .head .dot{background:var(--bad)}
+.thinkblk{padding:2px 0}
+.thinkblk .prose{font-size:12.5px;line-height:1.66;color:var(--fg2);font-style:italic}
+/* 组内工具卡/轮次条沿用流内样式，只收紧首块的顶上分隔线 */
+.tgrp .foldpanel .tool:first-child,.tgrp .foldpanel .roundbar:first-child{border-top:0;margin-top:0;padding-top:0}
+
+/* ---- 5.7 轮次条 / 思考指示器 / 空态 -------------------------------- */
+.roundbar{display:flex;gap:12px;align-items:center;padding:4px 12px;margin:var(--stream-gap) 0 0;
+  border-radius:var(--radius-s);background:var(--bg2);border:1px solid var(--line-soft);
+  font-size:11px;color:var(--fg3);font-family:var(--mono);animation:msgIn var(--dur) var(--ease)}
+.roundbar:first-child{margin-top:0}
+.roundbar .grow-bar{height:3px;border-radius:2px;background:var(--accent);flex:none;
+  transform-origin:left;animation:growBar 700ms var(--ease)}
+.thinking{display:flex;align-items:center;gap:10px;padding:6px 0;color:var(--fg2);font-size:12.5px}
+.orb{width:14px;height:14px;border-radius:50%;flex:none;background:var(--fg);
+  animation:breathe 2s var(--ease) infinite}
+.chat .empty{max-width:var(--chat-max);margin:8vh auto 0;padding:0 22px;text-align:center;color:var(--fg3)}
+.chat .empty h2{font-size:19px;color:var(--fg2);font-weight:650;margin:0 0 6px}
+.chat .empty .hints{display:flex;flex-wrap:wrap;gap:7px;justify-content:center;margin-top:16px}
+.hint{padding:6px 12px;border-radius:999px;background:var(--bg2);
+  border:1px solid var(--line);font-size:12px;color:var(--fg2);cursor:pointer;
+  transition:all var(--dur) var(--ease)}
+.hint:hover{border-color:var(--accent);color:var(--accent)}
+
+/* ---- 5.8 品牌标识（侧栏 brand 用；消息流无头像） ------------------ */
+.ava{display:block;width:100%;height:100%}
+/* 运行态：外框淡入 + 阶梯折线循环描线（pathLength=100 归一化，无需算长度） */
+.ava .ava-frame{animation:avaFade 900ms var(--ease) both}
+.ava .ava-path{stroke-dasharray:100;stroke-dashoffset:100;
+  animation:avaDraw 2.8s var(--ease) infinite}
+
+/* ---- 5.9 窄流降级：与导出页的 @container stream 同思路 ------------- */
+@container stream (max-width:620px){
+  .msg .prose{font-size:14px}
+}
