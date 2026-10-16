@@ -14,8 +14,8 @@
 #                              stack (+ libcurl + libsodium), smoke-tested under
 #                              xvfb
 #   cell-app-macos-arm64       system frameworks + system libcurl, static
-#                              libsodium and static libstdc++ (Homebrew GCC —
-#                              libc++ does not implement <generator> yet)
+#                              libsodium, system libc++ (Homebrew LLVM Clang —
+#                              supports C++26 and Apple SDK headers)
 #
 # All three toolchains target C++26 (CELL_CXX_STANDARD=26).
 # =============================================================================
@@ -188,22 +188,18 @@ jobs:
         with:
           submodules: recursive
 
-      # libc++ still has no <generator> and lags on C++26, so the build uses
-      # Homebrew GCC + libstdc++ instead of Apple clang. The keg is versioned,
-      # so resolve the highest g++ at build time.
+      # Homebrew LLVM Clang supports C++26 and can parse the Apple SDK headers
+      # (unlike GCC, which chokes on __builtin_available and Blocks syntax).
       - name: Install the compiler and header-only dependencies
-        run: brew install gcc ninja boost nlohmann-json
+        run: brew install llvm ninja boost nlohmann-json
 
-      - name: Resolve the compiler
-        id: gcc
+      - name: Verify the compiler
+        id: clang
         run: |
-          gxx="$(ls "$(brew --prefix gcc)"/bin/g++-[0-9]* | sort -V | tail -n1)"
-          echo "compiler: $gxx"
-          "$gxx" --version | head -n1
-          echo "runtime libraries:"
-          find "$(brew --prefix gcc)/lib/gcc" -maxdepth 2 \
-            \( -name 'libstdc++*' -o -name 'libgcc*' \) -print
-          echo "gxx=$gxx" >> "$GITHUB_OUTPUT"
+          clangxx="$(brew --prefix llvm)/bin/clang++"
+          echo "compiler: $clangxx"
+          "$clangxx" --version | head -n1
+          echo "clangxx=$clangxx" >> "$GITHUB_OUTPUT"
 
       # static libsodium from source: Homebrew only ships the shared one
       - name: Build static libsodium
@@ -217,9 +213,9 @@ jobs:
           make install
 
       # CURL: force the system libcurl (the SDK stub) over anything Homebrew
-      # may have on the search path. -static-libstdc++ needs -static-libgcc
-      # to take effect on Darwin, and both are what keep /opt/homebrew/…/lib
-      # out of the final binary. nlohmann-json is keg-only → explicit -I.
+      # may have on the search path. Use the system libc++ (default for Clang
+      # on macOS) so no Homebrew runtime leaks into the link.
+      # nlohmann-json is keg-only → explicit -I.
       - name: Configure
         run: |
           sdk="$(xcrun --show-sdk-path)"
@@ -227,14 +223,14 @@ jobs:
           echo "system curl: $curl_lib"
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_CXX_COMPILER="${{ steps.gcc.outputs.gxx }}" \
+            -DCMAKE_CXX_COMPILER="${{ steps.clang.outputs.clangxx }}" \
+            -DCMAKE_C_COMPILER="$(brew --prefix llvm)/bin/clang" \
             -DCELL_CXX_STANDARD=26 \
             -DSODIUM_LIBRARY="$HOME/sodium/lib/libsodium.a" \
             -DSODIUM_INCLUDE_DIR="$HOME/sodium/include" \
             -DCURL_LIBRARY="$curl_lib" \
             -DCURL_INCLUDE_DIR="$sdk/usr/include" \
-            -DCMAKE_CXX_FLAGS="-I$(brew --prefix nlohmann-json)/include" \
-            -DCMAKE_EXE_LINKER_FLAGS="-static-libstdc++ -static-libgcc"
+            -DCMAKE_CXX_FLAGS="-I$(brew --prefix nlohmann-json)/include"
 
       - name: Build
         run: cmake --build build
@@ -290,7 +286,7 @@ jobs:
           |---|---|---|
           | Windows 10/11 x64 | `cell-app-windows-x64.exe` | none — statically linked; the WebView2 runtime ships with Edge/Windows 11 |
           | Linux x86_64 | `cell-app-linux-x86_64` | the distro GTK3 + WebKitGTK 4.1 stack (`libgtk-3-0`, `libwebkit2gtk-4.1-0`), plus `libcurl4` and `libsodium23` |
-          | macOS arm64 | `cell-app-macos-arm64` | none — system frameworks + system libcurl; libsodium and libstdc++ are linked in |
+          | macOS arm64 | `cell-app-macos-arm64` | none — system frameworks + system libcurl; libsodium is linked in; uses the system libc++ |
 
           Config, sessions, the credential vault and third-party themes live next
           to the executable in `<exe dir>/.cell/`, so keep the binary in a
