@@ -58,6 +58,7 @@ const Mock = {
     { id: 'n4', from: 'teamwork/tw-mockgate01/supervisor', topic: 'gate', body: '评审关卡已就绪，等待你确认后继续。tw-mockgate01 处于待批状态。', created_at: 0, pending: true },
     { id: 'n5', from: 'teamwork/tw-mockgate01/worker_3', topic: 'worker', body: '开始实现阶段，准备读取 cell-app-http.hpp。', created_at: 0, pending: false },
     { id: 'n6', from: 'teamwork/tw-mockgate01/supervisor', topic: 'job', body: '任务 tw-mockgate01 已进入第 2 阶段。', created_at: 0, pending: true },
+    { id: 'n7', from: 'user', session: 'deb905474f99aa0a-1792154467683-8378c362', topic: '', body: '来自另一个会话的通知：首页的暗色主题配色已经定稿，请同步更新截图。', created_at: 0, pending: true },
   ],
 
   hello(ws) {
@@ -189,6 +190,13 @@ const Mock = {
       case 'teamwork.stop': { const j = this.jobs[args.id]; if (j) j.status = 'pending'; setTimeout(() => this.emit({ t: 'teamwork_changed', ws: ws }), 30); return Promise.resolve({ ok: true, message: 'stop requested' }); }
       case 'notice.list': return Promise.resolve({ ok: true, notices: this.notices });
       case 'notice.clear': { const n = this.notices.length; this.notices = []; return Promise.resolve({ ok: true, dropped: n, seen: 0 }); }
+      case 'notice.send': {
+        const tgt = String(args.session || '').trim();
+        if (!String(args.body || '').trim()) return Promise.resolve({ ok: false, error: '通知内容不能为空' });
+        const id = 'nm' + (++this._seq);
+        this.notices.push({ id, from: args.from || 'user', session: tgt || 'mock-self-session-0000', topic: args.topic || '', body: args.body, created_at: this.now(), pending: true });
+        return Promise.resolve({ ok: true, id, target: tgt, reply_to: 'mock-self-session-0000' });
+      }
       case 'upload': return Promise.resolve({ ok: true, path: 'D:\\tmp\\.cell\\uploads\\' + (args.name || 'file'), name: args.name || 'file', size: (args.data_b64 || '').length * 3 / 4 | 0 });
       case 'send': this.simulateTurn(ws, args.text || ''); return Promise.resolve({ ok: true });
       case 'stop': { const t = S.tabs.get(ws); if (t) { t.busy = false; t.thinkingSince = 0; } this.cancel = true; return Promise.resolve({ ok: true }); }

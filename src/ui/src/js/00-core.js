@@ -435,12 +435,18 @@ function applyHello(st, rebuild) {
   if (st.providers) S.providers = st.providers;
   if (Array.isArray(st.tools)) S.tools = true; else if (typeof st.tools === 'boolean') S.tools = st.tools;
 
+  let noticesReset = false;
   if (Array.isArray(st.workspaces)) {
     S.workspaces = st.workspaces;
     for (const w of st.workspaces) {
       const t = tab(w.ws);
       t.cwd = w.cwd;
-      if (t.session !== w.session) { t.session = w.session; t.detailSession = ''; }
+      if (t.session !== w.session) {
+        t.session = w.session; t.detailSession = '';
+        // 通知面板按会话隔离：切了会话就不能再显示上一个的通知
+        t.notices = []; t.noticesLoaded = false; rebuildNoticeGroups(t);
+        noticesReset = true;
+      }
       t.busy = w.busy;
       if (!S.tabOrder.includes(w.ws)) S.tabOrder.push(w.ws);
     }
@@ -453,7 +459,11 @@ function applyHello(st, rebuild) {
   if (ws) {
     const t = tab(ws);
     if (st.cwd) t.cwd = st.cwd;
-    if (st.session && t.session !== st.session) { t.session = st.session; t.detailSession = ''; }
+    if (st.session && t.session !== st.session) {
+      t.session = st.session; t.detailSession = '';
+      t.notices = []; t.noticesLoaded = false; rebuildNoticeGroups(t);
+      noticesReset = true;
+    }
     if (typeof st.busy === 'boolean') { t.busy = st.busy; if (st.busy && !t.thinkingSince) t.thinkingSince = Date.now(); }
     // hello 里的 teamwork 就是该会话当前的权威列表：打上 jobsFor，Teamwork
     // 面板首帧直接渲染，省掉一次「正在加载」+ 重复拉取
@@ -483,7 +493,10 @@ function applyHello(st, rebuild) {
   if (rebuild) {
     refreshSessions();
     refreshNotices(S.active);
+  } else if (noticesReset) {
+    refreshNotices(S.active); // 会话切换的广播：面板换成新会话的通知
   }
+  if (noticesReset) schedule('dock', renderDock);
 }
 
 function removeTab(ws) {
@@ -603,7 +616,10 @@ function onToolEnd(e) {
 }
 function onNotice(e) {
   const t = ensureTab(e.ws);
-  const n = { id: e.nid || uid(), from: e.from || '', topic: e.topic || '', body: e.body || '', d: e.d || '', created_at: e.created_at || nowSec(), pending: true, _new: true };
+  // 实时 watcher 事件与引擎注入事件可能先后到达同一条通知：按 id 去重
+  // （房间 dock 与聊天气泡都以 t.notices 为源）
+  if (e.nid && t.notices.some(n => n.id === e.nid)) return;
+  const n = { id: e.nid || uid(), from: e.from || '', session: e.session || '', topic: e.topic || '', body: e.body || '', d: e.d || '', created_at: e.created_at || nowSec(), pending: true, _new: true };
   t.notices.push(n);
   rebuildNoticeGroups(t);
   if (e.ws !== S.active) t.unread++;

@@ -254,8 +254,100 @@ namespace app
             sync_active_sessions();
             return cell::config::save(cfg, false);
         }
+        // ---- cross-session notice watcher --------------------------------
+        // An idle GUI session must see notices that other sessions (another
+        // workspace, another process, the CLI) send it, without waiting for a
+        // turn. The watcher peeks the current session of every open workspace
+        // every ~0.7s and posts a live "notice" event for ids it has not
+        // reported yet. It never consumes (the turn drain still injects), so
+        // delivery stays exactly-once; the frontend dedups by notice id.
+        std::thread notice_watcher;
+        std::mutex notice_wmx;
+        std::condition_variable notice_wcv;
+        bool notice_quit = false;
+        std::set<std::string> notice_reported;      // watcher thread only
+        std::deque<std::string> notice_report_order; // bounded FIFO over the set
+        bool notice_primed = false; // first pass records existing pending silently
+
+        void start_notice_watcher()
+        {
+            std::lock_guard<std::mutex> lk(notice_wmx);
+            if (notice_watcher.joinable())
+                return;
+            notice_quit = false;
+            notice_watcher = std::thread([this]
+                                         { notice_watch_loop(); });
+        }
+        void stop_notice_watcher()
+        {
+            {
+                std::lock_guard<std::mutex> lk(notice_wmx);
+                notice_quit = true;
+            }
+            notice_wcv.notify_all();
+            if (notice_watcher.joinable())
+                notice_watcher.join();
+        }
+        void notice_watch_loop()
+        {
+            for (;;)
+            {
+                {
+                    std::unique_lock<std::mutex> lk(notice_wmx);
+                    notice_wcv.wait_for(lk, std::chrono::milliseconds(cell::notice::kPollMillis),
+                                        [&]
+                                        { return notice_quit; });
+                    if (notice_quit)
+                        return;
+                }
+                if (shutting_down.load())
+                    return;
+                // snapshot the (ws, session) pairs: h.now() is command-scope
+                // state, the watcher only ever looks at it under cmd_mx
+                std::vector<std::pair<std::string, std::string>> targets;
+                {
+                    std::lock_guard<std::mutex> lk(cmd_mx);
+                    for (auto *c : all_ctxs())
+                        targets.emplace_back(c->cwd_key, c->h.now().id());
+                }
+                for (auto &[ws, sid] : targets)
+                {
+                    for (auto &m : cell::notice::peek(sid))
+                    {
+                        bool fresh = false;
+                        if (notice_reported.insert(m.id).second)
+                        {
+                            fresh = true;
+                            notice_report_order.push_back(m.id);
+                            if (notice_report_order.size() > 400)
+                            {
+                                notice_reported.erase(notice_report_order.front());
+                                notice_report_order.pop_front();
+                            }
+                        }
+                        // the first pass only primes the dedup set: pending
+                        // notices that existed at boot arrive via notice.list,
+                        // not as live events
+                        if (fresh && notice_primed)
+                            bus.post({{"t", "notice"},
+                                      {"ws", ws},
+                                      {"d", cell::notice::render(m)},
+                                      {"nid", m.id},
+                                      {"from", m.from},
+                                      {"session", m.from_session},
+                                      {"topic", m.topic},
+                                      {"body", m.body},
+                                      {"created_at", m.created_at},
+                                      {"live", true}});
+                    }
+                }
+                notice_primed = true;
+            }
+        }
+
         void shutdown()
         {
+            stop_notice_watcher();
             shutting_down.store(true);
             auto all = all_ctxs();
             for (auto *c : all)
@@ -369,12 +461,14 @@ namespace app
             ev.on_error = [post](std::string_view d)
             { post({{"t", "error"}, {"d", std::string(d)}}); };
             // structured notices carry the rendered text AND the raw record
-            // (the frontends fold/group by from/topic themselves)
+            // (the frontends fold/group by from/topic themselves); session is
+            // the sender's reply address ("" when the notice has none)
             ev.on_notice_msg = [post](const cell::notice::message &m)
             { post({{"t", "notice"},
                     {"d", cell::notice::render(m)},
                     {"nid", m.id},
                     {"from", m.from},
+                    {"session", m.from_session},
                     {"topic", m.topic},
                     {"body", m.body},
                     {"created_at", m.created_at}}); };
@@ -2004,6 +2098,7 @@ namespace app
                             continue;
                         arr.push_back({{"id", j.value("id", "")},
                                        {"from", j.value("from", "")},
+                                       {"session", j.value("from_session", "")},
                                        {"topic", j.value("topic", "")},
                                        {"body", j.value("body", "")},
                                        {"created_at", j.value("created_at", 0LL)},
@@ -2018,6 +2113,7 @@ namespace app
                                 continue;
                             arr.push_back({{"id", j.value("id", "")},
                                            {"from", j.value("from", "")},
+                                           {"session", j.value("from_session", "")},
                                            {"topic", j.value("topic", "")},
                                            {"body", j.value("body", "")},
                                            {"created_at", j.value("created_at", 0LL)},
@@ -2047,6 +2143,36 @@ namespace app
                     r["seen"] = seen;
                     r["archived"] = archived.string();
                     cell::sys::logger::instance().info("notice", std::format("cleared via ui sid={} dropped={} seen={}", c->h.now().id(), dropped, seen));
+                    return r;
+                }
+                // 跨会话发送通知（GUI = 用户发出的 notice）：session 是句柄
+                // （id / 唯一前缀 / 16-hex 工作区 key / 工作区路径 / reply），
+                // 留空 = 当前会话；from_session 记录发送方，接收方可用 reply
+                // 回话（对齐 CLI 的 /notices send 与 notice 工具的 send）
+                if (name == "notice.send")
+                {
+                    std::lock_guard<std::mutex> lk(cmd_mx);
+                    workspace_ctx *c = target_ctx(args);
+                    if (!c)
+                        return ok_error("no workspace open");
+                    std::string body = args.value("body", "");
+                    if (body.empty())
+                        return ok_error("通知内容不能为空");
+                    std::string cur = c->h.now().id();
+                    auto tgt = cell::notice::resolve_session(args.value("session", ""), cur);
+                    if (tgt.state == cell::notice::target_state::ambiguous ||
+                        tgt.state == cell::notice::target_state::none)
+                        return ok_error(tgt.error);
+                    std::string err, id;
+                    if (!cell::notice::send_to(tgt.id, args.value("from", "user"), args.value("topic", ""),
+                                               body, err, &id, false, cur))
+                        return ok_error(err);
+                    cell::sys::logger::instance().info("notice", std::format("sent via ui id={} from_sid={} to={} chars={}",
+                                                                             id, cur, tgt.id.empty() ? "(current)" : tgt.id, body.size()));
+                    nlohmann::json r = ok();
+                    r["id"] = id;
+                    r["target"] = tgt.id;
+                    r["reply_to"] = cur;
                     return r;
                 }
 

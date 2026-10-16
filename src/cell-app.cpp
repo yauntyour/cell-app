@@ -318,6 +318,9 @@ namespace app
                 boot->prompt = boot->eng->ensure_prompt();
             }
         }
+        // live notice delivery: idle sessions see cross-session notices the
+        // moment they land (peek-only, ~0.7s cadence; see app_core)
+        core.start_notice_watcher();
         if (cell::stats::prune())
             log.info("stats", "boot pruned orphaned session usage records");
 

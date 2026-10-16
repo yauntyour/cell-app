@@ -141,7 +141,18 @@ teamwork.run {ws?, id}              teamwork.resume {ws?, id}
 teamwork.stop {ws?, id}
 
 upload {ws?, name, data_b64}        notice.list {ws?}
+notice.clear {ws?}                  notice.send {ws?, session?, body, from?, topic?}
 ```
+
+`notice.send` delivers a notice to another session. `session` is a handle
+resolved against every known session: exact id, unique id prefix, 16-hex
+workspace key (→ that group's newest session), a workspace directory path,
+`reply`/`@` (→ the newest notice sender that can be answered), or empty
+(the caller's own session). The sender is recorded and receivers answer
+with the same `reply` handle. A session folder is materialized when the
+session becomes live, so a session that has not saved a transcript yet
+(fresh GUI workspace, running CLI) is discoverable too — the `session`
+field on notice.list rows / SSE notice events is that reply address.
 
 Every event carries `"ws"`; the frontends route it to the right tab.
 
@@ -169,7 +180,12 @@ curl -X POST http://127.0.0.1:8787/api/cmd/send \
   diamonds, active-stage glow, animated edges), draggable worker windows
   streaming a child's transcript, run/stop/resume controls, and reports.
 - **Notices** — folded notice cards grouped by sender+topic+path; gate/job
-  notices are pinned with a one-click *resume*; new notices animate in.
+  notices are pinned with a one-click *resume*; new notices animate in. The
+  panel sends cross-session notices (target handle + body) and every card
+  from another session shows a `→ <session>` reply address with an inline
+  reply row. An idle session sees notices the moment they land: a backend
+  watcher broadcasts them over SSE (~0.7s cadence) without consuming the
+  turn-drain pipeline.
 - **Composer** — three modes: text, attachments (drag/paste/upload, stored
   under the workspace `.cell/uploads/`), and a structured Teamwork workflow
   builder (stages, gates, per-agent model/thinking) with a "let the LLM
