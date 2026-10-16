@@ -178,15 +178,16 @@ curl -X POST http://127.0.0.1:8787/api/cmd/send \
 - **Settings page** — providers, model, agent (thinking/tools/system
   prompt), sandbox, compaction, performance limits, theme and animation
   level; everything maps to the same config the CLI writes.
-- **Themes & motion** — the default **极简 (mono)** theme: pure black/white/gray
-  surfaces, flat borders, no textures, with a single blue accent reserved for
-  highlights (focus rings, links, selection, badges); a matching **极简 · 暗夜**
-  dark variant ships alongside. Third-party themes live in the same `.cell`
+- **Themes & motion** — the built-in look is locked to a **black/white/gray
+  dark** palette: neutral gray surfaces, flat borders, no textures, no colored
+  accent (highlights, links, badges and role dots are all grays, with links
+  underlined), tuned to cut blue light. Icons are single-color inline SVG
+  throughout (no emoji). Third-party themes live in the same `.cell`
   directory as config, sessions and the credential vault: drop a folder
   `<exe dir>/.cell/theme/<name>/` with a `theme.json` (`label` / `type` /
   `desc` / `swatch`) and a `theme.css` that redefines the design tokens, then
   pick it in *Settings → 外观* or via `/theme <name>` — no rebuild, no restart
-  (the CSS is served with `no-store`). Icons are emoji throughout. Three
+  (the CSS is served with `no-store`). Three
   animation levels and `prefers-reduced-motion` are respected. The repo ships
   a worked example at `build/.cell/theme/warm-paper/` (warm paper neutrals +
   orange accent).

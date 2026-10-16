@@ -1,44 +1,45 @@
 /* =====================================================================
    §0 设计令牌 —— 与 cell.cpp /export 导出页同一套
 
-   默认外观就是参考页（导出页）的形式：`:root` 是浅色，深浅跟随系统
-   （prefers-color-scheme，导出页亦然），没有任何内置主题可切换。
-   角色令牌（--user/--assistant/--tool/--system/--other）与排版令牌
-   （--line-soft/--code-bg/--link）逐值抄自导出页，保证「界面里的会话」
-   与「导出的会话」同源。
+   外观锁定为黑白灰深色：整个界面只有中性灰阶（无蓝、无彩色），
+   减少蓝光。`:root` 直接是深色值，不再跟随系统深浅，也没有内置主题
+   可切换。角色令牌（--user/--assistant/--tool/--system/--other）与排版
+   令牌（--line-soft/--code-bg/--link）仍是导出页同源的那一套名字，但
+   取值全部换成灰阶——保证「界面里的会话」与「导出的会话」同一套语言。
 
    两组令牌的分工：
      · 导出页令牌（--bg/--fg/--line/--line-soft/--code-bg/--link/--ok/
        --run/--bad/--user/--assistant/--tool/--system/--other）：消息流的
-       语义色，正文与角色点只用它们。
+       语义色，正文与角色点只用它们（现为灰阶，靠明度区分）。
      · 外壳令牌（--bg2/--panel/--raise/--line2/--fg2/--fg3/--accent/…）：
        桌面壳的骨架（侧栏 / 标签栏 / dock / 弹窗 / 浮窗），全部由上面这组
        中性色派生，不引入第二套色相；--accent 就等于 --link，是界面里
        唯一的高亮色。
    第三方主题（<exe 目录>/.cell/theme/<name>/theme.css）由 Theme 模块注入
    <style id="theme-ext">，位置在本文件之后，同特异性下后写者胜——因此只
-   重定义变量即可完整换肤，深浅也不例外。
+   重定义变量即可完整换肤。
    ===================================================================== */
 :root{
-  color-scheme:light dark;
-  /* ---- 导出页原值 · 浅色 ------------------------------------------- */
-  --bg:#ffffff;
-  --fg:#1f2328; --fg2:#5c6570; --fg3:#8b939c;   /* = --fg-dim / --fg-faint */
-  --line:#e7e9ec; --line-soft:#f1f2f4; --code-bg:#f6f7f8;
-  --link:#1a6ee5;
-  --ok:#0f7b4f; --run:#a8730c; --bad:#c0392b;
-  --user:#3b82f6; --assistant:#10a37f; --tool:#7c6cf0;
-  --system:#c9871f; --other:#a8b0b9;
+  color-scheme:dark;
+  /* ---- 导出页原值 · 深色灰阶 --------------------------------------- */
+  --bg:#0e0e10;
+  --fg:#e8e8ea; --fg2:#a6a6ab; --fg3:#77777d;   /* = --fg-dim / --fg-faint */
+  --line:#26262a; --line-soft:#1d1d20; --code-bg:#161618;
+  --link:#d4d4d8;
+  /* 语义色：灰阶（靠明度区分状态） */
+  --ok:#c9c9ce; --run:#9a9aa0; --bad:#efefef;
+  --user:#b8b8be; --assistant:#dcdce0; --tool:#8f8f95;
+  --system:#a9a9af; --other:#77777d;
 
-  /* ---- 外壳派生 · 浅色（全部取自上面这组中性色） ------------------- */
-  --bg2:#fafbfc; --bg3:#f6f7f8;             /* 面板 / 代码底 */
-  --panel:#fafbfc; --panel2:#ffffff;         /* 侧栏·导航 / 浮层 */
-  --raise:#f1f2f4;                           /* 悬停 = --line-soft */
-  --line2:#d7dade;                           /* 强边框：输入槽 / 悬停 */
-  --accent:#1a6ee5; --accent-soft:rgba(26,110,229,.09);
-  --warn:#a8730c;                            /* = --run（导出页的琥珀） */
-  --shadow:0 8px 24px rgba(31,35,40,.10),0 1px 2px rgba(31,35,40,.06);
-  --shadow-sm:0 1px 2px rgba(31,35,40,.06);
+  /* ---- 外壳派生 · 深色灰阶 ----------------------------------------- */
+  --bg2:#141416; --bg3:#161618;             /* 面板 / 代码底 */
+  --panel:#141416; --panel2:#1a1a1d;         /* 侧栏·导航 / 浮层 */
+  --raise:#1d1d20;                           /* 悬停 = --line-soft */
+  --line2:#35353a;                           /* 强边框：输入槽 / 悬停 */
+  --accent:#d4d4d8; --accent-soft:rgba(212,212,216,.12);
+  --warn:#9a9aa0;                            /* = --run */
+  --shadow:0 8px 24px rgba(0,0,0,.50),0 1px 2px rgba(0,0,0,.40);
+  --shadow-sm:0 1px 2px rgba(0,0,0,.40);
 
   /* ---- 形状 · 字体 · 动效 ------------------------------------------ */
   --radius:10px; --radius-s:6px;             /* 导出页 .fbox / pre.code */
@@ -55,27 +56,4 @@
   --composer-max:760px;
   /* 悬浮输入卡的高度，由 #rzComposer 拖动写入（见 03-layout.js） */
   --composer-h:148px;
-}
-
-/* 深色跟随系统：与导出页的 @media (prefers-color-scheme:dark) 同一份取值。
-   第三方主题的 <style> 追加在本文件之后，同特异性下覆盖这里的每一个值。 */
-@media (prefers-color-scheme:dark){
-  :root{
-    --bg:#0f1115;
-    --fg:#e7e9ec; --fg2:#a2a9b4; --fg3:#767e88;
-    --line:#23262c; --line-soft:#1c1f24; --code-bg:#16181d;
-    --link:#79b0f7;
-    --ok:#4bbf8a; --run:#dcae52; --bad:#e2705f;
-    --user:#6aa8f5; --assistant:#3ecfa4; --tool:#a795fb;
-    --system:#e0b062; --other:#767e88;
-
-    --bg2:#14171b; --bg3:#16181d;
-    --panel:#14171b; --panel2:#1a1e23;
-    --raise:#1c1f24;
-    --line2:#333840;
-    --accent:#79b0f7; --accent-soft:rgba(121,176,247,.14);
-    --warn:#dcae52;
-    --shadow:0 8px 24px rgba(0,0,0,.50),0 1px 2px rgba(0,0,0,.40);
-    --shadow-sm:0 1px 2px rgba(0,0,0,.40);
-  }
 }

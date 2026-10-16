@@ -180,7 +180,9 @@ function closeSearch() {
 function buildSearchBox() {
   const box = el('div', 'searchbox-lg');
   const head = el('div', 'sm-head');
-  head.appendChild(el('span', 'sm-ico', '🔍'));
+  const si = el('span', 'sm-ico');
+  si.appendChild(iconEl('search'));
+  head.appendChild(si);
   const inp = el('input');
   inp.type = 'text';
   inp.id = 'searchInput';

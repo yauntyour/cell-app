@@ -255,7 +255,7 @@ function buildSection(id) {
     return s;
   }
   if (id === 'appearance') {
-    const s = sec('appearance', '外观', '默认外观与 /export 导出的会话页同一套（浅色 + 跟随系统的深色）。第三方主题放入 <exe 目录>/.cell/theme/<名称>/ 即出现在下方；选择保存在本机浏览器。');
+    const s = sec('appearance', '外观', '默认外观为黑白灰深色（无彩色强调，与 /export 导出的会话页同一套中立灰阶）。第三方主题放入 <exe 目录>/.cell/theme/<名称>/ 即出现在下方；选择保存在本机浏览器。');
     const themes = Theme.list();
     const grid = el('div', 'themegrid');
     // 「默认外观」永远存在，且是初始选中项
@@ -263,10 +263,10 @@ function buildSection(id) {
       const b = el('button', 'themecard' + (S.theme ? '' : ' on'));
       b.type = 'button';
       const sw = el('div', 'tswatch');
-      for (const c of ['#ffffff', '#1f2328', '#3b82f6']) { const i = el('i'); i.style.background = c; sw.appendChild(i); }
+      for (const c of ['#0e0e10', '#e8e8ea', '#8f8f95']) { const i = el('i'); i.style.background = c; sw.appendChild(i); }
       b.appendChild(sw);
       b.appendChild(el('span', 'tname', '默认'));
-      b.appendChild(el('span', 'tmeta', '与导出的会话页同源 · 跟随系统深浅'));
+      b.appendChild(el('span', 'tmeta', '与导出的会话页同源 · 黑白灰深色'));
       b.onclick = () => { Theme.set(''); renderSettings(); };
       grid.appendChild(b);
     }
@@ -316,7 +316,9 @@ function buildSection(id) {
   }
   if (!S.workspaces.length) list.appendChild(el('div', 'pempty', '没有打开的工作区。'));
   s.appendChild(card([list]));
-  const openBtn = el('button', 'btn sm', '📂 打开工作区');
+  const openBtn = el('button', 'btn sm');
+  openBtn.appendChild(iconEl('folder', 'sm'));
+  openBtn.appendChild(el('span', null, '打开工作区'));
   openBtn.onclick = () => openWsDialog();
   s.appendChild(card([openBtn]));
   return s;

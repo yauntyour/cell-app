@@ -82,7 +82,8 @@
   border:1px solid var(--line2);border-radius:var(--radius);box-shadow:var(--shadow);
   display:flex;flex-direction:column;overflow:hidden}
 .sm-head{display:flex;align-items:center;gap:10px;padding:13px 16px;border-bottom:1px solid var(--line)}
-.sm-head .sm-ico{font-size:15px;opacity:.6;flex:none}
+.sm-head .sm-ico{display:flex;align-items:center;opacity:.6;flex:none}
+.sm-head .sm-ico .uico{width:16px;height:16px;stroke-width:1.8}
 .sm-head input{flex:1;border:none;background:transparent;font-size:15px;outline:none;box-shadow:none;padding:0}
 .sm-chips{display:flex;flex-wrap:wrap;gap:6px;padding:10px 16px;border-bottom:1px solid var(--line)}
 .sm-chip{padding:3px 10px;border-radius:999px;background:var(--bg2);border:1px solid var(--line);

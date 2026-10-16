@@ -46,7 +46,8 @@ function renderSidebar() {
     pulse.title = g.busy ? '运行中' : (g.open ? '已展开' : '已折叠');
     if (!g.open) pulse.style.background = 'var(--fg3)';
     head.appendChild(pulse);
-    const gdel = el('button', 'gdel', '🗑');
+    const gdel = el('button', 'gdel');
+    gdel.appendChild(iconEl('trash', 'sm'));
     gdel.title = '删除工作区（移除全部会话记录，保留目录）';
     gdel.style.marginLeft = 'auto';
     gdel.onclick = ev => { ev.stopPropagation(); deleteWorkspace(g.ws); };
@@ -92,7 +93,8 @@ function renderSidebar() {
       if (s.busy) { const d = el('span', 'dot run'); d.style.marginLeft = 'auto'; meta.appendChild(d); }
       it.appendChild(title);
       it.appendChild(meta);
-      const del = el('button', 'idel', '🗑');
+      const del = el('button', 'idel');
+      del.appendChild(iconEl('trash', 'sm'));
       del.title = '删除会话';
       del.onclick = ev => { ev.stopPropagation(); deleteSession(s); };
       it.appendChild(del);
@@ -154,7 +156,8 @@ function renderTabbar() {
     tb.oncontextmenu = ev => { ev.preventDefault(); tabMenu(ev, ws); };
     nodes.push(tb);
   }
-  const add = el('button', 'tab-add', '➕');
+  const add = el('button', 'tab-add');
+  add.appendChild(iconEl('plus'));
   add.title = '打开工作区 / 最近关闭';
   add.onclick = ev => { ev.stopPropagation(); tabAddMenu(ev); };
   nodes.push(add);
@@ -184,7 +187,7 @@ function tabAddMenu(ev) {
   const r = ev.currentTarget.getBoundingClientRect();
   const m = el('div', 'tabmenu');
   const open = el('button');
-  open.innerHTML = '📂 <span class="grow">打开工作区…</span>';
+  open.innerHTML = iconHtml('folder') + '<span class="grow">打开工作区…</span>';
   open.onclick = () => { hideTabMenu(); openWsDialog(); };
   m.appendChild(open);
   const list = S.closedTabs.filter(x => !S.workspaces.some(w => w.cwd === x.cwd));
@@ -196,7 +199,7 @@ function tabAddMenu(ev) {
       const row = el('div', 'mrow');
       row.appendChild(el('span', 'mtitle trunc', baseName(c.cwd)));
       row.appendChild(el('span', 'mpath', c.cwd));
-      b.appendChild(el('span', null, '🗂'));
+      b.appendChild(iconEl('archive', 'sm'));
       b.appendChild(row);
       b.appendChild(el('span', 'tiny dim', relTime(c.ts)));
       b.title = c.cwd;
@@ -367,8 +370,9 @@ function renderThinkBtn() {
   if (!S.tabs.get(S.active)) return;
   const lv = Number((S.settings || {}).think_level || 0);
   const l = THINK_LEVELS[lv] || THINK_LEVELS[0];
-  const b = el('button', 'btn ghost sm thkbtn' + (lv > 0 ? ' on' : ''),
-               '💭 思考：' + (lv > 0 ? l.name + ' (' + l.v + ')' : '关'));
+  const b = el('button', 'btn ghost sm thkbtn' + (lv > 0 ? ' on' : ''));
+  b.appendChild(iconEl('bulb', 'sm'));
+  b.appendChild(el('span', null, '思考：' + (lv > 0 ? l.name + ' (' + l.v + ')' : '关')));
   b.title = '快捷设置思考开关与强度';
   b.onclick = () => toggleThinkMenu(b);
   box.appendChild(b);
@@ -426,7 +430,9 @@ function ensurePane(ws) {
   const ctitle = el('span', 'cht-title trunc', ''); ctitle.title = ws;
   head.appendChild(ctitle);
   head.appendChild(el('span', 'grow'));
-  const clearBtn = el('button', 'btn ghost sm danger', '🗑 清空上下文');
+  const clearBtn = el('button', 'btn ghost sm danger');
+  clearBtn.appendChild(iconEl('trash', 'sm'));
+  clearBtn.appendChild(el('span', null, '清空上下文'));
   clearBtn.title = '清空当前会话上下文（/clear，会中断正在进行的回合）';
   clearBtn.onclick = () => clearSession(ws);
   head.appendChild(clearBtn);
@@ -537,7 +543,9 @@ function renderNoWs() {
   box.appendChild(el('h2', null, '打开一个目录开始'));
   box.appendChild(el('div', 'dim', 'cell 不会自动进入任何目录。选一个工作区后，会在其中恢复上次的会话，或新建一条。'));
   const hints = el('div', 'hints');
-  const open = el('div', 'hint', '📂 打开工作区');
+  const open = el('div', 'hint');
+  open.appendChild(iconEl('folder'));
+  open.appendChild(el('span', null, '打开工作区'));
   open.onclick = () => openWsDialog();
   hints.appendChild(open);
   // 最近关闭过的工作区可以直接接回来，省掉一次目录选择

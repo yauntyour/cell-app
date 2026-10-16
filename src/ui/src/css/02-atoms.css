@@ -29,7 +29,7 @@
 .kbd{font-family:var(--mono);font-size:10.5px;padding:1px 5px;border-radius:4px;
   background:var(--raise);border:1px solid var(--line);color:var(--fg2)}
 .badge{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;
-  padding:0 5px;border-radius:999px;color:#fff;font-size:10px;font-weight:700;background:var(--accent)}
+  padding:0 5px;border-radius:999px;color:var(--bg);font-size:10px;font-weight:700;background:var(--accent)}
 /* 2.5 按钮原子（扁平；primary = 黑白反转，accent 只做高亮） */
 .btn{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:var(--radius-s);
   background:var(--raise);border:1px solid var(--line);color:var(--fg);
@@ -45,7 +45,7 @@
 .btn.danger:hover{background:color-mix(in srgb,var(--bad) 10%,transparent)}
 .btn.sm{padding:3px 8px;font-size:12px}
 .btn[disabled]{opacity:.45;pointer-events:none}
-/* 2.6 表单原子（细边输入槽，焦点蓝环） */
+/* 2.6 表单原子（细边输入槽，焦点亮环） */
 .field{display:flex;flex-direction:column;gap:4px}
 .field label{font-size:11px;color:var(--fg2);font-weight:600;letter-spacing:.02em}
 input[type=text],input[type=password],input[type=number],textarea,select{
@@ -65,10 +65,19 @@ textarea{resize:vertical;font-family:inherit}
 .seg button:hover:not(.on){background:var(--raise)}
 .switch{position:relative;width:38px;height:21px;border-radius:999px;
   background:var(--line2);flex:none;transition:background var(--dur) var(--ease)}
+/* 黑白灰深色：关 = 深轨 + 亮钮；开 = 亮轨 + 深钮（与 primary 按钮同一套反转语言） */
 .switch::after{content:"";position:absolute;top:3px;left:3px;width:15px;height:15px;border-radius:50%;
-  background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.25);transition:transform var(--dur) var(--ease)}
+  background:var(--fg);box-shadow:0 1px 2px rgba(0,0,0,.35);
+  transition:transform var(--dur) var(--ease),background var(--dur) var(--ease)}
 .switch.on{background:var(--accent)}
-.switch.on::after{transform:translateX(17px)}
+.switch.on::after{transform:translateX(17px);background:var(--bg)}
 /* 2.7 卡片原子 */
 .card{background:var(--bg2);border:1px solid var(--line);border-radius:var(--radius);padding:13px}
 .card+.card{margin-top:10px}
+/* 2.8 图标原子 —— 黑白灰界面不用彩色 emoji：全部图标都是内联单色 SVG
+   （stroke 取 currentColor），与顶栏 .nbtn 同一套笔画语言；尺寸变体
+   .sm（小 chip）/.lg（搜索框图标）。路径表见 00-core.js 的 ICON_PATHS。 */
+.uico{width:14px;height:14px;flex:none;display:block;fill:none;stroke:currentColor;
+  stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+.uico.sm{width:12px;height:12px;stroke-width:2}
+.uico.lg{width:16px;height:16px;stroke-width:1.8}

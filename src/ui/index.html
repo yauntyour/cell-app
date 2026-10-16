@@ -9,53 +9,55 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="color-scheme" content="light dark">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#0e0e10">
 <title>cell · 本地代理工作台</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 500 500'%3E%3Cstyle%3E@media (prefers-color-scheme:dark){g{stroke:%23e7e9ec}}%3C/style%3E%3Cg fill='none' stroke='%231f2328' stroke-width='30' stroke-linejoin='miter' stroke-linecap='square'%3E%3Crect x='90' y='90' width='320' height='320'/%3E%3Cpath d='M 170 170 L 170 330 L 250 330 L 250 170 L 330 170 L 330 410'/%3E%3C/g%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 500 500'%3E%3Crect x='10' y='10' width='480' height='480' rx='104' fill='%23141416' stroke='%2335353a' stroke-width='14'/%3E%3Cg fill='none' stroke='%23e8e8ea' stroke-width='30' stroke-linejoin='miter' stroke-linecap='square'%3E%3Crect x='90' y='90' width='320' height='320'/%3E%3Cpath d='M 170 170 L 170 330 L 250 330 L 250 170 L 330 170 L 330 410'/%3E%3C/g%3E%3C/svg%3E">
 <style>
 /* ==== css/00-tokens.css =============================================== */
 
 /* =====================================================================
    §0 设计令牌 —— 与 cell.cpp /export 导出页同一套
 
-   默认外观就是参考页（导出页）的形式：`:root` 是浅色，深浅跟随系统
-   （prefers-color-scheme，导出页亦然），没有任何内置主题可切换。
-   角色令牌（--user/--assistant/--tool/--system/--other）与排版令牌
-   （--line-soft/--code-bg/--link）逐值抄自导出页，保证「界面里的会话」
-   与「导出的会话」同源。
+   外观锁定为黑白灰深色：整个界面只有中性灰阶（无蓝、无彩色），
+   减少蓝光。`:root` 直接是深色值，不再跟随系统深浅，也没有内置主题
+   可切换。角色令牌（--user/--assistant/--tool/--system/--other）与排版
+   令牌（--line-soft/--code-bg/--link）仍是导出页同源的那一套名字，但
+   取值全部换成灰阶——保证「界面里的会话」与「导出的会话」同一套语言。
 
    两组令牌的分工：
      · 导出页令牌（--bg/--fg/--line/--line-soft/--code-bg/--link/--ok/
        --run/--bad/--user/--assistant/--tool/--system/--other）：消息流的
-       语义色，正文与角色点只用它们。
+       语义色，正文与角色点只用它们（现为灰阶，靠明度区分）。
      · 外壳令牌（--bg2/--panel/--raise/--line2/--fg2/--fg3/--accent/…）：
        桌面壳的骨架（侧栏 / 标签栏 / dock / 弹窗 / 浮窗），全部由上面这组
        中性色派生，不引入第二套色相；--accent 就等于 --link，是界面里
        唯一的高亮色。
    第三方主题（<exe 目录>/.cell/theme/<name>/theme.css）由 Theme 模块注入
    <style id="theme-ext">，位置在本文件之后，同特异性下后写者胜——因此只
-   重定义变量即可完整换肤，深浅也不例外。
+   重定义变量即可完整换肤。
    ===================================================================== */
 :root{
-  color-scheme:light dark;
-  /* ---- 导出页原值 · 浅色 ------------------------------------------- */
-  --bg:#ffffff;
-  --fg:#1f2328; --fg2:#5c6570; --fg3:#8b939c;   /* = --fg-dim / --fg-faint */
-  --line:#e7e9ec; --line-soft:#f1f2f4; --code-bg:#f6f7f8;
-  --link:#1a6ee5;
-  --ok:#0f7b4f; --run:#a8730c; --bad:#c0392b;
-  --user:#3b82f6; --assistant:#10a37f; --tool:#7c6cf0;
-  --system:#c9871f; --other:#a8b0b9;
+  color-scheme:dark;
+  /* ---- 导出页原值 · 深色灰阶 --------------------------------------- */
+  --bg:#0e0e10;
+  --fg:#e8e8ea; --fg2:#a6a6ab; --fg3:#77777d;   /* = --fg-dim / --fg-faint */
+  --line:#26262a; --line-soft:#1d1d20; --code-bg:#161618;
+  --link:#d4d4d8;
+  /* 语义色：灰阶（靠明度区分状态） */
+  --ok:#c9c9ce; --run:#9a9aa0; --bad:#efefef;
+  --user:#b8b8be; --assistant:#dcdce0; --tool:#8f8f95;
+  --system:#a9a9af; --other:#77777d;
 
-  /* ---- 外壳派生 · 浅色（全部取自上面这组中性色） ------------------- */
-  --bg2:#fafbfc; --bg3:#f6f7f8;             /* 面板 / 代码底 */
-  --panel:#fafbfc; --panel2:#ffffff;         /* 侧栏·导航 / 浮层 */
-  --raise:#f1f2f4;                           /* 悬停 = --line-soft */
-  --line2:#d7dade;                           /* 强边框：输入槽 / 悬停 */
-  --accent:#1a6ee5; --accent-soft:rgba(26,110,229,.09);
-  --warn:#a8730c;                            /* = --run（导出页的琥珀） */
-  --shadow:0 8px 24px rgba(31,35,40,.10),0 1px 2px rgba(31,35,40,.06);
-  --shadow-sm:0 1px 2px rgba(31,35,40,.06);
+  /* ---- 外壳派生 · 深色灰阶 ----------------------------------------- */
+  --bg2:#141416; --bg3:#161618;             /* 面板 / 代码底 */
+  --panel:#141416; --panel2:#1a1a1d;         /* 侧栏·导航 / 浮层 */
+  --raise:#1d1d20;                           /* 悬停 = --line-soft */
+  --line2:#35353a;                           /* 强边框：输入槽 / 悬停 */
+  --accent:#d4d4d8; --accent-soft:rgba(212,212,216,.12);
+  --warn:#9a9aa0;                            /* = --run */
+  --shadow:0 8px 24px rgba(0,0,0,.50),0 1px 2px rgba(0,0,0,.40);
+  --shadow-sm:0 1px 2px rgba(0,0,0,.40);
 
   /* ---- 形状 · 字体 · 动效 ------------------------------------------ */
   --radius:10px; --radius-s:6px;             /* 导出页 .fbox / pre.code */
@@ -72,29 +74,6 @@
   --composer-max:760px;
   /* 悬浮输入卡的高度，由 #rzComposer 拖动写入（见 03-layout.js） */
   --composer-h:148px;
-}
-
-/* 深色跟随系统：与导出页的 @media (prefers-color-scheme:dark) 同一份取值。
-   第三方主题的 <style> 追加在本文件之后，同特异性下覆盖这里的每一个值。 */
-@media (prefers-color-scheme:dark){
-  :root{
-    --bg:#0f1115;
-    --fg:#e7e9ec; --fg2:#a2a9b4; --fg3:#767e88;
-    --line:#23262c; --line-soft:#1c1f24; --code-bg:#16181d;
-    --link:#79b0f7;
-    --ok:#4bbf8a; --run:#dcae52; --bad:#e2705f;
-    --user:#6aa8f5; --assistant:#3ecfa4; --tool:#a795fb;
-    --system:#e0b062; --other:#767e88;
-
-    --bg2:#14171b; --bg3:#16181d;
-    --panel:#14171b; --panel2:#1a1e23;
-    --raise:#1c1f24;
-    --line2:#333840;
-    --accent:#79b0f7; --accent-soft:rgba(121,176,247,.14);
-    --warn:#dcae52;
-    --shadow:0 8px 24px rgba(0,0,0,.50),0 1px 2px rgba(0,0,0,.40);
-    --shadow-sm:0 1px 2px rgba(0,0,0,.40);
-  }
 }
 
 /* ==== css/01-base.css ================================================= */
@@ -152,7 +131,7 @@ a{color:var(--accent)}
 .kbd{font-family:var(--mono);font-size:10.5px;padding:1px 5px;border-radius:4px;
   background:var(--raise);border:1px solid var(--line);color:var(--fg2)}
 .badge{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;
-  padding:0 5px;border-radius:999px;color:#fff;font-size:10px;font-weight:700;background:var(--accent)}
+  padding:0 5px;border-radius:999px;color:var(--bg);font-size:10px;font-weight:700;background:var(--accent)}
 /* 2.5 按钮原子（扁平；primary = 黑白反转，accent 只做高亮） */
 .btn{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:var(--radius-s);
   background:var(--raise);border:1px solid var(--line);color:var(--fg);
@@ -168,7 +147,7 @@ a{color:var(--accent)}
 .btn.danger:hover{background:color-mix(in srgb,var(--bad) 10%,transparent)}
 .btn.sm{padding:3px 8px;font-size:12px}
 .btn[disabled]{opacity:.45;pointer-events:none}
-/* 2.6 表单原子（细边输入槽，焦点蓝环） */
+/* 2.6 表单原子（细边输入槽，焦点亮环） */
 .field{display:flex;flex-direction:column;gap:4px}
 .field label{font-size:11px;color:var(--fg2);font-weight:600;letter-spacing:.02em}
 input[type=text],input[type=password],input[type=number],textarea,select{
@@ -188,13 +167,22 @@ textarea{resize:vertical;font-family:inherit}
 .seg button:hover:not(.on){background:var(--raise)}
 .switch{position:relative;width:38px;height:21px;border-radius:999px;
   background:var(--line2);flex:none;transition:background var(--dur) var(--ease)}
+/* 黑白灰深色：关 = 深轨 + 亮钮；开 = 亮轨 + 深钮（与 primary 按钮同一套反转语言） */
 .switch::after{content:"";position:absolute;top:3px;left:3px;width:15px;height:15px;border-radius:50%;
-  background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.25);transition:transform var(--dur) var(--ease)}
+  background:var(--fg);box-shadow:0 1px 2px rgba(0,0,0,.35);
+  transition:transform var(--dur) var(--ease),background var(--dur) var(--ease)}
 .switch.on{background:var(--accent)}
-.switch.on::after{transform:translateX(17px)}
+.switch.on::after{transform:translateX(17px);background:var(--bg)}
 /* 2.7 卡片原子 */
 .card{background:var(--bg2);border:1px solid var(--line);border-radius:var(--radius);padding:13px}
 .card+.card{margin-top:10px}
+/* 2.8 图标原子 —— 黑白灰界面不用彩色 emoji：全部图标都是内联单色 SVG
+   （stroke 取 currentColor），与顶栏 .nbtn 同一套笔画语言；尺寸变体
+   .sm（小 chip）/.lg（搜索框图标）。路径表见 00-core.js 的 ICON_PATHS。 */
+.uico{width:14px;height:14px;flex:none;display:block;fill:none;stroke:currentColor;
+  stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+.uico.sm{width:12px;height:12px;stroke-width:2}
+.uico.lg{width:16px;height:16px;stroke-width:1.8}
 
 /* ==== css/03-molecules.css ============================================ */
 
@@ -203,11 +191,12 @@ textarea{resize:vertical;font-family:inherit}
 .sb-head{padding:12px 12px 8px;display:flex;flex-direction:column;gap:9px;
   border-bottom:1px solid var(--line)}
 .brand{display:flex;align-items:center;gap:9px;font-weight:700;letter-spacing:.02em;font-size:14px}
-/* 静止状态 logo：icon.svg（静态分形）；运动状态由 .busy 切换为渐变动画头像 */
-/* 品牌标识：静止态描边取 currentColor（随主题深浅），运行态换渐变底板 */
+/* 静止状态 logo：icon.svg（静态分形）；运动状态由 .busy 切换为描线动画头像 */
+/* 品牌标识：静止态描边取 currentColor；运行态换灰阶底板（浅底 + 深描边，
+   与 primary 按钮同一种反转） */
 .brand .logo{width:19px;height:19px;flex:none;color:var(--fg);display:flex;align-items:center;
   justify-content:center;transition:color var(--dur) var(--ease),background var(--dur) var(--ease)}
-.brand .logo.busy{color:#fff;background:linear-gradient(135deg,#2563EB,#7C3AED);border-radius:5px}
+.brand .logo.busy{color:var(--bg);background:linear-gradient(135deg,#e8e8ea,#8f8f95);border-radius:5px}
 .brand .logo svg{display:block;width:100%;height:100%}
 .sb-actions{display:flex;gap:6px}
 .sb-actions .btn{flex:1;justify-content:center}
@@ -237,7 +226,7 @@ textarea{resize:vertical;font-family:inherit}
   transition:color var(--dur) var(--ease),background var(--dur) var(--ease),
   border-color var(--dur) var(--ease),opacity var(--dur) var(--ease)}
 .sgroup-head:hover .gdel{opacity:1}
-.sgroup-head .gdel:hover{opacity:1;color:#fff;background:var(--bad);border-color:var(--bad)}
+.sgroup-head .gdel:hover{opacity:1;color:var(--bg);background:var(--bad);border-color:var(--bad)}
 .sitem{display:flex;flex-direction:column;gap:2px;padding:7px 28px 7px 9px;border-radius:var(--radius-s);
   cursor:pointer;border:1px solid transparent;position:relative;
   transition:background var(--dur) var(--ease),border-color var(--dur) var(--ease)}
@@ -250,7 +239,7 @@ textarea{resize:vertical;font-family:inherit}
   transition:color var(--dur) var(--ease),background var(--dur) var(--ease),
   border-color var(--dur) var(--ease),opacity var(--dur) var(--ease)}
 .sitem:hover .idel{opacity:1}
-.sitem .idel:hover{opacity:1;color:#fff;background:var(--bad);border-color:var(--bad)}
+.sitem .idel:hover{opacity:1;color:var(--bg);background:var(--bad);border-color:var(--bad)}
 .sitem:hover{background:var(--raise)}
 .sitem.active{background:var(--accent-soft);border-color:color-mix(in srgb,var(--accent) 30%,transparent)}
 .sitem.active::before{content:"";position:absolute;left:-1px;top:8px;bottom:8px;width:2px;
@@ -261,7 +250,7 @@ textarea{resize:vertical;font-family:inherit}
 .sitem .smeta .stag{padding:0 5px;border-radius:4px;font-size:9.5px;line-height:15px;
   border:1px solid var(--line);color:var(--fg2);background:var(--bg2)}
 .sitem .smeta .stag.tw{color:var(--accent);border-color:var(--accent-soft);background:var(--accent-soft)}
-.sitem .smeta .stag.ar{color:var(--warn,#b45309);border-color:var(--line2)}
+.sitem .smeta .stag.ar{color:var(--warn);border-color:var(--line2)}
 .sitem .ubadge{margin-left:auto}
 .sb-foot{padding:9px 12px;border-top:1px solid var(--line);display:flex;align-items:center;gap:8px}
 .sb-foot .model{font-family:var(--mono);font-size:11.5px;color:var(--fg2)}
@@ -271,7 +260,7 @@ textarea{resize:vertical;font-family:inherit}
    侧栏能拖到很窄（比例下限 10%，像素护栏 180px）。按侧栏自身宽度降级——
    拖窄侧栏时窗口宽度并没有变，媒体查询察觉不到。
    实测（Edge/WebView2 同一字体栈）：≥220px 时两个动作按钮一行放得下；
-   <220px 时「➕新会话 / 📂工作区」被拦腰折行（"新会/话"、"工作/区"），
+   <220px 时「新会话 / 工作区」按钮被拦腰折行（"新会/话"、"工作/区"），
    会话 meta 行还在 span 内部断行（"3 条"→"3/条"、"团队 2"→"团队/2"）。
    240px 起降级（留足字体度量余量）：装饰图标收起、文字保持一行
    （万一放不下以省略号收尾，不再拦腰折行），meta 只允许在 span
@@ -286,7 +275,10 @@ textarea{resize:vertical;font-family:inherit}
      flex 子项不会显示省略号） */
   .sb-actions .btn{flex:1 1 0;min-width:0;display:block;text-align:center;
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .sb-actions .sb-ico{width:30px;padding:4px 0}
+  /* 搜索按钮没有文字，不吃上面的 block 降级：block 布局下 text-align 管不到
+     display:block 的 SVG 图标（会贴左上角），保留 flex 居中 */
+  .sb-actions .sb-ico{width:30px;padding:4px 0;display:inline-flex;
+    align-items:center;justify-content:center}
   #sessionList{padding:6px 4px 12px}
   .sgroup-head{padding:5px 6px;gap:6px}
   .sitem{padding:6px 26px 6px 8px}
@@ -316,7 +308,7 @@ textarea{resize:vertical;font-family:inherit}
   opacity:0;transition:opacity var(--dur) var(--ease),background var(--dur) var(--ease),color var(--dur) var(--ease)}
 .tab:hover .x{opacity:.85}
 .tab.active .x{opacity:.7}
-.tab .x:hover{opacity:1;background:var(--bad);color:#fff;border-color:transparent}
+.tab .x:hover{opacity:1;background:var(--bad);color:var(--bg);border-color:transparent}
 .tab-add{flex:none;padding:0 12px;color:var(--fg3);font-size:13px;line-height:1;
   transition:color var(--dur) var(--ease)}
 .tab-add:hover{color:var(--accent)}
@@ -344,16 +336,17 @@ textarea{resize:vertical;font-family:inherit}
 /* 清空上下文：高危操作 —— 红色描边 chip，悬停实底，与侧栏删除按钮同一视觉语言 */
 .chathead .btn.danger{border:1px solid color-mix(in srgb,var(--bad) 40%,transparent);
   color:var(--bad);background:color-mix(in srgb,var(--bad) 7%,transparent)}
-.chathead .btn.danger:hover{color:#fff;background:var(--bad);border-color:var(--bad)}
+.chathead .btn.danger:hover{color:var(--bg);background:var(--bad);border-color:var(--bad)}
 /* 3.5 团队协作 / 通知流 */
 .dockhead{height:44px;flex:none;display:flex;align-items:center;gap:8px;padding:0 12px;
   border-bottom:1px solid var(--line)}
 .docktabs{display:flex;gap:2px;padding:8px 12px 0;min-width:0;overflow-x:auto}
 /* nowrap + flex:none：窄 panel 下 CJK 标签的最小宽度是「一个字」，
-   不加这两条 flex 会把「🔔 通知」压成「🔔 通／知」竖排（窗口不最大化时）。
+   不加这两条 flex 会把「通知」压成「通／知」竖排（窗口不最大化时）。
    内边距取 7px：三个标签（Teamwork/通知/存档）在 ~286px 的 panel 里正好排开，
    再窄由 .docktabs 的横向滚动兜底 */
-.docktab{padding:5px 7px;font-size:12px;color:var(--fg2);white-space:nowrap;flex:none;
+.docktab{display:inline-flex;align-items:center;gap:5px;
+  padding:5px 7px;font-size:12px;color:var(--fg2);white-space:nowrap;flex:none;
   border-radius:var(--radius-s) var(--radius-s) 0 0;border-bottom:2px solid transparent}
 .docktab.on{color:var(--fg);border-bottom-color:var(--accent);font-weight:650}
 .dockbody{flex:1;overflow-y:auto;padding:12px}
@@ -413,7 +406,8 @@ textarea{resize:vertical;font-family:inherit}
 .rz-composer{z-index:5;margin-bottom:0}
 .modes-hint{margin-left:auto;flex:none}
 .modes{display:flex;align-items:center;gap:4px;margin-bottom:8px}
-.modebtn{padding:4px 11px;border-radius:999px;font-size:11.5px;color:var(--fg2);
+.modebtn{display:inline-flex;align-items:center;gap:5px;
+  padding:4px 11px;border-radius:999px;font-size:11.5px;color:var(--fg2);
   border:1px solid transparent;transition:all var(--dur) var(--ease)}
 .modebtn.on{background:var(--accent-soft);color:var(--accent);
   border-color:color-mix(in srgb,var(--accent) 30%,transparent);font-weight:650}
@@ -602,7 +596,7 @@ textarea{resize:vertical;font-family:inherit}
 .toast.ok{border-color:color-mix(in srgb,var(--ok) 45%,var(--line2))}
 .toast.leaving{animation:toastOut 220ms var(--ease) forwards}
 #reconnect{position:absolute;top:0;left:0;right:0;padding:4px;text-align:center;font-size:11.5px;
-  font-weight:650;background:var(--warn);color:#fff;display:none;z-index:40}
+  font-weight:650;background:var(--warn);color:var(--bg);display:none;z-index:40}
 #reconnect.show{display:block}
 .ctxmenu{position:fixed;z-index:130;background:var(--panel2);border:1px solid var(--line2);
   border-radius:var(--radius-s);box-shadow:var(--shadow);padding:4px;min-width:160px;
@@ -707,7 +701,8 @@ textarea{resize:vertical;font-family:inherit}
   border:1px solid var(--line2);border-radius:var(--radius);box-shadow:var(--shadow);
   display:flex;flex-direction:column;overflow:hidden}
 .sm-head{display:flex;align-items:center;gap:10px;padding:13px 16px;border-bottom:1px solid var(--line)}
-.sm-head .sm-ico{font-size:15px;opacity:.6;flex:none}
+.sm-head .sm-ico{display:flex;align-items:center;opacity:.6;flex:none}
+.sm-head .sm-ico .uico{width:16px;height:16px;stroke-width:1.8}
 .sm-head input{flex:1;border:none;background:transparent;font-size:15px;outline:none;box-shadow:none;padding:0}
 .sm-chips{display:flex;flex-wrap:wrap;gap:6px;padding:10px 16px;border-bottom:1px solid var(--line)}
 .sm-chip{padding:3px 10px;border-radius:999px;background:var(--bg2);border:1px solid var(--line);
@@ -744,7 +739,7 @@ mark{background:var(--accent-soft);color:var(--accent);border-radius:3px;padding
      · 折叠块（思考 / 摘要）用 <details>-式的按钮 + 面板，点击即开；
        工具结果与工具调用直接用 <details>（见 5.4b），主会话与子代理浮窗
        共用 renderContentHtml / renderMarkdown，两处排版逐字一致。
-   深浅跟随系统（prefers-color-scheme），与导出页同一套令牌（见 00-tokens.css）。
+   外观锁定为黑白灰深色（无彩色、无蓝光，见 00-tokens.css），与导出页同一套令牌。
    ===================================================================== */
 
 /* ---- 5.1 流容器 ----------------------------------------------------
@@ -817,7 +812,8 @@ mark{background:var(--accent-soft);color:var(--accent);border-radius:3px;padding
   border-radius:4px;padding:1px 4px;overflow-wrap:anywhere}
 .prose strong{font-weight:650}
 .prose em{font-style:italic}
-.prose a{color:var(--link)}
+/* 灰阶界面里链接没有色相可辨：用下划线承担「这是链接」 */
+.prose a{color:var(--link);text-decoration:underline;text-underline-offset:2px}
 .prose .codeblock{margin:0 0 14px}
 .prose .codeblock:last-child{margin-bottom:0}
 .prose .lang{display:block;margin-bottom:6px;font-family:var(--mono);font-size:11px;
@@ -937,7 +933,8 @@ mark{background:var(--accent-soft);color:var(--accent);border-radius:3px;padding
 .chat .empty{max-width:var(--chat-max);margin:8vh auto 0;padding:0 22px;text-align:center;color:var(--fg3)}
 .chat .empty h2{font-size:19px;color:var(--fg2);font-weight:650;margin:0 0 6px}
 .chat .empty .hints{display:flex;flex-wrap:wrap;gap:7px;justify-content:center;margin-top:16px}
-.hint{padding:6px 12px;border-radius:999px;background:var(--bg2);
+.hint{display:inline-flex;align-items:center;gap:6px;
+  padding:6px 12px;border-radius:999px;background:var(--bg2);
   border:1px solid var(--line);font-size:12px;color:var(--fg2);cursor:pointer;
   transition:all var(--dur) var(--ease)}
 .hint:hover{border-color:var(--accent);color:var(--accent)}
@@ -962,7 +959,7 @@ mark{background:var(--accent-soft);color:var(--accent);border-radius:3px;padding
    .frail / .fdot / .fbox / .fhd / .fbr.fan / .frow / .kbadge）：一条竖轨
    （用 border 画，不用 SVG），每个阶段一个节点，并行阶段把子代理扇出成分
    支盒，关卡（gate）用虚线框 + 菱形点，首尾各一个起点 / 状态终点。
-   导出页只有深色，本 UI 用主题令牌提供深浅两套。
+   导出页只有深色，本 UI 的默认令牌同样是深色（黑白灰），第三方主题可覆盖。
    ===================================================================== */
 
 /* ---- 6.1 任务卡 ---------------------------------------------------- */
@@ -1126,19 +1123,20 @@ html[data-anim="0"] .cursor::after{opacity:1}
   <aside id="sidebar">
     <div class="sb-head">
       <div class="brand">
-        <!-- 静止状态 logo：icon.svg 内联（静态分形）；运动状态由 JS 切换为渐变动画头像 -->
+        <!-- 静止状态 logo：与 assets/icon.svg 同形（单色描边，随主题取 currentColor）；
+             运动状态由 JS 切换为描线动画头像（灰阶底板） -->
         <span class="logo" id="brandLogo" title="cell"><svg viewBox="0 0 500 500" xmlns="http://www.w3.org/2000/svg"><g fill="none" stroke="currentColor" stroke-width="30" stroke-linejoin="miter" stroke-linecap="square"><rect x="90" y="90" width="320" height="320"/><path d="M 170 170 L 170 330 L 250 330 L 250 170 L 330 170 L 330 410"/></g></svg></span><span>cell</span>
         </div>
       <div class="sb-actions">
-        <button class="btn sm" id="btnNewSession" title="新建会话 (Ctrl+N)"><span class="bico">➕</span>新会话</button>
-        <button class="btn sm" id="btnOpenWs" title="打开工作区"><span class="bico">📂</span>工作区</button>
-        <button class="btn sm sb-ico" id="btnSearch" title="搜索全部会话内容 (Ctrl+Shift+F)">🔍</button>
+        <button class="btn sm" id="btnNewSession" title="新建会话 (Ctrl+N)"><span class="bico"><svg class="uico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></span>新会话</button>
+        <button class="btn sm" id="btnOpenWs" title="打开工作区"><span class="bico"><svg class="uico" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg></span>工作区</button>
+        <button class="btn sm sb-ico" id="btnSearch" title="搜索全部会话内容 (Ctrl+Shift+F)"><svg class="uico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20.5 20.5 16.2 16.2"/></svg></button>
       </div>
     </div>
     <div id="sessionList"></div>
     <div class="sb-foot">
       <span class="grow"></span>
-      <button class="btn ghost sm" id="btnSettings" title="设置 (Ctrl+,)">⚙️</button>
+      <button class="btn ghost sm" id="btnSettings" title="设置 (Ctrl+,)"><svg class="uico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8.5h8.5M17.5 8.5H20M4 15.5h2.5M11.5 15.5H20"/><circle cx="15" cy="8.5" r="2.2"/><circle cx="9" cy="15.5" r="2.2"/></svg></button>
     </div>
   </aside>
   <div class="rz rz-v" id="rzSidebar" role="separator" aria-orientation="vertical"
@@ -1162,9 +1160,9 @@ html[data-anim="0"] .cursor::after{opacity:1}
                  tabindex="0" title="拖动调整输入栏高度（↑/↓ 微调，Shift 加速）"></div>
             <div class="composer-inner">
             <div class="modes">
-              <button class="modebtn on" data-mode="text" id="modeText">📝 文本</button>
-              <button class="modebtn" data-mode="attach" id="modeAttach">📎 附件</button>
-              <button class="modebtn" data-mode="team" id="modeTeam">🤝 Teamwork</button>
+              <button class="modebtn on" data-mode="text" id="modeText"><svg class="uico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4.6 19.4l.9-3.5L16.7 4.7a2.1 2.1 0 0 1 3 3L8.5 18.9l-3.9.5Z"/><path d="M14.9 6.5l2.8 2.8"/></svg>文本</button>
+              <button class="modebtn" data-mode="attach" id="modeAttach"><svg class="uico" viewBox="0 0 24 24" aria-hidden="true"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>附件</button>
+              <button class="modebtn" data-mode="team" id="modeTeam"><svg class="uico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 19.5a5.5 5.5 0 0 1 11 0"/><path d="M16 5.4a3.2 3.2 0 0 1 0 5.2M17.8 14.6a5.5 5.5 0 0 1 2.7 4.9"/></svg>Teamwork</button>
               <span class="dim small modes-hint">Shift+Tab 切换模式</span>
             </div>
             <div class="inputbox" id="inputBox">
@@ -1173,7 +1171,7 @@ html[data-anim="0"] .cursor::after{opacity:1}
                 <button class="sendbtn" id="sendBtn" title="发送 (Enter)" aria-label="发送"><svg class="ico-send" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 21 20.5 12 15.8 3 20.5Z" fill="currentColor" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg></button>
               </div>
               <div class="attachbar" id="attachBar" hidden>
-                <button class="btn ghost sm" id="btnPickFile" title="选择要发送的文件">📎 选择文件</button>
+                <button class="btn ghost sm" id="btnPickFile" title="选择要发送的文件"><svg class="uico" viewBox="0 0 24 24" aria-hidden="true"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>选择文件</button>
                 <span class="dim tiny">也可把文件拖进输入栏，或直接粘贴</span>
               </div>
               <div class="chips" id="chips"></div>
@@ -1196,9 +1194,9 @@ html[data-anim="0"] .cursor::after{opacity:1}
       <aside id="rightdock">
         <div class="dockhead">
           <div class="docktabs" style="padding:0">
-            <button class="docktab on" data-dock="teamwork">🤝 Teamwork</button>
-            <button class="docktab" data-dock="notices">🔔 通知</button>
-            <button class="docktab" data-dock="archives">🗂 存档</button>
+            <button class="docktab on" data-dock="teamwork"><svg class="uico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 19.5a5.5 5.5 0 0 1 11 0"/><path d="M16 5.4a3.2 3.2 0 0 1 0 5.2M17.8 14.6a5.5 5.5 0 0 1 2.7 4.9"/></svg>Teamwork</button>
+            <button class="docktab" data-dock="notices"><svg class="uico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>通知</button>
+            <button class="docktab" data-dock="archives"><svg class="uico" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4.5" width="18" height="4.5" rx="1.2"/><path d="M5 9v9.5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9"/><path d="M10 13h4"/></svg>存档</button>
           </div>
           <span class="grow"></span>
           <button class="btn ghost sm" id="dockClose" title="收起">✕</button>
@@ -1288,6 +1286,35 @@ function esc(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, c =>
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
+
+/* ---------- 内联单色图标 -------------------------------------------
+   黑白灰界面里不用彩色 emoji：所有按钮/标签图标都是 24 格内联 SVG，
+   形状按「一套笔画」选取，着色交给 CSS（.uico，stroke=currentColor，
+   见 02-atoms.css §2.8）。iconHtml 给 innerHTML 场景，iconEl 给
+   appendChild 场景；名字取不到时返回空 SVG（不抛错）。              */
+const ICON_PATHS = {
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  folder: '<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
+  search: '<circle cx="11" cy="11" r="7"/><path d="M20.5 20.5 16.2 16.2"/>',
+  sliders: '<path d="M4 8.5h8.5M17.5 8.5H20M4 15.5h2.5M11.5 15.5H20"/><circle cx="15" cy="8.5" r="2.2"/><circle cx="9" cy="15.5" r="2.2"/>',
+  pencil: '<path d="M4.6 19.4l.9-3.5L16.7 4.7a2.1 2.1 0 0 1 3 3L8.5 18.9l-3.9.5Z"/><path d="M14.9 6.5l2.8 2.8"/>',
+  clip: '<path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>',
+  users: '<circle cx="9" cy="8" r="3.2"/><path d="M3.5 19.5a5.5 5.5 0 0 1 11 0"/><path d="M16 5.4a3.2 3.2 0 0 1 0 5.2M17.8 14.6a5.5 5.5 0 0 1 2.7 4.9"/>',
+  bell: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>',
+  archive: '<rect x="3" y="4.5" width="18" height="4.5" rx="1.2"/><path d="M5 9v9.5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9"/><path d="M10 13h4"/>',
+  trash: '<path d="M3.5 6.5h17"/><path d="M8.8 6.5V5a1.8 1.8 0 0 1 1.8-1.8h2.8A1.8 1.8 0 0 1 15.2 5v1.5"/><path d="M6.3 6.5l.9 12.3a2 2 0 0 0 2 1.9h5.6a2 2 0 0 0 2-1.9l.9-12.3"/><path d="M10.2 10.8v6M13.8 10.8v6"/>',
+  mark: '<path d="M7 4.5h10a1 1 0 0 1 1 1V20l-6-3.5L6 20V5.5a1 1 0 0 1 1-1Z"/>',
+  bulb: '<path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1.3.5 2.6 1.5 3.5.7.8 1.3 1.5 1.5 2.5"/><path d="M9.5 17.5h5M10.5 20.5h3"/>',
+};
+function iconHtml(name, cls) {
+  return '<svg class="uico' + (cls ? ' ' + cls : '') + '" viewBox="0 0 24 24" aria-hidden="true">' +
+    (ICON_PATHS[name] || '') + '</svg>';
+}
+function iconEl(name, cls) {
+  const w = document.createElement('span');
+  w.innerHTML = iconHtml(name, cls);
+  return w.firstChild;
+}
 function nowSec() { return Math.floor(Date.now() / 1000); }
 function relTime(sec) {
   if (!sec) return '';
@@ -1338,16 +1365,16 @@ function twIdOf(body) {
 }
 
 /* ---------- C. 主题 / 外观 -----------------------------------------
-   没有内置主题：默认外观就是 cell.cpp /export 导出页那一套（:root 浅色 +
-   prefers-color-scheme 深色，见 00-tokens.css），因此「界面里的会话」
-   与「导出的会话」同源。唯一的主题来源是第三方：放在与配置/会话/凭据
-   相同的 <exe 目录>/.cell/theme/<名称>/ 下的 theme.json + theme.css，
-   经 GET /api/themes 发现、GET /api/theme/<名称> 拉取后注入
-   <style id="theme-ext">。只需重定义 CSS 变量即可完整换肤（含深浅）。
+   没有内置主题：默认外观是锁定为黑白灰的深色（见 00-tokens.css，不跟随
+   系统深浅，减少蓝光），令牌名与 cell.cpp /export 导出页同一套，因此
+   「界面里的会话」与「导出的会话」同源。唯一的主题来源是第三方：放在与
+   配置/会话/凭据相同的 <exe 目录>/.cell/theme/<名称>/ 下的 theme.json +
+   theme.css，经 GET /api/themes 发现、GET /api/theme/<名称> 拉取后注入
+   <style id="theme-ext">。只需重定义 CSS 变量即可完整换肤。
    选择持久化于 localStorage；URL ?theme=<名称> 可临时覆盖。           */
 const Theme = {
   key: 'cell.theme', animKey: 'cell.anim',
-  fallback: '', // 无第三方主题 = 默认外观（导出页那一套）
+  fallback: '', // 无第三方主题 = 内置默认外观（黑白灰深色）
   external: {}, // name -> {label,type,desc,swatch}
   cssCache: {},
   el: null,    // 第三方主题注入的 <style id="theme-ext">
@@ -2272,7 +2299,8 @@ function renderSidebar() {
     pulse.title = g.busy ? '运行中' : (g.open ? '已展开' : '已折叠');
     if (!g.open) pulse.style.background = 'var(--fg3)';
     head.appendChild(pulse);
-    const gdel = el('button', 'gdel', '🗑');
+    const gdel = el('button', 'gdel');
+    gdel.appendChild(iconEl('trash', 'sm'));
     gdel.title = '删除工作区（移除全部会话记录，保留目录）';
     gdel.style.marginLeft = 'auto';
     gdel.onclick = ev => { ev.stopPropagation(); deleteWorkspace(g.ws); };
@@ -2318,7 +2346,8 @@ function renderSidebar() {
       if (s.busy) { const d = el('span', 'dot run'); d.style.marginLeft = 'auto'; meta.appendChild(d); }
       it.appendChild(title);
       it.appendChild(meta);
-      const del = el('button', 'idel', '🗑');
+      const del = el('button', 'idel');
+      del.appendChild(iconEl('trash', 'sm'));
       del.title = '删除会话';
       del.onclick = ev => { ev.stopPropagation(); deleteSession(s); };
       it.appendChild(del);
@@ -2380,7 +2409,8 @@ function renderTabbar() {
     tb.oncontextmenu = ev => { ev.preventDefault(); tabMenu(ev, ws); };
     nodes.push(tb);
   }
-  const add = el('button', 'tab-add', '➕');
+  const add = el('button', 'tab-add');
+  add.appendChild(iconEl('plus'));
   add.title = '打开工作区 / 最近关闭';
   add.onclick = ev => { ev.stopPropagation(); tabAddMenu(ev); };
   nodes.push(add);
@@ -2410,7 +2440,7 @@ function tabAddMenu(ev) {
   const r = ev.currentTarget.getBoundingClientRect();
   const m = el('div', 'tabmenu');
   const open = el('button');
-  open.innerHTML = '📂 <span class="grow">打开工作区…</span>';
+  open.innerHTML = iconHtml('folder') + '<span class="grow">打开工作区…</span>';
   open.onclick = () => { hideTabMenu(); openWsDialog(); };
   m.appendChild(open);
   const list = S.closedTabs.filter(x => !S.workspaces.some(w => w.cwd === x.cwd));
@@ -2422,7 +2452,7 @@ function tabAddMenu(ev) {
       const row = el('div', 'mrow');
       row.appendChild(el('span', 'mtitle trunc', baseName(c.cwd)));
       row.appendChild(el('span', 'mpath', c.cwd));
-      b.appendChild(el('span', null, '🗂'));
+      b.appendChild(iconEl('archive', 'sm'));
       b.appendChild(row);
       b.appendChild(el('span', 'tiny dim', relTime(c.ts)));
       b.title = c.cwd;
@@ -2593,8 +2623,9 @@ function renderThinkBtn() {
   if (!S.tabs.get(S.active)) return;
   const lv = Number((S.settings || {}).think_level || 0);
   const l = THINK_LEVELS[lv] || THINK_LEVELS[0];
-  const b = el('button', 'btn ghost sm thkbtn' + (lv > 0 ? ' on' : ''),
-               '💭 思考：' + (lv > 0 ? l.name + ' (' + l.v + ')' : '关'));
+  const b = el('button', 'btn ghost sm thkbtn' + (lv > 0 ? ' on' : ''));
+  b.appendChild(iconEl('bulb', 'sm'));
+  b.appendChild(el('span', null, '思考：' + (lv > 0 ? l.name + ' (' + l.v + ')' : '关')));
   b.title = '快捷设置思考开关与强度';
   b.onclick = () => toggleThinkMenu(b);
   box.appendChild(b);
@@ -2652,7 +2683,9 @@ function ensurePane(ws) {
   const ctitle = el('span', 'cht-title trunc', ''); ctitle.title = ws;
   head.appendChild(ctitle);
   head.appendChild(el('span', 'grow'));
-  const clearBtn = el('button', 'btn ghost sm danger', '🗑 清空上下文');
+  const clearBtn = el('button', 'btn ghost sm danger');
+  clearBtn.appendChild(iconEl('trash', 'sm'));
+  clearBtn.appendChild(el('span', null, '清空上下文'));
   clearBtn.title = '清空当前会话上下文（/clear，会中断正在进行的回合）';
   clearBtn.onclick = () => clearSession(ws);
   head.appendChild(clearBtn);
@@ -2763,7 +2796,9 @@ function renderNoWs() {
   box.appendChild(el('h2', null, '打开一个目录开始'));
   box.appendChild(el('div', 'dim', 'cell 不会自动进入任何目录。选一个工作区后，会在其中恢复上次的会话，或新建一条。'));
   const hints = el('div', 'hints');
-  const open = el('div', 'hint', '📂 打开工作区');
+  const open = el('div', 'hint');
+  open.appendChild(iconEl('folder'));
+  open.appendChild(el('span', null, '打开工作区'));
   open.onclick = () => openWsDialog();
   hints.appendChild(open);
   // 最近关闭过的工作区可以直接接回来，省掉一次目录选择
@@ -4110,7 +4145,7 @@ function renderNoticeGroup(t, g) {
   if (g.topic) hd.appendChild(el('span', 'ntopic ' + g.topic, TOPIC_ZH[g.topic] || g.topic));
   hd.appendChild(el('span', 'grow'));
   hd.appendChild(el('span', 'tiny dim', relTime(g.newest)));
-  if (g.pinned) hd.appendChild(el('span', 'tiny', '📌'));
+  if (g.pinned) hd.appendChild(iconEl('mark', 'sm'));
   if (g.items.length > 1) hd.appendChild(el('span', 'ncount', String(g.items.length)));
   card.appendChild(hd);
 
@@ -5052,7 +5087,7 @@ function buildSection(id) {
     return s;
   }
   if (id === 'appearance') {
-    const s = sec('appearance', '外观', '默认外观与 /export 导出的会话页同一套（浅色 + 跟随系统的深色）。第三方主题放入 <exe 目录>/.cell/theme/<名称>/ 即出现在下方；选择保存在本机浏览器。');
+    const s = sec('appearance', '外观', '默认外观为黑白灰深色（无彩色强调，与 /export 导出的会话页同一套中立灰阶）。第三方主题放入 <exe 目录>/.cell/theme/<名称>/ 即出现在下方；选择保存在本机浏览器。');
     const themes = Theme.list();
     const grid = el('div', 'themegrid');
     // 「默认外观」永远存在，且是初始选中项
@@ -5060,10 +5095,10 @@ function buildSection(id) {
       const b = el('button', 'themecard' + (S.theme ? '' : ' on'));
       b.type = 'button';
       const sw = el('div', 'tswatch');
-      for (const c of ['#ffffff', '#1f2328', '#3b82f6']) { const i = el('i'); i.style.background = c; sw.appendChild(i); }
+      for (const c of ['#0e0e10', '#e8e8ea', '#8f8f95']) { const i = el('i'); i.style.background = c; sw.appendChild(i); }
       b.appendChild(sw);
       b.appendChild(el('span', 'tname', '默认'));
-      b.appendChild(el('span', 'tmeta', '与导出的会话页同源 · 跟随系统深浅'));
+      b.appendChild(el('span', 'tmeta', '与导出的会话页同源 · 黑白灰深色'));
       b.onclick = () => { Theme.set(''); renderSettings(); };
       grid.appendChild(b);
     }
@@ -5113,7 +5148,9 @@ function buildSection(id) {
   }
   if (!S.workspaces.length) list.appendChild(el('div', 'pempty', '没有打开的工作区。'));
   s.appendChild(card([list]));
-  const openBtn = el('button', 'btn sm', '📂 打开工作区');
+  const openBtn = el('button', 'btn sm');
+  openBtn.appendChild(iconEl('folder', 'sm'));
+  openBtn.appendChild(el('span', null, '打开工作区'));
   openBtn.onclick = () => openWsDialog();
   s.appendChild(card([openBtn]));
   return s;
@@ -5321,7 +5358,9 @@ function closeSearch() {
 function buildSearchBox() {
   const box = el('div', 'searchbox-lg');
   const head = el('div', 'sm-head');
-  head.appendChild(el('span', 'sm-ico', '🔍'));
+  const si = el('span', 'sm-ico');
+  si.appendChild(iconEl('search'));
+  head.appendChild(si);
   const inp = el('input');
   inp.type = 'text';
   inp.id = 'searchInput';

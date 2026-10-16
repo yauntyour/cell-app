@@ -12,7 +12,7 @@
      · 折叠块（思考 / 摘要）用 <details>-式的按钮 + 面板，点击即开；
        工具结果与工具调用直接用 <details>（见 5.4b），主会话与子代理浮窗
        共用 renderContentHtml / renderMarkdown，两处排版逐字一致。
-   深浅跟随系统（prefers-color-scheme），与导出页同一套令牌（见 00-tokens.css）。
+   外观锁定为黑白灰深色（无彩色、无蓝光，见 00-tokens.css），与导出页同一套令牌。
    ===================================================================== */
 
 /* ---- 5.1 流容器 ----------------------------------------------------
@@ -85,7 +85,8 @@
   border-radius:4px;padding:1px 4px;overflow-wrap:anywhere}
 .prose strong{font-weight:650}
 .prose em{font-style:italic}
-.prose a{color:var(--link)}
+/* 灰阶界面里链接没有色相可辨：用下划线承担「这是链接」 */
+.prose a{color:var(--link);text-decoration:underline;text-underline-offset:2px}
 .prose .codeblock{margin:0 0 14px}
 .prose .codeblock:last-child{margin-bottom:0}
 .prose .lang{display:block;margin-bottom:6px;font-family:var(--mono);font-size:11px;
@@ -205,7 +206,8 @@
 .chat .empty{max-width:var(--chat-max);margin:8vh auto 0;padding:0 22px;text-align:center;color:var(--fg3)}
 .chat .empty h2{font-size:19px;color:var(--fg2);font-weight:650;margin:0 0 6px}
 .chat .empty .hints{display:flex;flex-wrap:wrap;gap:7px;justify-content:center;margin-top:16px}
-.hint{padding:6px 12px;border-radius:999px;background:var(--bg2);
+.hint{display:inline-flex;align-items:center;gap:6px;
+  padding:6px 12px;border-radius:999px;background:var(--bg2);
   border:1px solid var(--line);font-size:12px;color:var(--fg2);cursor:pointer;
   transition:all var(--dur) var(--ease)}
 .hint:hover{border-color:var(--accent);color:var(--accent)}

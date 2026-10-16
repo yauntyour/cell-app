@@ -46,7 +46,7 @@ function renderNoticeGroup(t, g) {
   if (g.topic) hd.appendChild(el('span', 'ntopic ' + g.topic, TOPIC_ZH[g.topic] || g.topic));
   hd.appendChild(el('span', 'grow'));
   hd.appendChild(el('span', 'tiny dim', relTime(g.newest)));
-  if (g.pinned) hd.appendChild(el('span', 'tiny', '📌'));
+  if (g.pinned) hd.appendChild(iconEl('mark', 'sm'));
   if (g.items.length > 1) hd.appendChild(el('span', 'ncount', String(g.items.length)));
   card.appendChild(hd);
 

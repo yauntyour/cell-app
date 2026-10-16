@@ -59,6 +59,35 @@ function esc(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, c =>
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
+
+/* ---------- 内联单色图标 -------------------------------------------
+   黑白灰界面里不用彩色 emoji：所有按钮/标签图标都是 24 格内联 SVG，
+   形状按「一套笔画」选取，着色交给 CSS（.uico，stroke=currentColor，
+   见 02-atoms.css §2.8）。iconHtml 给 innerHTML 场景，iconEl 给
+   appendChild 场景；名字取不到时返回空 SVG（不抛错）。              */
+const ICON_PATHS = {
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  folder: '<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
+  search: '<circle cx="11" cy="11" r="7"/><path d="M20.5 20.5 16.2 16.2"/>',
+  sliders: '<path d="M4 8.5h8.5M17.5 8.5H20M4 15.5h2.5M11.5 15.5H20"/><circle cx="15" cy="8.5" r="2.2"/><circle cx="9" cy="15.5" r="2.2"/>',
+  pencil: '<path d="M4.6 19.4l.9-3.5L16.7 4.7a2.1 2.1 0 0 1 3 3L8.5 18.9l-3.9.5Z"/><path d="M14.9 6.5l2.8 2.8"/>',
+  clip: '<path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>',
+  users: '<circle cx="9" cy="8" r="3.2"/><path d="M3.5 19.5a5.5 5.5 0 0 1 11 0"/><path d="M16 5.4a3.2 3.2 0 0 1 0 5.2M17.8 14.6a5.5 5.5 0 0 1 2.7 4.9"/>',
+  bell: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>',
+  archive: '<rect x="3" y="4.5" width="18" height="4.5" rx="1.2"/><path d="M5 9v9.5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9"/><path d="M10 13h4"/>',
+  trash: '<path d="M3.5 6.5h17"/><path d="M8.8 6.5V5a1.8 1.8 0 0 1 1.8-1.8h2.8A1.8 1.8 0 0 1 15.2 5v1.5"/><path d="M6.3 6.5l.9 12.3a2 2 0 0 0 2 1.9h5.6a2 2 0 0 0 2-1.9l.9-12.3"/><path d="M10.2 10.8v6M13.8 10.8v6"/>',
+  mark: '<path d="M7 4.5h10a1 1 0 0 1 1 1V20l-6-3.5L6 20V5.5a1 1 0 0 1 1-1Z"/>',
+  bulb: '<path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1.3.5 2.6 1.5 3.5.7.8 1.3 1.5 1.5 2.5"/><path d="M9.5 17.5h5M10.5 20.5h3"/>',
+};
+function iconHtml(name, cls) {
+  return '<svg class="uico' + (cls ? ' ' + cls : '') + '" viewBox="0 0 24 24" aria-hidden="true">' +
+    (ICON_PATHS[name] || '') + '</svg>';
+}
+function iconEl(name, cls) {
+  const w = document.createElement('span');
+  w.innerHTML = iconHtml(name, cls);
+  return w.firstChild;
+}
 function nowSec() { return Math.floor(Date.now() / 1000); }
 function relTime(sec) {
   if (!sec) return '';
@@ -109,16 +138,16 @@ function twIdOf(body) {
 }
 
 /* ---------- C. 主题 / 外观 -----------------------------------------
-   没有内置主题：默认外观就是 cell.cpp /export 导出页那一套（:root 浅色 +
-   prefers-color-scheme 深色，见 00-tokens.css），因此「界面里的会话」
-   与「导出的会话」同源。唯一的主题来源是第三方：放在与配置/会话/凭据
-   相同的 <exe 目录>/.cell/theme/<名称>/ 下的 theme.json + theme.css，
-   经 GET /api/themes 发现、GET /api/theme/<名称> 拉取后注入
-   <style id="theme-ext">。只需重定义 CSS 变量即可完整换肤（含深浅）。
+   没有内置主题：默认外观是锁定为黑白灰的深色（见 00-tokens.css，不跟随
+   系统深浅，减少蓝光），令牌名与 cell.cpp /export 导出页同一套，因此
+   「界面里的会话」与「导出的会话」同源。唯一的主题来源是第三方：放在与
+   配置/会话/凭据相同的 <exe 目录>/.cell/theme/<名称>/ 下的 theme.json +
+   theme.css，经 GET /api/themes 发现、GET /api/theme/<名称> 拉取后注入
+   <style id="theme-ext">。只需重定义 CSS 变量即可完整换肤。
    选择持久化于 localStorage；URL ?theme=<名称> 可临时覆盖。           */
 const Theme = {
   key: 'cell.theme', animKey: 'cell.anim',
-  fallback: '', // 无第三方主题 = 默认外观（导出页那一套）
+  fallback: '', // 无第三方主题 = 内置默认外观（黑白灰深色）
   external: {}, // name -> {label,type,desc,swatch}
   cssCache: {},
   el: null,    // 第三方主题注入的 <style id="theme-ext">

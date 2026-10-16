@@ -3,11 +3,12 @@
 .sb-head{padding:12px 12px 8px;display:flex;flex-direction:column;gap:9px;
   border-bottom:1px solid var(--line)}
 .brand{display:flex;align-items:center;gap:9px;font-weight:700;letter-spacing:.02em;font-size:14px}
-/* 静止状态 logo：icon.svg（静态分形）；运动状态由 .busy 切换为渐变动画头像 */
-/* 品牌标识：静止态描边取 currentColor（随主题深浅），运行态换渐变底板 */
+/* 静止状态 logo：icon.svg（静态分形）；运动状态由 .busy 切换为描线动画头像 */
+/* 品牌标识：静止态描边取 currentColor；运行态换灰阶底板（浅底 + 深描边，
+   与 primary 按钮同一种反转） */
 .brand .logo{width:19px;height:19px;flex:none;color:var(--fg);display:flex;align-items:center;
   justify-content:center;transition:color var(--dur) var(--ease),background var(--dur) var(--ease)}
-.brand .logo.busy{color:#fff;background:linear-gradient(135deg,#2563EB,#7C3AED);border-radius:5px}
+.brand .logo.busy{color:var(--bg);background:linear-gradient(135deg,#e8e8ea,#8f8f95);border-radius:5px}
 .brand .logo svg{display:block;width:100%;height:100%}
 .sb-actions{display:flex;gap:6px}
 .sb-actions .btn{flex:1;justify-content:center}
@@ -37,7 +38,7 @@
   transition:color var(--dur) var(--ease),background var(--dur) var(--ease),
   border-color var(--dur) var(--ease),opacity var(--dur) var(--ease)}
 .sgroup-head:hover .gdel{opacity:1}
-.sgroup-head .gdel:hover{opacity:1;color:#fff;background:var(--bad);border-color:var(--bad)}
+.sgroup-head .gdel:hover{opacity:1;color:var(--bg);background:var(--bad);border-color:var(--bad)}
 .sitem{display:flex;flex-direction:column;gap:2px;padding:7px 28px 7px 9px;border-radius:var(--radius-s);
   cursor:pointer;border:1px solid transparent;position:relative;
   transition:background var(--dur) var(--ease),border-color var(--dur) var(--ease)}
@@ -50,7 +51,7 @@
   transition:color var(--dur) var(--ease),background var(--dur) var(--ease),
   border-color var(--dur) var(--ease),opacity var(--dur) var(--ease)}
 .sitem:hover .idel{opacity:1}
-.sitem .idel:hover{opacity:1;color:#fff;background:var(--bad);border-color:var(--bad)}
+.sitem .idel:hover{opacity:1;color:var(--bg);background:var(--bad);border-color:var(--bad)}
 .sitem:hover{background:var(--raise)}
 .sitem.active{background:var(--accent-soft);border-color:color-mix(in srgb,var(--accent) 30%,transparent)}
 .sitem.active::before{content:"";position:absolute;left:-1px;top:8px;bottom:8px;width:2px;
@@ -61,7 +62,7 @@
 .sitem .smeta .stag{padding:0 5px;border-radius:4px;font-size:9.5px;line-height:15px;
   border:1px solid var(--line);color:var(--fg2);background:var(--bg2)}
 .sitem .smeta .stag.tw{color:var(--accent);border-color:var(--accent-soft);background:var(--accent-soft)}
-.sitem .smeta .stag.ar{color:var(--warn,#b45309);border-color:var(--line2)}
+.sitem .smeta .stag.ar{color:var(--warn);border-color:var(--line2)}
 .sitem .ubadge{margin-left:auto}
 .sb-foot{padding:9px 12px;border-top:1px solid var(--line);display:flex;align-items:center;gap:8px}
 .sb-foot .model{font-family:var(--mono);font-size:11.5px;color:var(--fg2)}
@@ -71,7 +72,7 @@
    侧栏能拖到很窄（比例下限 10%，像素护栏 180px）。按侧栏自身宽度降级——
    拖窄侧栏时窗口宽度并没有变，媒体查询察觉不到。
    实测（Edge/WebView2 同一字体栈）：≥220px 时两个动作按钮一行放得下；
-   <220px 时「➕新会话 / 📂工作区」被拦腰折行（"新会/话"、"工作/区"），
+   <220px 时「新会话 / 工作区」按钮被拦腰折行（"新会/话"、"工作/区"），
    会话 meta 行还在 span 内部断行（"3 条"→"3/条"、"团队 2"→"团队/2"）。
    240px 起降级（留足字体度量余量）：装饰图标收起、文字保持一行
    （万一放不下以省略号收尾，不再拦腰折行），meta 只允许在 span
@@ -86,7 +87,10 @@
      flex 子项不会显示省略号） */
   .sb-actions .btn{flex:1 1 0;min-width:0;display:block;text-align:center;
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .sb-actions .sb-ico{width:30px;padding:4px 0}
+  /* 搜索按钮没有文字，不吃上面的 block 降级：block 布局下 text-align 管不到
+     display:block 的 SVG 图标（会贴左上角），保留 flex 居中 */
+  .sb-actions .sb-ico{width:30px;padding:4px 0;display:inline-flex;
+    align-items:center;justify-content:center}
   #sessionList{padding:6px 4px 12px}
   .sgroup-head{padding:5px 6px;gap:6px}
   .sitem{padding:6px 26px 6px 8px}
@@ -116,7 +120,7 @@
   opacity:0;transition:opacity var(--dur) var(--ease),background var(--dur) var(--ease),color var(--dur) var(--ease)}
 .tab:hover .x{opacity:.85}
 .tab.active .x{opacity:.7}
-.tab .x:hover{opacity:1;background:var(--bad);color:#fff;border-color:transparent}
+.tab .x:hover{opacity:1;background:var(--bad);color:var(--bg);border-color:transparent}
 .tab-add{flex:none;padding:0 12px;color:var(--fg3);font-size:13px;line-height:1;
   transition:color var(--dur) var(--ease)}
 .tab-add:hover{color:var(--accent)}
@@ -144,16 +148,17 @@
 /* 清空上下文：高危操作 —— 红色描边 chip，悬停实底，与侧栏删除按钮同一视觉语言 */
 .chathead .btn.danger{border:1px solid color-mix(in srgb,var(--bad) 40%,transparent);
   color:var(--bad);background:color-mix(in srgb,var(--bad) 7%,transparent)}
-.chathead .btn.danger:hover{color:#fff;background:var(--bad);border-color:var(--bad)}
+.chathead .btn.danger:hover{color:var(--bg);background:var(--bad);border-color:var(--bad)}
 /* 3.5 团队协作 / 通知流 */
 .dockhead{height:44px;flex:none;display:flex;align-items:center;gap:8px;padding:0 12px;
   border-bottom:1px solid var(--line)}
 .docktabs{display:flex;gap:2px;padding:8px 12px 0;min-width:0;overflow-x:auto}
 /* nowrap + flex:none：窄 panel 下 CJK 标签的最小宽度是「一个字」，
-   不加这两条 flex 会把「🔔 通知」压成「🔔 通／知」竖排（窗口不最大化时）。
+   不加这两条 flex 会把「通知」压成「通／知」竖排（窗口不最大化时）。
    内边距取 7px：三个标签（Teamwork/通知/存档）在 ~286px 的 panel 里正好排开，
    再窄由 .docktabs 的横向滚动兜底 */
-.docktab{padding:5px 7px;font-size:12px;color:var(--fg2);white-space:nowrap;flex:none;
+.docktab{display:inline-flex;align-items:center;gap:5px;
+  padding:5px 7px;font-size:12px;color:var(--fg2);white-space:nowrap;flex:none;
   border-radius:var(--radius-s) var(--radius-s) 0 0;border-bottom:2px solid transparent}
 .docktab.on{color:var(--fg);border-bottom-color:var(--accent);font-weight:650}
 .dockbody{flex:1;overflow-y:auto;padding:12px}
@@ -213,7 +218,8 @@
 .rz-composer{z-index:5;margin-bottom:0}
 .modes-hint{margin-left:auto;flex:none}
 .modes{display:flex;align-items:center;gap:4px;margin-bottom:8px}
-.modebtn{padding:4px 11px;border-radius:999px;font-size:11.5px;color:var(--fg2);
+.modebtn{display:inline-flex;align-items:center;gap:5px;
+  padding:4px 11px;border-radius:999px;font-size:11.5px;color:var(--fg2);
   border:1px solid transparent;transition:all var(--dur) var(--ease)}
 .modebtn.on{background:var(--accent-soft);color:var(--accent);
   border-color:color-mix(in srgb,var(--accent) 30%,transparent);font-weight:650}
@@ -402,7 +408,7 @@
 .toast.ok{border-color:color-mix(in srgb,var(--ok) 45%,var(--line2))}
 .toast.leaving{animation:toastOut 220ms var(--ease) forwards}
 #reconnect{position:absolute;top:0;left:0;right:0;padding:4px;text-align:center;font-size:11.5px;
-  font-weight:650;background:var(--warn);color:#fff;display:none;z-index:40}
+  font-weight:650;background:var(--warn);color:var(--bg);display:none;z-index:40}
 #reconnect.show{display:block}
 .ctxmenu{position:fixed;z-index:130;background:var(--panel2);border:1px solid var(--line2);
   border-radius:var(--radius-s);box-shadow:var(--shadow);padding:4px;min-width:160px;
