@@ -50,7 +50,7 @@ compiling, the build regenerates the embedded UI (`src/ui/src/` →
 ```bash
 cmake -B build -DCELL_STATIC=OFF        # Windows: link against MSYS2 DLLs
 cmake -B build -DCELL_CONSOLE=ON        # Windows: keep a console (debugging)
-cmake -B build -DCELL_CXX_STANDARD=23   # compilers without -std=c++26 (Apple clang)
+cmake -B build -DCELL_CXX_STANDARD=23   # compilers without -std=c++26
 cmake -B build -DPython3_EXECUTABLE=/path/to/python   # interpreter for the UI step
 ```
 
@@ -81,12 +81,14 @@ found) the committed `src/cell-ui.hpp` is used unchanged.
 |---|---|---|---|
 | Windows 10/11 | WebView2 (Edge) | **verified** | MSYS2 UCRT64 g++; statically linked by default — zero third-party DLLs |
 | Linux | GTK3 + WebKitGTK | code-complete, not yet tested on hardware | g++ (or clang++); install `gtk+-3.0` + `webkit2gtk-4.1` (fallback `4.0`) dev packages + `libsodium-dev` + `libcurl-dev` |
-| macOS | Cocoa + WKWebView | code-complete, not yet tested on hardware | clang++; `brew install libsodium` (curl and the Cocoa/WebKit frameworks are system libraries) |
+| macOS | Cocoa + WKWebView | code-complete, not yet tested on hardware | Homebrew GCC + static libsodium — Apple clang's libc++ has no `<generator>` yet; curl and the Cocoa/WebKit frameworks are system libraries |
 
 **Toolchain floor**: a C++23-capable compiler — GCC 14+ or Clang 17+. The
 code uses `std::generator`, `std::expected` and `std::move_only_function`
 but no C++26-only features, so `cmake -B build -DCELL_CXX_STANDARD=23`
-works on compilers that predate `-std=c++26` (e.g. Apple clang).
+works on compilers that predate `-std=c++26`. The standard library is the
+real gate: `std::generator` exists in libstdc++ (GCC 14+) but not in libc++,
+so macOS builds use Homebrew GCC instead of Apple clang.
 
 **Dependency weight per platform**:
 - *Windows*: zero third-party DLLs. TLS via SChannel — no CA bundle needed.
@@ -211,3 +213,23 @@ build/cell-app.exe --smoke          # window -> HTTP page -> first `state` comma
 build/cell-app.exe --smoke-engine   # + one engine turn through the pipeline
 build/cell-app.exe --smoke-ws       # + two workspaces running turns in parallel
 ```
+
+## Releases (prebuilt single files)
+
+`.github/workflows/cmake-multi-platform.yml` builds the single-file
+executable on all three platforms and publishes it as a GitHub Release:
+
+- **push a commit whose message is exactly `release`** (first line), or
+- **run the workflow manually** from the *Actions* tab (*Run workflow*).
+
+| artifact | platform | runtime requirements |
+|---|---|---|
+| `cell-app-windows-x64.exe` | Windows 10/11 x64 | none — statically linked; the WebView2 runtime ships with Edge |
+| `cell-app-linux-x86_64` | Linux x86_64 | the distro GTK3 + WebKitGTK 4.1 stack, `libcurl4`, `libsodium23` |
+| `cell-app-macos-arm64` | macOS (Apple silicon) | none — system frameworks + system libcurl; libsodium is linked in |
+
+Every run is validated before anything is uploaded: the Linux binary is
+smoke-tested under `xvfb` (window → HTTP page → the first `state` command),
+the Windows import table is checked for stray DLLs, and the macOS link is
+checked for Homebrew libraries. The macOS build uses Homebrew GCC because
+libc++ still has no `<generator>`; Windows and Linux use GCC 14+ either way.

@@ -1,0 +1,306 @@
+# cell-app — multi-platform release build
+# =============================================================================
+# Builds the single-file executable for Windows, Linux and macOS and attaches
+# all three to a GitHub Release.
+#
+# Triggers:
+#   * push              — only when the first line of the commit message is
+#                         exactly "release"
+#   * workflow_dispatch — manual run from the Actions tab (always publishes)
+#
+# Artifacts:
+#   cell-app-windows-x64.exe   MSYS2 UCRT64 static build — zero third-party DLLs
+#   cell-app-linux-x86_64      plain ELF — the distro GTK3 + WebKitGTK 4.1 stack
+#                              (+ libcurl + libsodium), smoke-tested under xvfb
+#   cell-app-macos-arm64       system frameworks + system libcurl, static
+#                              libsodium and static libstdc++ (Homebrew GCC —
+#                              libc++ does not implement <generator> yet)
+# =============================================================================
+
+name: cmake-multi-platform
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # publishing happens on purpose: the first line of the commit message must be
+  # exactly "release" (or the run was started manually from the Actions tab)
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.check.outputs.run }}
+    steps:
+      - id: check
+        env:
+          EVENT: ${{ github.event_name }}
+          MESSAGE: ${{ github.event.head_commit.message }}
+        run: |
+          first_line="$(printf '%s\n' "$MESSAGE" | head -n1 | tr -d '\r')"
+          if [ "$EVENT" = "workflow_dispatch" ] || [ "$first_line" = "release" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "gate open ($EVENT): building and publishing"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "gate closed: commit message is '$first_line'"
+          fi
+
+  windows:
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      # UCRT64 toolchain plus the static libcurl/libsodium and header-only
+      # boost/nlohmann-json packages; python runs build_ui.py. `update: false`
+      # keeps the action fast — flip it to true if the bundled package DB goes
+      # stale and the install step starts failing with 404s.
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: false
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-curl
+            mingw-w64-ucrt-x86_64-libsodium
+            mingw-w64-ucrt-x86_64-boost
+            mingw-w64-ucrt-x86_64-nlohmann-json
+            mingw-w64-ucrt-x86_64-python
+
+      - name: Configure
+        shell: msys2 {0}
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        shell: msys2 {0}
+        run: cmake --build build
+
+      # the point of the static build: the import table must not name anything
+      # outside the Windows system DLLs (a stray libcurl/libsodium/zlib DLL
+      # would break the "just the exe" promise)
+      - name: Check the import table for third-party DLLs
+        shell: msys2 {0}
+        run: |
+          objdump -p build/cell-app.exe | awk '/DLL Name/ {print tolower($3)}' | sort -u
+          bad="$(objdump -p build/cell-app.exe | awk '/DLL Name/ {print tolower($3)}' | sort -u \
+            | grep -Ev '^(api-ms-win-[a-z0-9-]+|advapi32|bcrypt|cfgmgr32|combase|comctl32|comdlg32|crypt32|dnsapi|gdi32|imm32|iphlpapi|kernel32|kernelbase|msvcrt|mswsock|ncrypt|ntdll|ole32|oleaut32|powrprof|profapi|psapi|rpcrt4|sechost|secur32|setupapi|shell32|shlwapi|sspicli|ucrtbase|user32|userenv|uuid|version|win32u|wintrust|ws2_32|wldap32|wtsapi32)\.dll$' \
+            || true)"
+          if [ -n "$bad" ]; then
+            echo "::error::third-party DLL dependencies leaked in: $bad"
+            exit 1
+          fi
+
+      - name: Package
+        shell: msys2 {0}
+        run: |
+          mkdir -p dist
+          cp build/cell-app.exe dist/cell-app-windows-x64.exe
+          ls -l dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cell-app-windows-x64
+          path: dist/*
+          if-no-files-found: error
+
+  linux:
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
+    # pinned, not -latest: this image carries the webkit2gtk-4.1 dev packages
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      # g++-14: GCC 13 (the default) lacks std::generator. xvfb/xauth +
+      # libgl1-mesa-dri drive the smoke test below.
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ninja-build g++-14 \
+            libgtk-3-dev libwebkit2gtk-4.1-dev \
+            libcurl4-openssl-dev libsodium-dev \
+            nlohmann-json3-dev libboost-dev \
+            xvfb xauth libgl1-mesa-dri
+
+      - name: Configure
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=g++-14
+
+      - name: Build
+        run: cmake --build build
+
+      # the GTK/WebKitGTK stack only ships shared — the runtime deps come from
+      # the distro (same as any native Linux app); stripping is all we can do
+      - name: Package
+        run: |
+          mkdir -p dist
+          cp build/cell-app dist/cell-app-linux-x86_64
+          strip --strip-all dist/cell-app-linux-x86_64
+          chmod +x dist/cell-app-linux-x86_64
+          ls -l dist
+
+      # blocking validation: the shipped ELF must come up (window + HTTP page +
+      # the first `state` command) on a bare X server with software rendering.
+      # WebKit's bwrap sandbox is disabled because CI VMs restrict user
+      # namespaces — a normal desktop does not need this.
+      - name: Smoke test the shipped binary under xvfb
+        env:
+          WEBKIT_DISABLE_DMABUF_RENDERER: "1"
+          WEBKIT_DISABLE_COMPOSITING_MODE: "1"
+          WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS: "1"
+        run: timeout 180 xvfb-run -a -s "-screen 0 1400x900x24" ./dist/cell-app-linux-x86_64 --smoke
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cell-app-linux-x86_64
+          path: dist/*
+          if-no-files-found: error
+
+  macos:
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
+    runs-on: macos-latest   # arm64
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      # libc++ still has no <generator> (see the libc++ C++23 status page), so
+      # the build uses Homebrew GCC + libstdc++ instead of Apple clang. The
+      # keg is versioned, so resolve the highest g++ at build time.
+      - name: Install the compiler and header-only dependencies
+        run: brew install gcc ninja boost nlohmann-json
+
+      - name: Resolve the compiler
+        id: gcc
+        run: |
+          gxx="$(ls "$(brew --prefix gcc)"/bin/g++-[0-9]* | sort -V | tail -n1)"
+          echo "compiler: $gxx"
+          echo "runtime libraries:"
+          find "$(brew --prefix gcc)/lib/gcc" -maxdepth 2 \
+            \( -name 'libstdc++*' -o -name 'libgcc*' \) -print
+          echo "gxx=$gxx" >> "$GITHUB_OUTPUT"
+
+      # static libsodium from source: Homebrew only ships the shared one
+      - name: Build static libsodium
+        run: |
+          curl -fsSL -o libsodium.tar.gz \
+            https://github.com/jedisct1/libsodium/releases/download/1.0.20-RELEASE/libsodium-1.0.20.tar.gz
+          tar xzf libsodium.tar.gz
+          cd libsodium-1.0.20
+          ./configure --prefix="$HOME/sodium" --disable-shared --enable-static
+          make -j"$(sysctl -n hw.logicalcpu)"
+          make install
+
+      # CURL: force the system libcurl (the SDK stub) over anything Homebrew
+      # may have on the search path. -static-libstdc++ needs -static-libgcc
+      # to take effect on Darwin, and both are what keep /opt/homebrew/…/lib
+      # out of the final binary. nlohmann-json is keg-only → explicit -I.
+      - name: Configure
+        run: |
+          sdk="$(xcrun --show-sdk-path)"
+          curl_lib="$(ls "$sdk"/usr/lib/libcurl*.tbd 2>/dev/null | head -n1)"
+          echo "system curl: $curl_lib"
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CXX_COMPILER="${{ steps.gcc.outputs.gxx }}" \
+            -DCELL_CXX_STANDARD=23 \
+            -DSODIUM_LIBRARY="$HOME/sodium/lib/libsodium.a" \
+            -DSODIUM_INCLUDE_DIR="$HOME/sodium/include" \
+            -DCURL_LIBRARY="$curl_lib" \
+            -DCURL_INCLUDE_DIR="$sdk/usr/include" \
+            -DCMAKE_CXX_FLAGS="-I$(brew --prefix nlohmann-json)/include" \
+            -DCMAKE_EXE_LINKER_FLAGS="-static-libstdc++ -static-libgcc"
+
+      - name: Build
+        run: cmake --build build
+
+      # everything must come from /usr/lib or the system frameworks — Homebrew
+      # had better not show up in the link. (No strip: it would invalidate the
+      # linker's ad-hoc code signature.)
+      - name: Check the link for Homebrew dependencies
+        run: |
+          otool -L build/cell-app
+          leaked="$(otool -L build/cell-app | tail -n +2 | awk '{print $1}' \
+            | grep -E '^(/opt/homebrew|/usr/local)/' || true)"
+          if [ -n "$leaked" ]; then
+            echo "::error::Homebrew libraries leaked into the link: $leaked"
+            exit 1
+          fi
+
+      - name: Package
+        run: |
+          mkdir -p dist
+          cp build/cell-app dist/cell-app-macos-arm64
+          chmod +x dist/cell-app-macos-arm64
+          ls -l dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cell-app-macos-arm64
+          path: dist/*
+          if-no-files-found: error
+
+  # merges the three artifacts and publishes them as a GitHub Release; the
+  # tag is derived from the UTC date, so re-running an upload within the same
+  # minute just overwrites the assets
+  release:
+    needs: [windows, linux, macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Compose the release notes
+        run: |
+          cat > notes.md <<'EOF'
+          Prebuilt single-file executables for cell-app, built by `cmake-multi-platform`.
+
+          | platform | file | runtime dependencies |
+          |---|---|---|
+          | Windows 10/11 x64 | `cell-app-windows-x64.exe` | none — statically linked; the WebView2 runtime ships with Edge/Windows 11 |
+          | Linux x86_64 | `cell-app-linux-x86_64` | the distro GTK3 + WebKitGTK 4.1 stack (`libgtk-3-0`, `libwebkit2gtk-4.1-0`), plus `libcurl4` and `libsodium23` |
+          | macOS arm64 | `cell-app-macos-arm64` | none — system frameworks + system libcurl; libsodium and libstdc++ are linked in |
+
+          Config, sessions, the credential vault and third-party themes live next
+          to the executable in `<exe dir>/.cell/`, so keep the binary in a
+          directory you can write to.
+
+          The binaries are not code-signed: Windows SmartScreen may warn (More
+          info → Run anyway) and macOS Gatekeeper needs a right-click → Open the
+          first time (or `xattr -d com.apple.quarantine cell-app-macos-arm64`).
+          On Linux, make it executable first: `chmod +x cell-app-linux-x86_64`.
+          EOF
+
+      - name: Publish the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          chmod +x dist/* || true     # artifact upload/download drops the exec bit
+          tag="v$(date -u +%Y.%m.%d)-$(date -u +%H%M)"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" dist/* --clobber
+          else
+            gh release create "$tag" dist/* \
+              --target "$GITHUB_SHA" \
+              --title "cell-app $tag" \
+              --notes-file notes.md
+          fi
