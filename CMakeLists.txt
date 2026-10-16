@@ -25,8 +25,9 @@
 #
 # The code needs C++23 (std::generator / expected / move_only_function) and
 # builds with -std=c++26 by default; no C++26-only features are used.
-# libc++ — Apple's and Homebrew LLVM's alike — does not implement
-# <generator> yet; third_party/compat provides the subset the code uses.
+# libc++ — Apple's and Homebrew LLVM's alike — implements neither
+# std::generator nor std::move_only_function yet; third_party/compat provides
+# the subset the code uses.
 # =============================================================================
 
 cmake_minimum_required(VERSION 3.25)
@@ -98,22 +99,36 @@ target_include_directories(cell-app PRIVATE
     "${CMAKE_SOURCE_DIR}/third_party/include"  # webview/, servic.hpp, router/
     "${CMAKE_SOURCE_DIR}")                     # "cell.cpp/cell.cpp" (the submodule)
 
-# ---- <generator> compatibility ----------------------------------------------
-# libc++ does not implement C++23's std::generator: neither the macOS system
-# libc++ nor Homebrew LLVM's (checked up to LLVM 23) has a <generator> header.
-# GCC ships one since 14, MSVC since 19.43. When the standard library cannot
-# provide it, put third_party/compat on the include path — it holds a
-# `generator` header implementing the subset cell.cpp uses, and forwards to
-# the real one (via include_next) if a standard library ever grows it.
+# ---- C++23 compatibility shims ----------------------------------------------
+# libc++ implements neither C++23's std::generator (P2502R2) nor
+# std::move_only_function (P0288R9): neither the macOS system libc++ nor the
+# one shipped with Homebrew LLVM has them (checked up to LLVM 23), while
+# libstdc++ ships both since GCC 14/12 and MSVC since 19.43/19.32. When the
+# standard library cannot provide one of them, put third_party/compat on the
+# include path — it holds a `generator` header and a `functional` header that
+# forward to the real ones (include_next) and add the subset cell.cpp uses;
+# each guards on the standard library itself, so this check only decides
+# whether the directory is needed at all.
 include(CheckIncludeFileCXX)
+include(CheckCXXSourceCompiles)
 if(NOT MSVC)
-    # older CMake does not pass CMAKE_CXX_STANDARD into CheckIncludeFileCXX,
-    # so hand the standard over explicitly
-    set(_cell_generator_check_flag "-std=c++${CELL_CXX_STANDARD}")
+    # older CMake does not pass CMAKE_CXX_STANDARD into the checks, so hand
+    # the standard over explicitly
+    set(_cell_compat_check_flag "-std=c++${CELL_CXX_STANDARD}")
 endif()
-check_include_file_cxx("generator" CELL_HAS_STD_GENERATOR ${_cell_generator_check_flag})
-if(NOT CELL_HAS_STD_GENERATOR)
-    message(STATUS "cell-app: standard library has no <generator> — using third_party/compat")
+check_include_file_cxx("generator" CELL_HAS_STD_GENERATOR ${_cell_compat_check_flag})
+set(CMAKE_REQUIRED_FLAGS "${_cell_compat_check_flag}")
+check_cxx_source_compiles("
+#include <functional>
+int main()
+{
+    std::move_only_function<void()> probe = [] {};
+    probe();
+    return probe ? 0 : 1;
+}" CELL_HAS_STD_MOVE_ONLY_FUNCTION)
+unset(CMAKE_REQUIRED_FLAGS)
+if(NOT CELL_HAS_STD_GENERATOR OR NOT CELL_HAS_STD_MOVE_ONLY_FUNCTION)
+    message(STATUS "cell-app: standard library lacks <generator> / std::move_only_function — using third_party/compat")
     target_include_directories(cell-app SYSTEM BEFORE PRIVATE
         "${CMAKE_SOURCE_DIR}/third_party/compat")
 endif()

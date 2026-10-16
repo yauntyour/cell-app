@@ -81,14 +81,16 @@ found) the committed `src/cell-ui.hpp` is used unchanged.
 |---|---|---|---|
 | Windows 10/11 | WebView2 (Edge) | **verified** | MSYS2 UCRT64 g++; statically linked by default — zero third-party DLLs |
 | Linux | GTK3 + WebKitGTK | code-complete, not yet tested on hardware | g++ (or clang++); install `gtk+-3.0` + `webkit2gtk-4.1` (fallback `4.0`) dev packages + `libsodium-dev` + `libcurl-dev` |
-| macOS | Cocoa + WKWebView | code-complete, not yet tested on hardware | Homebrew GCC + static libsodium — Apple clang's libc++ has no `<generator>` yet; curl and the Cocoa/WebKit frameworks are system libraries |
+| macOS | Cocoa + WKWebView | code-complete, not yet tested on hardware | Homebrew LLVM clang++ + static libsodium — libc++ lacks `<generator>` and `std::move_only_function`, so `third_party/compat` backfills both; curl and the Cocoa/WebKit frameworks are system libraries |
 
 **Toolchain floor**: a C++23-capable compiler — GCC 14+ or Clang 17+. The
 code uses `std::generator`, `std::expected` and `std::move_only_function`
 but no C++26-only features, so `cmake -B build -DCELL_CXX_STANDARD=23`
 works on compilers that predate `-std=c++26`. The standard library is the
-real gate: `std::generator` exists in libstdc++ (GCC 14+) but not in libc++,
-so macOS builds use Homebrew GCC instead of Apple clang.
+real gate: libc++ — Apple's and Homebrew LLVM's alike — implements neither
+`std::generator` nor `std::move_only_function`, so macOS builds pair
+Homebrew LLVM clang++ (needed to parse the Apple SDK headers under
+`-std=c++26`) with the `third_party/compat` shims.
 
 **Dependency weight per platform**:
 - *Windows*: zero third-party DLLs. TLS via SChannel — no CA bundle needed.
@@ -231,5 +233,7 @@ executable on all three platforms and publishes it as a GitHub Release:
 Every run is validated before anything is uploaded: the Linux binary is
 smoke-tested under `xvfb` (window → HTTP page → the first `state` command),
 the Windows import table is checked for stray DLLs, and the macOS link is
-checked for Homebrew libraries. The macOS build uses Homebrew GCC because
-libc++ still has no `<generator>`; Windows and Linux use GCC 14+ either way.
+checked for Homebrew libraries. The macOS build uses Homebrew LLVM clang++
+(Homebrew GCC cannot parse the Apple SDK headers) with `third_party/compat`
+backfilling the two C++23 pieces libc++ lacks; Windows and Linux use
+GCC 14+ either way.
