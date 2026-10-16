@@ -794,7 +794,7 @@ namespace app
                 long long mt = 0;
                 if (!ec)
                     mt = (long long)std::chrono::duration_cast<std::chrono::seconds>(
-                             std::chrono::clock_cast<std::chrono::system_clock>(ft).time_since_epoch())
+                             std::chrono::file_clock::to_sys(ft).time_since_epoch())
                              .count();
                 archives.push_back({{"name", e.path().filename().string()}, {"mtime", mt}, {"msgs", n}});
             }
@@ -934,9 +934,11 @@ namespace app
                             if (!tec)
                             {
                                 // file_clock's epoch is not unix time (it is not
-                                // even monotone across toolchains); clock_cast
-                                // is the portable way to compare/display it
-                                auto sys = std::chrono::clock_cast<std::chrono::system_clock>(ft);
+                                // even monotone across toolchains); to_sys() is
+                                // the standard file→system conversion — the
+                                // generic clock_cast around it is missing in
+                                // libc++ (checked up to LLVM 23)
+                                auto sys = std::chrono::file_clock::to_sys(ft);
                                 r.mtime = (long long)std::chrono::duration_cast<std::chrono::seconds>(sys.time_since_epoch()).count();
                             }
                             std::ifstream mf(tf, std::ios::binary);
@@ -1805,7 +1807,7 @@ namespace app
                         auto ft = std::filesystem::last_write_time(tf, tec);
                         if (!tec)
                             mt = (long long)std::chrono::duration_cast<std::chrono::seconds>(
-                                     std::chrono::clock_cast<std::chrono::system_clock>(ft).time_since_epoch())
+                                     std::chrono::file_clock::to_sys(ft).time_since_epoch())
                                      .count();
                         nlohmann::json jhits = nlohmann::json::array();
                         for (size_t k = 0; k < hits.size() && k < 6; k++)
