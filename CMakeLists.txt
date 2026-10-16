@@ -25,6 +25,8 @@
 #
 # The code needs C++23 (std::generator / expected / move_only_function) and
 # builds with -std=c++26 by default; no C++26-only features are used.
+# libc++ — Apple's and Homebrew LLVM's alike — does not implement
+# <generator> yet; third_party/compat provides the subset the code uses.
 # =============================================================================
 
 cmake_minimum_required(VERSION 3.25)
@@ -96,6 +98,26 @@ target_include_directories(cell-app PRIVATE
     "${CMAKE_SOURCE_DIR}/third_party/include"  # webview/, servic.hpp, router/
     "${CMAKE_SOURCE_DIR}")                     # "cell.cpp/cell.cpp" (the submodule)
 
+# ---- <generator> compatibility ----------------------------------------------
+# libc++ does not implement C++23's std::generator: neither the macOS system
+# libc++ nor Homebrew LLVM's (checked up to LLVM 23) has a <generator> header.
+# GCC ships one since 14, MSVC since 19.43. When the standard library cannot
+# provide it, put third_party/compat on the include path — it holds a
+# `generator` header implementing the subset cell.cpp uses, and forwards to
+# the real one (via include_next) if a standard library ever grows it.
+include(CheckIncludeFileCXX)
+if(NOT MSVC)
+    # older CMake does not pass CMAKE_CXX_STANDARD into CheckIncludeFileCXX,
+    # so hand the standard over explicitly
+    set(_cell_generator_check_flag "-std=c++${CELL_CXX_STANDARD}")
+endif()
+check_include_file_cxx("generator" CELL_HAS_STD_GENERATOR ${_cell_generator_check_flag})
+if(NOT CELL_HAS_STD_GENERATOR)
+    message(STATUS "cell-app: standard library has no <generator> — using third_party/compat")
+    target_include_directories(cell-app SYSTEM BEFORE PRIVATE
+        "${CMAKE_SOURCE_DIR}/third_party/compat")
+endif()
+
 # ---- platform wiring --------------------------------------------------------
 
 if(NOT WIN32)
@@ -156,7 +178,15 @@ if(WIN32)   # MSYS2 UCRT64 — WebView2 window
 
 elseif(APPLE)   # Cocoa + WKWebView; libsodium is the one Homebrew dependency
 
-    find_package(CURL REQUIRED)
+    # the system libcurl comes with the SDK: plain `curl` links -lcurl through
+    # the sysroot, and <curl/curl.h> resolves in the SDK's usr/include, which
+    # clang adds after its own headers. find_package(CURL) must not be used
+    # here: its imported target adds CURL_INCLUDE_DIR as a *system* include,
+    # and with the SDK path that lands in front of libc++'s <c++/v1> — then
+    # <cstdlib> finds the SDK's <stdlib.h> instead of libc++'s wrapper
+    # ("tried including <stdlib.h> but didn't find libc++'s <stdlib.h>
+    # header") and every libc++ header fails. It would also happily resolve
+    # to Homebrew's curl, which the shipped binary must not depend on.
     find_library(SODIUM_LIBRARY NAMES sodium
         HINTS /opt/homebrew/lib /usr/local/lib REQUIRED)
     find_path(SODIUM_INCLUDE_DIR sodium.h
@@ -174,7 +204,7 @@ elseif(APPLE)   # Cocoa + WKWebView; libsodium is the one Homebrew dependency
 
     target_link_libraries(cell-app PRIVATE
         "-framework Cocoa" "-framework WebKit"
-        CURL::libcurl ${SODIUM_LIBRARY} Threads::Threads)
+        curl ${SODIUM_LIBRARY} Threads::Threads)
 
 else()          # Linux — GTK3 + WebKitGTK
 

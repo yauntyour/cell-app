@@ -212,15 +212,15 @@ jobs:
           make -j"$(sysctl -n hw.logicalcpu)"
           make install
 
-      # CURL: force the system libcurl (the SDK stub) over anything Homebrew
-      # may have on the search path. Use the system libc++ (default for Clang
-      # on macOS) so no Homebrew runtime leaks into the link.
+      # CURL: CMakeLists links -lcurl, which resolves to the SDK stub and never
+      # to Homebrew's curl. Do NOT hand the SDK's usr/include to the compiler
+      # as an include dir: in front of libc++'s <c++/v1> it breaks libc++'s C
+      # wrappers (<cstdlib>: "tried including <stdlib.h> but didn't find
+      # libc++'s <stdlib.h> header"). libc++ also has no <generator> — the
+      # CMake configure detects that and picks up third_party/compat.
       # nlohmann-json is keg-only → explicit -I.
       - name: Configure
         run: |
-          sdk="$(xcrun --show-sdk-path)"
-          curl_lib="$(ls "$sdk"/usr/lib/libcurl*.tbd 2>/dev/null | head -n1)"
-          echo "system curl: $curl_lib"
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_CXX_COMPILER="${{ steps.clang.outputs.clangxx }}" \
@@ -228,8 +228,6 @@ jobs:
             -DCELL_CXX_STANDARD=26 \
             -DSODIUM_LIBRARY="$HOME/sodium/lib/libsodium.a" \
             -DSODIUM_INCLUDE_DIR="$HOME/sodium/include" \
-            -DCURL_LIBRARY="$curl_lib" \
-            -DCURL_INCLUDE_DIR="$sdk/usr/include" \
             -DCMAKE_CXX_FLAGS="-I$(brew --prefix nlohmann-json)/include"
 
       - name: Build
