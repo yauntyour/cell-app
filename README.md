@@ -188,9 +188,7 @@ curl -X POST http://127.0.0.1:8787/api/cmd/send \
   `desc` / `swatch`) and a `theme.css` that redefines the design tokens, then
   pick it in *Settings → 外观* or via `/theme <name>` — no rebuild, no restart
   (the CSS is served with `no-store`). Three
-  animation levels and `prefers-reduced-motion` are respected. The repo ships
-  a worked example at `build/.cell/theme/warm-paper/` (warm paper neutrals +
-  orange accent).
+  animation levels and `prefers-reduced-motion` are respected.
 
 One command bus and one event stream feed every client: a desktop window and
 any number of browser tabs can watch and drive the same workspaces, and an
