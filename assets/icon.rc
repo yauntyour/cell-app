@@ -1,5 +1,5 @@
-// cell application icon — embedded into cell-app.exe by windres (build-gui.sh).
-// The window class in third_party/include/webview/webview.h loads resource id 1
-// as its icon, so the exe / taskbar / title bar all show the brand mark.
-// Regenerate icon.ico from icon.svg:  python scripts/gen_app_icon.py
+// cell application icon — compiled by the CMake build (windres) and linked
+// into cell-app.exe. The window class in third_party/include/webview/webview.h
+// loads resource id 1 as its icon, so the exe / taskbar / title bar all show
+// the brand mark. icon.ico is rendered from icon.svg.
 1 ICON "icon.ico"

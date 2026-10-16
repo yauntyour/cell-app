@@ -22,44 +22,58 @@ cell-app.exe --ui FILE          serve the UI page from disk (dev mode, see below
 
 | file | role |
 |---|---|
-| `cell-app.cpp` | entry point: args, window, navigation, JS-bridge fallback, exit guard |
-| `cell-app-core.hpp` | `app_core`: the **workspace registry** (`workspace_ctx` per directory: history + runner + turn worker + approvals + box state), config/vault, the **command bus** (`exec_command`) and the **event bus** (multi-sink fan-out; every event carries its `ws`) |
-| `cell-app-http.hpp` | web service: `GET /` (UI), `POST /api/cmd/<name>`, `GET /api/state`, `GET /api/events` (SSE), `GET /api/themes` + `GET /api/theme/<name>` (theme system) |
-| `ui/index.html` | **the UI — single file, the single source of truth** (vanilla JS + inline CSS, no CDN, no assets) |
-| `scripts/gen_ui_header.py` | embeds `ui/index.html` into the generated `cell-ui.hpp` at build time |
-| `cell-ui.hpp` | **generated** — do not edit by hand |
+| `CMakeLists.txt` | cross-platform build (regenerates the embedded UI first) — artifacts land in `build/` |
+| `src/cell-app.cpp` | entry point: args, window, navigation, JS-bridge fallback, exit guard |
+| `src/cell-app-core.hpp` | `app_core`: the **workspace registry** (`workspace_ctx` per directory: history + runner + turn worker + approvals + box state), config/vault, the **command bus** (`exec_command`) and the **event bus** (multi-sink fan-out; every event carries its `ws`) |
+| `src/cell-app-http.hpp` | web service: `GET /` (UI), `POST /api/cmd/<name>`, `GET /api/state`, `GET /api/events` (SSE), `GET /api/themes` + `GET /api/theme/<name>` (theme system) |
+| `src/ui/src/` | the UI sources: an `index.html` skeleton + `css/*.css` and `js/*.js` layers (vanilla JS + inline CSS, no CDN, no assets) |
+| `src/ui/index.html` | **generated** — the assembled page, the `--ui` dev-loop artifact |
+| `build_ui.py` | assembles `src/ui/src/` into `src/ui/index.html` and embeds it as `src/cell-ui.hpp` |
+| `src/cell-ui.hpp` | **generated** — do not edit by hand |
+| `assets/` | app icon: `icon.svg` source, `icon.ico`, `icon.rc` (embedded into the exe on Windows) |
 | `.cell/theme/<name>/` | third-party UI themes (`theme.json` + `theme.css`) under `<exe dir>/.cell/` — the same root as config/sessions/vault; discovered at runtime, see *Themes* below |
 | `cell.cpp/cell.cpp` | the agent core — CLI, `cell::engine`, teamwork, notices, everything else |
 | `third_party/include/` | vendored `webview.h` (MIT), `WebView2.h` (BSD-3), `servic.hpp` + `router/router.hpp` (patched, see below) |
-| `build-gui.sh` | build script (regenerates `cell-ui.hpp` first) |
 
 ## Build
 
 ```bash
-./build-gui.sh             # release build (per-platform defaults)
-./build-gui.sh --shared    # Windows only: link against MSYS2 DLLs
-./build-gui.sh --console   # Windows only: keep a console (debugging)
-PYTHON=/path/to/python ./build-gui.sh   # pick the interpreter for the UI step
+cmake -B build            # configure (Ninja or Makefiles)
+cmake --build build       # → build/cell-app[.exe]
+```
+
+On Windows, run CMake from the MSYS2 UCRT64 shell (or point it at the
+toolchain: `-DCMAKE_CXX_COMPILER=D:/x64/msys2/ucrt64/bin/g++.exe`). Before
+compiling, the build regenerates the embedded UI (`src/ui/src/` →
+`src/cell-ui.hpp`) and drops the executable into `build/`.
+
+```bash
+cmake -B build -DCELL_STATIC=OFF        # Windows: link against MSYS2 DLLs
+cmake -B build -DCELL_CONSOLE=ON        # Windows: keep a console (debugging)
+cmake -B build -DCELL_CXX_STANDARD=23   # compilers without -std=c++26 (Apple clang)
+cmake -B build -DPython3_EXECUTABLE=/path/to/python   # interpreter for the UI step
 ```
 
 ## Developing the UI without rebuilding
 
-`ui/index.html` is served straight from disk when `--ui` is given, so the
-loop is: edit the file, hit refresh in the browser. No compilation.
+`src/ui/index.html` is the assembled page and is served straight from disk
+when `--ui` is given, so the loop is: edit `src/ui/src/`, rebuild the page,
+hit refresh in the browser. No C++ compilation.
 
 ```bash
-bin/cell-app.exe --headless 8787 --ui ui/index.html
-# open http://127.0.0.1:8787/ , edit ui/index.html, refresh
+build/cell-app.exe --headless 8787 --ui src/ui/index.html
+# open http://127.0.0.1:8787/ , edit src/ui/src/, run `python build_ui.py --html`, refresh
 ```
 
-The page also works standalone: open `ui/index.html` directly in a browser
+The page also works standalone: open `src/ui/index.html` directly in a browser
 (`file://`) and it boots in **demo mode** with synthetic data (two
 workspaces, a streaming answer, a teamwork job with a gate, folded notices,
 an approval prompt) — useful for design work with no backend at all.
 `?mock=1` forces demo mode anywhere.
 
-Regular builds call `scripts/gen_ui_header.py` to generate `cell-ui.hpp`;
-if no python is found the committed header is used unchanged.
+The CMake build runs `build_ui.py` before compiling and only rewrites an
+output when its content changed; with `-DCELL_BUILD_UI=OFF` (or no Python
+found) the committed `src/cell-ui.hpp` is used unchanged.
 
 ## Platform support
 
@@ -71,8 +85,8 @@ if no python is found the committed header is used unchanged.
 
 **Toolchain floor**: a C++23-capable compiler — GCC 14+ or Clang 17+. The
 code uses `std::generator`, `std::expected` and `std::move_only_function`
-but no C++26-only features, so `STD=-std=c++23 ./build-gui.sh` works on
-compilers that predate `-std=c++26` (e.g. Apple clang).
+but no C++26-only features, so `cmake -B build -DCELL_CXX_STANDARD=23`
+works on compilers that predate `-std=c++26` (e.g. Apple clang).
 
 **Dependency weight per platform**:
 - *Windows*: zero third-party DLLs. TLS via SChannel — no CA bundle needed.
@@ -134,7 +148,7 @@ curl -X POST http://127.0.0.1:8787/api/cmd/workspace.open \
      -H "Content-Type: application/json" -d '{"cwd":"D:/work/project"}'
 
 curl -X POST http://127.0.0.1:8787/api/cmd/send \
-     -H "Content-Type: application/json" -d '{"ws":"<key>","text":"explain build-gui.sh"}'
+     -H "Content-Type: application/json" -d '{"ws":"<key>","text":"explain CMakeLists.txt"}'
 ```
 
 ## The UI
@@ -174,7 +188,7 @@ curl -X POST http://127.0.0.1:8787/api/cmd/send \
   pick it in *Settings → 外观* or via `/theme <name>` — no rebuild, no restart
   (the CSS is served with `no-store`). Icons are emoji throughout. Three
   animation levels and `prefers-reduced-motion` are respected. The repo ships
-  a worked example at `bin/.cell/theme/warm-paper/` (warm paper neutrals +
+  a worked example at `build/.cell/theme/warm-paper/` (warm paper neutrals +
   orange accent).
 
 One command bus and one event stream feed every client: a desktop window and
@@ -194,7 +208,7 @@ agent loop ends (turn end / job end), whatever the exit path.
 ## Smoke tests (no provider needed, isolated data root)
 
 ```bash
-bin/cell-app.exe --smoke          # window -> HTTP page -> first `state` command
-bin/cell-app.exe --smoke-engine   # + one engine turn through the pipeline
-bin/cell-app.exe --smoke-ws       # + two workspaces running turns in parallel
+build/cell-app.exe --smoke          # window -> HTTP page -> first `state` command
+build/cell-app.exe --smoke-engine   # + one engine turn through the pipeline
+build/cell-app.exe --smoke-ws       # + two workspaces running turns in parallel
 ```
