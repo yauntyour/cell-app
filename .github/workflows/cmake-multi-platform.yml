@@ -10,11 +10,14 @@
 #
 # Artifacts:
 #   cell-app-windows-x64.exe   MSYS2 UCRT64 static build — zero third-party DLLs
-#   cell-app-linux-x86_64      plain ELF — the distro GTK3 + WebKitGTK 4.1 stack
-#                              (+ libcurl + libsodium), smoke-tested under xvfb
+#   cell-app-linux-x86_64      plain ELF — Arch Linux's GTK3 + WebKitGTK 4.1
+#                              stack (+ libcurl + libsodium), smoke-tested under
+#                              xvfb
 #   cell-app-macos-arm64       system frameworks + system libcurl, static
 #                              libsodium and static libstdc++ (Homebrew GCC —
 #                              libc++ does not implement <generator> yet)
+#
+# All three toolchains target C++26 (CELL_CXX_STANDARD=26).
 # =============================================================================
 
 name: cmake-multi-platform
@@ -78,7 +81,7 @@ jobs:
 
       - name: Configure
         shell: msys2 {0}
-        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCELL_CXX_STANDARD=26
 
       - name: Build
         shell: msys2 {0}
@@ -115,28 +118,35 @@ jobs:
   linux:
     needs: gate
     if: needs.gate.outputs.run == 'true'
-    # pinned, not -latest: this image carries the webkit2gtk-4.1 dev packages
-    runs-on: ubuntu-24.04
+    # rolling-release Arch container: newest GCC (C++26) and the freshest
+    # GTK3 + WebKitGTK 4.1 stack the distro ships today
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:base-devel
     timeout-minutes: 40
     steps:
+      # xvfb + xauth + mesa drive the smoke test below under software rendering.
+      # Everything else is the GTK/WebKitGTK runtime/build stack, libcurl and
+      # libsodium (both shipped shared on Arch), and header-only deps.
+      - name: Install build dependencies
+        run: |
+          pacman -Syu --noconfirm --needed \
+            cmake ninja gcc \
+            gtk3 webkit2gtk-4.1 \
+            curl libsodium \
+            nlohmann-json boost \
+            xorg-server-xvfb xorg-xauth mesa \
+            git
+          # checkout runs as root inside the container; the workspace may be
+          # owned by another uid, so widen git's ownership check
+          git config --system --add safe.directory '*'
+
       - uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      # g++-14: GCC 13 (the default) lacks std::generator. xvfb/xauth +
-      # libgl1-mesa-dri drive the smoke test below.
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            ninja-build g++-14 \
-            libgtk-3-dev libwebkit2gtk-4.1-dev \
-            libcurl4-openssl-dev libsodium-dev \
-            nlohmann-json3-dev libboost-dev \
-            xvfb xauth libgl1-mesa-dri
-
       - name: Configure
-        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=g++-14
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCELL_CXX_STANDARD=26
 
       - name: Build
         run: cmake --build build
@@ -171,16 +181,16 @@ jobs:
   macos:
     needs: gate
     if: needs.gate.outputs.run == 'true'
-    runs-on: macos-latest   # arm64
+    runs-on: macos-latest # arm64
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      # libc++ still has no <generator> (see the libc++ C++23 status page), so
-      # the build uses Homebrew GCC + libstdc++ instead of Apple clang. The
-      # keg is versioned, so resolve the highest g++ at build time.
+      # libc++ still has no <generator> and lags on C++26, so the build uses
+      # Homebrew GCC + libstdc++ instead of Apple clang. The keg is versioned,
+      # so resolve the highest g++ at build time.
       - name: Install the compiler and header-only dependencies
         run: brew install gcc ninja boost nlohmann-json
 
@@ -189,6 +199,7 @@ jobs:
         run: |
           gxx="$(ls "$(brew --prefix gcc)"/bin/g++-[0-9]* | sort -V | tail -n1)"
           echo "compiler: $gxx"
+          "$gxx" --version | head -n1
           echo "runtime libraries:"
           find "$(brew --prefix gcc)/lib/gcc" -maxdepth 2 \
             \( -name 'libstdc++*' -o -name 'libgcc*' \) -print
@@ -217,7 +228,7 @@ jobs:
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_CXX_COMPILER="${{ steps.gcc.outputs.gxx }}" \
-            -DCELL_CXX_STANDARD=23 \
+            -DCELL_CXX_STANDARD=26 \
             -DSODIUM_LIBRARY="$HOME/sodium/lib/libsodium.a" \
             -DSODIUM_INCLUDE_DIR="$HOME/sodium/include" \
             -DCURL_LIBRARY="$curl_lib" \
@@ -272,6 +283,8 @@ jobs:
         run: |
           cat > notes.md <<'EOF'
           Prebuilt single-file executables for cell-app, built by `cmake-multi-platform`.
+
+          All three binaries are compiled with `-std=c++26`.
 
           | platform | file | runtime dependencies |
           |---|---|---|
