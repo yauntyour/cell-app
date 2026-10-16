@@ -1914,8 +1914,10 @@ public:
   bool has_value() const { return m_has_data; }
 
 private:
+  // patched (cell-app): std::aligned_storage is deprecated in C++23 and warns
+  // under -std=c++26; an alignas(T) byte buffer is its standard replacement.
   // NOLINTNEXTLINE(bugprone-sizeof-expression): pointer to aggregate is OK
-  typename std::aligned_storage<sizeof(T), alignof(T)>::type m_data;
+  alignas(T) unsigned char m_data[sizeof(T)];
   bool m_has_data{};
 };
 
