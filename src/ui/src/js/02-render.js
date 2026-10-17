@@ -111,6 +111,11 @@ function renderSidebar() {
     e.style.padding = '18px 12px'; e.textContent = '没有匹配的会话';
     list.appendChild(e);
   }
+  if (S.sessionsTotal && S.sessionsTotal > S.sessions.length) {
+    const more = el('div', 'dim tiny', '仅显示最近 ' + S.sessions.length + ' / ' + S.sessionsTotal + ' 条会话');
+    more.style.padding = '4px 10px 10px';
+    list.appendChild(more);
+  }
 }
 
 async function selectSession(s) {
@@ -219,6 +224,10 @@ function hideTabMenu() { if (S.tabMenuNode) { S.tabMenuNode.remove(); S.tabMenuN
 async function activateWs(ws) {
   if (ws === S.active) return;
   S.active = ws;
+  // keep the backend's active workspace in sync with this tab: commands
+  // without an explicit "ws" and state snapshots resolve against it, so a
+  // diverged server state used to make a refresh jump to the wrong tab
+  if (S.tabs.has(ws)) cmd('workspace.activate', { ws: ws });
   if (!navNavigating) Nav.push(ws);
   const t = tab(ws);
   t.unread = 0;

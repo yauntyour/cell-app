@@ -61,7 +61,7 @@
 .rz::after{content:"";position:absolute;background:var(--accent);opacity:0;
   transition:opacity var(--dur) var(--ease)}
 .rz-v::after{top:0;bottom:0;left:2px;right:2px}
-.rz-h::after:left:0;right:0;top:2px;bottom:2px}
+.rz-h::after{left:0;right:0;top:2px;bottom:2px}
 .rz:hover::after,.rz.dragging::after,.rz:focus-visible::after{opacity:.55}
 .rz:focus-visible{outline:2px solid var(--accent);outline-offset:-2px;border-radius:0}
 #tabview{flex:1;min-height:0;display:flex;flex-direction:column;position:relative}

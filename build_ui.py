@@ -44,12 +44,13 @@ def layer(folder: str, suffix: str) -> str:
     chunks = []
     for f in files:
         chunks.append(f"/* ==== {folder}/{f.name} " + "=" * max(4, 60 - len(f.name)) + " */")
-        chunks.append(f.read_text(encoding="utf-8").rstrip())
+        # utf-8-sig: a BOM in a layer would land inside the assembled page
+        chunks.append(f.read_text(encoding="utf-8-sig").rstrip())
     return "\n\n".join(chunks) + "\n"
 
 
 def build() -> str:
-    skeleton = (SRC / "index.html").read_text(encoding="utf-8").replace("\r\n", "\n")
+    skeleton = (SRC / "index.html").read_text(encoding="utf-8-sig").replace("\r\n", "\n")
     css = layer("css", ".css")
     js = layer("js", ".js")
     if "/*@css*/" not in skeleton or "/*@js*/" not in skeleton:

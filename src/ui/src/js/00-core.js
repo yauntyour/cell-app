@@ -13,12 +13,14 @@ const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
 // 传输基址：相对路径（同源）；file:// 或 ?mock=1 走演示模式
 const MOCK = location.protocol === 'file:' || /[?&]mock=1\b/.test(location.search);
 
+// 名字必须与 cell.cpp 的 settings::parse_think_level 一致
+// （off|low|med|high|max 或 0..4）；旧名 minimal/medium 仍可在输入框里识别。
 const THINK_LEVELS = [
   { v: 0, name: 'off', desc: '不推理，最快' },
-  { v: 1, name: 'minimal', desc: '极少推理' },
-  { v: 2, name: 'low', desc: '低强度' },
-  { v: 3, name: 'medium', desc: '中等强度' },
-  { v: 4, name: 'high', desc: '高强度，最慢' },
+  { v: 1, name: 'low', desc: '低强度推理' },
+  { v: 2, name: 'med', desc: '中等强度' },
+  { v: 3, name: 'high', desc: '高强度' },
+  { v: 4, name: 'max', desc: '最高强度，最慢' },
 ];
 const SANDBOX_MODES = [
   { v: 'read-only', desc: '只读：禁止任何写入/执行' },
@@ -262,7 +264,7 @@ const S = {
   theme: '',
   active: '', tabOrder: [], tabs: new Map(),
   model: '', provider: '', sandbox: 'full-access', tools: true,
-  providers: [], settings: {}, workspaces: [], sessions: [], models: [],
+  providers: [], settings: {}, workspaces: [], sessions: [], sessionsTotal: 0, models: [],
   connected: true, everConnected: false,
   dock: 'teamwork', dockOpen: false, settingsOpen: false,
   recentCwds: [],
@@ -347,7 +349,7 @@ const Transport = {
 
 async function resync() {
   const out = await cmd('state', {});
-  if (out && out.ok !== false) applyHello(out, true);
+  if (out && out.ok !== false) applyHello(out, true, { keepActive: true });
   if (S.active) refreshNotices(S.active);
   // 设置页是全屏浮层，上面的按钮只改了后端；不重绘的话列表要等到
   // 关掉再打开才更新（此前 providers.add/select/rm 全都这样）。
@@ -360,7 +362,7 @@ async function resync() {
 function handleEvent(e) {
   if (!e || !e.t) return;
   switch (e.t) {
-    case 'hello': applyHello(e, true); break;
+    case 'hello': applyHello(e, true, { keepActive: true }); break;
     case 'turn_begin': onTurnBegin(e.ws); break;
     case 'turn_end': onTurnEnd(e); break;
     case 'answer_begin': onAnswerBegin(e.ws); break;
@@ -422,8 +424,9 @@ function markUnread(ws) {
 }
 
 /* ---------- hello：重建视图 ---------------------------------------- */
-function applyHello(st, rebuild) {
+function applyHello(st, rebuild, opts) {
   if (!st) return;
+  opts = opts || {};
   S.model = st.model || S.model;
   const prevProvider = S.provider;
   S.provider = st.provider || '';
@@ -483,9 +486,12 @@ function applyHello(st, rebuild) {
       t.detailSession = '';
       loadSessionDetail(ws, t.session);
     }
-    if (!S.active || rebuild) S.active = ws;
+    if (!opts.keepActive && (!S.active || rebuild)) S.active = ws;
   }
-  if (st.active && S.tabOrder.includes(st.active)) S.active = st.active;
+  if (!opts.keepActive && st.active && S.tabOrder.includes(st.active)) S.active = st.active;
+  // never keep a tab selected that no longer exists (workspace closed/deleted)
+  if (S.active && !S.tabOrder.includes(S.active))
+    S.active = (st.active && S.tabOrder.includes(st.active)) ? st.active : (S.tabOrder[0] || '');
 
   markAll();
   syncComposerInput();
@@ -500,9 +506,20 @@ function applyHello(st, rebuild) {
 }
 
 function removeTab(ws) {
+  const tabState = S.tabs.get(ws);
+  if (tabState) {
+    // worker-transcript / archive float windows must stop polling and go away
+    // with their workspace
+    for (const key of Array.from(tabState.wins.keys())) closeFloatWin(tabState, key);
+  }
   S.tabs.delete(ws);
   S.tabOrder = S.tabOrder.filter(k => k !== ws);
   if (S.active === ws) S.active = S.tabOrder[S.tabOrder.length - 1] || '';
+  // drop the workspace from back/forward history: otherwise "back" activates
+  // a workspace that no longer exists (ghost tab, commands to a dead ws)
+  Nav.hist = Nav.hist.filter(k => k !== ws);
+  if (Nav.idx >= Nav.hist.length) Nav.idx = Nav.hist.length - 1;
+  paintNav();
   const pane = $('#pane-' + cssId(ws));
   if (pane) pane.remove();
 }
@@ -619,7 +636,7 @@ function onNotice(e) {
   // 实时 watcher 事件与引擎注入事件可能先后到达同一条通知：按 id 去重
   // （房间 dock 与聊天气泡都以 t.notices 为源）
   if (e.nid && t.notices.some(n => n.id === e.nid)) return;
-  const n = { id: e.nid || uid(), from: e.from || '', session: e.session || '', topic: e.topic || '', body: e.body || '', d: e.d || '', created_at: e.created_at || nowSec(), pending: true, _new: true };
+  const n = { id: e.nid || uid(), from: e.from || '', session: e.session || '', topic: e.topic || '', body: e.body || '', d: e.d || '', created_at: e.created_at || nowSec(), pending: true, _new: true, live: true };
   t.notices.push(n);
   rebuildNoticeGroups(t);
   if (e.ws !== S.active) t.unread++;
@@ -672,7 +689,11 @@ function pushMsgSilent(ws, obj) {
 /* ---------- 数据刷新 ----------------------------------------------- */
 async function refreshSessions() {
   const out = await cmd('sessions.list', {});
-  if (out && out.sessions) { S.sessions = out.sessions; schedule('sidebar', renderSidebar); }
+  if (out && out.sessions) {
+    S.sessions = out.sessions;
+    S.sessionsTotal = Number(out.total || out.sessions.length || 0);
+    schedule('sidebar', renderSidebar);
+  }
 }
 // quiet：后台轮询用（03-teamwork.js 的 dock 自动刷新）——失败不弹 toast，
 // 工作区在拉取期间被删/关掉时静默放弃，等下一次渲染收掉轮询。
@@ -699,8 +720,13 @@ async function refreshNotices(ws) {
   const t = S.tabs.get(ws); if (!t) return;
   t.noticesLoaded = true;
   if (out && out.notices) {
-    const seen = new Set(t.notices.map(n => n.id));
-    for (const n of out.notices) if (!seen.has(n.id)) t.notices.push(n);
+    // 服务端列表（待投递 + 已投递历史）是权威来源：只合并最近 120s 内、
+    // 服务端可能还没落盘的实时事件 —— 只增不删会让别的客户端 clear 后
+    // 本端继续显示已删除的记录
+    const ids = new Set(out.notices.map(n => n.id));
+    const now = nowSec();
+    const fresh = t.notices.filter(n => n.live && !ids.has(n.id) && (now - (n.created_at || now)) < 120);
+    t.notices = out.notices.concat(fresh);
     rebuildNoticeGroups(t);
   }
   schedule('dock', renderDock);

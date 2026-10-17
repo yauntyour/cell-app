@@ -12,8 +12,8 @@
 //   - app_core       : the workspace registry, config/vault, the command bus
 //                      and the approval routing
 //   - exec_command   : the entire control surface behind one function, so
-//                      window.host_cmd (WebView) and POST /api/cmd/<name>
-//                      (HTTP) are the same protocol on two transports.
+//                      every HTTPS/SSE client and the (native) folder picker
+//                      share the same protocol.
 //                      Commands take an optional "ws" (workspace key); when
 //                      omitted they act on the active workspace.
 //
@@ -101,6 +101,13 @@ namespace app
         std::thread worker;
         std::atomic<bool> stop{false};
         std::atomic<bool> busy{false};
+        // guards the history (h) against command-side readers: the worker
+        // flips "busy" before and after a turn while holding it, and every
+        // command that reads the transcript takes it too. A turn's mutations
+        // happen only while busy==true, so "busy==false while holding hmx" is
+        // a safe snapshot point (fixes the old busy-check TOCTOU race).
+        std::mutex hmx;
+        std::condition_variable turn_cv; // signalled when a turn ends
 
         // ---- approval rendezvous (per workspace) -------------------------
         // the engine thread blocks on acv until any client answers; the id
@@ -143,6 +150,11 @@ namespace app
 
         // ---- workspace registry -----------------------------------------
         std::mutex ctx_mx;
+        // held while a context is erased (workspace.close/delete) and while the
+        // exit path walks the registry, so shutdown can never dereference a
+        // context another thread just deleted (lock order: ctx_life_mx ->
+        // ctx_mx, never the other way round)
+        std::mutex ctx_life_mx;
         std::map<std::string, std::unique_ptr<workspace_ctx>> ctxs; // key = cwd_key
         std::string active_ws;
 
@@ -159,6 +171,9 @@ namespace app
         std::mutex inflight_mx;
         std::condition_variable inflight_cv;
         std::atomic<bool> shutting_down{false};
+        // set once by begin_shutdown(): a late command must not create a new
+        // workspace context that nobody will join
+        std::atomic<bool> shutdown_started{false};
 
         void wait_idle(std::chrono::milliseconds timeout = std::chrono::milliseconds(10000))
         {
@@ -231,7 +246,10 @@ namespace app
             if (size_t recovered = cell::teamwork::recover_interrupted(u->h.now().id()))
                 cell::sys::logger::instance().warn("teamwork", std::format("boot recovery marked {} job(s) failed ws={}", recovered, key));
             cfg.active_sessions[key] = u->h.now().id();
-            u->eng = std::make_unique<cell::engine::runner>(cfg, vault, u->h);
+            // persist_turn_config=false: the shell owns cfg.active_sessions and
+            // saves it from the command thread; a per-turn config save on the
+            // worker thread would race that and rewrite the file for every turn
+            u->eng = std::make_unique<cell::engine::runner>(cfg, vault, u->h, false);
             u->prompt = u->eng->ensure_prompt();
             u->worker = std::thread([this, ptr = u.get()]
                                     { worker_loop(*ptr); });
@@ -345,10 +363,37 @@ namespace app
             }
         }
 
-        void shutdown()
+        // Phase 1 of the exit path: stop accepting work and wake every
+        // blocking wait (turn queue, approval rendezvous). The HTTP service is
+        // stopped next (so no command can arrive any more), then wait_idle(),
+        // then shutdown() joins the workers. Keeping the phases apart fixes an
+        // exit race: a workspace opened after the old shutdown() left a
+        // joinable worker thread behind, and destroying it aborted the process.
+        void begin_shutdown()
         {
+            if (shutdown_started.exchange(true))
+                return;
             stop_notice_watcher();
             shutting_down.store(true);
+            std::lock_guard<std::mutex> life(ctx_life_mx); // ctxs stay valid below
+            for (auto *c : all_ctxs())
+            {
+                c->stop.store(true);
+                deny_pending_approvals(*c);
+                {
+                    std::lock_guard<std::mutex> lk(c->qmx);
+                    c->quit = true;
+                }
+                c->qcv.notify_all();
+                c->acv.notify_all();
+            }
+        }
+        // idempotent: join every worker (also the ones a late command may have
+        // created before the HTTP service stopped)
+        void shutdown()
+        {
+            begin_shutdown();
+            std::lock_guard<std::mutex> life(ctx_life_mx); // no context can be erased below
             auto all = all_ctxs();
             for (auto *c : all)
             {
@@ -386,14 +431,25 @@ namespace app
                                 {"tool", tool},
                                 {"args", args.size() > 4096 ? args.substr(0, 4096) + "..." : args}};
             bus.post(e);
-            std::unique_lock<std::mutex> lk(ctx.amx);
-            ctx.acv.wait(lk, [&]
-                         { return ctx.ap_answers.count(id) > 0 || shutting_down.load(); });
-            ctx.ap_pending.erase(id);
-            auto it = ctx.ap_answers.find(id);
-            if (it == ctx.ap_answers.end()) // shutting down
+            bool answered = false;
             {
-                reason = "shutting down";
+                std::unique_lock<std::mutex> lk(ctx.amx);
+                answered = ctx.acv.wait_for(lk, std::chrono::minutes(5), [&]
+                                            { return ctx.ap_answers.count(id) > 0 || shutting_down.load(); });
+                ctx.ap_pending.erase(id);
+            }
+            if (!answered)
+            {
+                // no client answered in time: never leave a turn blocked forever
+                bus.post({{"t", "approval_resolved"}, {"id", id}, {"ws", ctx.cwd_key}, {"allow", false}, {"timeout", true}});
+                reason = "approval timed out (no client answered)";
+                return false;
+            }
+            std::unique_lock<std::mutex> lk(ctx.amx);
+            auto it = ctx.ap_answers.find(id);
+            if (it == ctx.ap_answers.end()) // shutting down / cancelled
+            {
+                reason = shutting_down.load() ? "shutting down" : "approval cancelled";
                 return false;
             }
             int ans = it->second;
@@ -404,6 +460,18 @@ namespace app
                 return false;
             }
             return true;
+        }
+        // reject every approval this workspace is currently waiting for; the
+        // destructive commands call it before joining a worker so a pending
+        // approval can never deadlock the command bus
+        void deny_pending_approvals(workspace_ctx &ctx)
+        {
+            {
+                std::lock_guard<std::mutex> lk(ctx.amx);
+                for (const auto &id : ctx.ap_pending)
+                    ctx.ap_answers[id] = 0;
+            }
+            ctx.acv.notify_all();
         }
         // called from any client; the first answer wins, all clients hear it
         void resolve_approval(const std::string &ws, const std::string &id, bool allow)
@@ -522,9 +590,14 @@ namespace app
                         return;
                     text = std::move(ctx.turns.front());
                     ctx.turns.pop_front();
+                    // flip busy under BOTH qmx and hmx: qmx makes the settings
+                    // activity check (busy || queued, under qmx) unable to miss a
+                    // turn that is about to read the config; hmx keeps the
+                    // history snapshot in build_state_for safe
+                    std::lock_guard<std::mutex> hlk(ctx.hmx);
+                    ctx.busy.store(true);
                 }
                 ctx.stop.store(false);
-                ctx.busy.store(true);
                 {
                     nlohmann::json e = {{"t", "turn_begin"}, {"ws", ctx.cwd_key}};
                     bus.post(e);
@@ -542,8 +615,138 @@ namespace app
                     nlohmann::json te = {{"t", "turn_end"}, {"ws", ctx.cwd_key}, {"natural", false}, {"rounds", 0}, {"tool_calls", 0}};
                     bus.post(te);
                 }
-                ctx.busy.store(false);
+                {
+                    std::lock_guard<std::mutex> lk(ctx.hmx);
+                    ctx.busy.store(false);
+                }
+                ctx.turn_cv.notify_all();
             }
+        }
+
+        // ---- turn / teamwork quiescing (used by the destructive commands)
+        // wait until the worker has left the history alone
+        bool wait_turn_idle(workspace_ctx &ctx, std::chrono::milliseconds timeout)
+        {
+            std::unique_lock<std::mutex> lk(ctx.hmx);
+            return ctx.turn_cv.wait_for(lk, timeout, [&]
+                                        { return !ctx.busy.load(); });
+        }
+        void clear_turn_queue(workspace_ctx &ctx)
+        {
+            std::lock_guard<std::mutex> lk(ctx.qmx);
+            ctx.turns.clear();
+        }
+        // ask the running turn to stop and wait until it has left the history
+        // alone; false = it did not stop in time
+        bool stop_turn_and_wait(workspace_ctx &ctx, std::chrono::milliseconds timeout)
+        {
+            if (!ctx.busy.load())
+                return true;
+            ctx.request_stop();
+            clear_turn_queue(ctx);
+            return wait_turn_idle(ctx, timeout);
+        }
+        // job ids still marked "running" in one session's teamwork store
+        static std::vector<std::string> running_jobs(const std::string &sid)
+        {
+            std::vector<std::string> out;
+            nlohmann::json store = cell::teamwork::load_store(sid);
+            auto jobs = store.find("jobs");
+            if (jobs == store.end() || !jobs->is_object())
+                return out;
+            for (auto &[id, job] : jobs->items())
+                if (job.is_object() && job.contains("status") && job["status"].is_string() &&
+                    job["status"].get<std::string>() == "running")
+                    out.push_back(id);
+            return out;
+        }
+        // every session of a workspace group: a running Teamwork job of ANY
+        // session keeps a raw pointer to this workspace's engine runtime, so
+        // closing the context must quiesce all of them
+        static std::vector<std::string> workspace_session_ids(const std::string &ws)
+        {
+            std::vector<std::string> out;
+            std::error_code ec;
+            auto base = cell::root / "sessions" / ws;
+            if (!std::filesystem::is_directory(base, ec))
+                return out;
+            for (auto &e : std::filesystem::directory_iterator(base, ec))
+            {
+                if (ec || !e.is_directory(ec))
+                    continue;
+                std::string id = e.path().filename().string();
+                if (cell::is_valid_session_id(id))
+                    out.push_back(id);
+            }
+            return out;
+        }
+        static std::vector<std::string> running_workspace_jobs(const std::string &ws)
+        {
+            std::vector<std::string> out;
+            for (auto &sid : workspace_session_ids(ws))
+                for (auto &id : running_jobs(sid))
+                    out.push_back(id);
+            return out;
+        }
+        // a job's status leaves "running" only after the background runner has
+        // consumed and finalized its queue entry, so waiting for it to empty is
+        // a real quiescence barrier for the engine runtime the job points into
+        bool stop_session_jobs_and_wait(const std::string &sid, std::chrono::milliseconds timeout)
+        {
+            auto ids = running_jobs(sid);
+            if (ids.empty())
+                return true;
+            for (auto &id : ids)
+                cell::teamwork::request_stop(id);
+            auto deadline = std::chrono::steady_clock::now() + timeout;
+            while (std::chrono::steady_clock::now() < deadline)
+            {
+                if (running_jobs(sid).empty())
+                    return true;
+                std::this_thread::sleep_for(std::chrono::milliseconds(60));
+            }
+            return running_jobs(sid).empty();
+        }
+        // True when any workspace has a turn running or queued. The worker flips
+        // busy while holding qmx, so a caller that inspects both under qmx cannot
+        // miss a turn that is just starting.
+        bool turn_activity()
+        {
+            for (auto *c : all_ctxs())
+            {
+                std::lock_guard<std::mutex> lk(c->qmx);
+                if (c->busy.load() || !c->turns.empty())
+                    return true;
+            }
+            return false;
+        }
+        // config-mutating commands must not run while a turn reads the shared
+        // settings object (engine threads hold no command lock). Teamwork jobs are
+        // safe: they own a settings copy (cell::teamwork::own_settings).
+        bool config_change_blocked(std::string &why)
+        {
+            if (turn_activity())
+            {
+                why = "a turn is running - change settings after it finishes";
+                return true;
+            }
+            return false;
+        }
+        bool stop_workspace_jobs_and_wait(const std::string &ws, std::chrono::milliseconds timeout)
+        {
+            auto ids = running_workspace_jobs(ws);
+            if (ids.empty())
+                return true;
+            for (auto &id : ids)
+                cell::teamwork::request_stop(id);
+            auto deadline = std::chrono::steady_clock::now() + timeout;
+            while (std::chrono::steady_clock::now() < deadline)
+            {
+                if (running_workspace_jobs(ws).empty())
+                    return true;
+                std::this_thread::sleep_for(std::chrono::milliseconds(60));
+            }
+            return running_workspace_jobs(ws).empty();
         }
 
         // -----------------------------------------------------------------
@@ -867,9 +1070,71 @@ namespace app
             }
             return out;
         }
+        // ---- transcript metadata cache -----------------------------------
+        // sessions.list runs after every turn and used to re-read every
+        // transcript in full just to count its lines (same for the archive
+        // shelf). Cache (size, mtime) -> line count / title and invalidate when
+        // either changes; the map is bounded.
+        struct meta_cache_entry
+        {
+            std::uintmax_t size = 0;
+            long long mtime = 0;
+            bool valid = false;
+            size_t lines = 0;
+            bool title_valid = false;
+            std::string title;
+        };
+        std::mutex meta_mx;
+        std::map<std::string, meta_cache_entry> meta_cache;
+
+        static long long file_mtime_sec(const std::filesystem::path &p)
+        {
+            std::error_code ec;
+            auto ft = std::filesystem::last_write_time(p, ec);
+            return ec ? 0
+                      : (long long)std::chrono::duration_cast<std::chrono::seconds>(
+                            std::chrono::file_clock::to_sys(ft).time_since_epoch())
+                            .count();
+        }
+        // must hold meta_mx
+        meta_cache_entry &meta_locked(const std::filesystem::path &p)
+        {
+            std::string key = p.lexically_normal().string();
+            if (!meta_cache.count(key) && meta_cache.size() > 4096)
+                meta_cache.clear();
+            auto &e = meta_cache[key];
+            std::error_code ec;
+            std::uintmax_t sz = std::filesystem::file_size(p, ec);
+            long long mt = file_mtime_sec(p);
+            if (ec)
+                return e;
+            if (!e.valid || e.size != sz || e.mtime != mt)
+            {
+                std::ifstream f(p, std::ios::binary);
+                size_t n = 0;
+                char buf[64 * 1024];
+                while (f)
+                {
+                    f.read(buf, sizeof(buf));
+                    n += (size_t)std::count(buf, buf + f.gcount(), '\n');
+                }
+                e.size = sz;
+                e.mtime = mt;
+                e.lines = n;
+                e.valid = true;
+                e.title_valid = false;
+                e.title.clear();
+            }
+            return e;
+        }
+        size_t cached_lines(const std::filesystem::path &p)
+        {
+            std::lock_guard<std::mutex> lk(meta_mx);
+            return meta_locked(p).lines;
+        }
         // list a session's compaction archives (saved/*.jsonl): name, mtime,
         // msgs — no transcript read, so the dock shelf can refresh cheaply
-        static void read_session_archives(const std::string &id, nlohmann::json &archives)
+        void read_session_archives(const std::string &id, nlohmann::json &archives)
         {
             std::error_code ec;
             auto saved = cell::session_dir(id) / "saved";
@@ -881,9 +1146,7 @@ namespace app
                     break;
                 if (!e.is_regular_file(ec) || e.path().extension() != ".jsonl")
                     continue;
-                std::ifstream af(e.path(), std::ios::binary);
-                size_t n = (size_t)std::count(std::istreambuf_iterator<char>(af),
-                                              std::istreambuf_iterator<char>(), '\n');
+                size_t n = cached_lines(e.path());
                 auto ft = std::filesystem::last_write_time(e.path(), ec);
                 long long mt = 0;
                 if (!ec)
@@ -896,7 +1159,7 @@ namespace app
                       { return a.value("name", "") > b.value("name", ""); });
         }
         // read a session transcript + its compaction archives from disk
-        static void read_session_files(const std::string &id, nlohmann::json &messages, nlohmann::json &archives)
+        void read_session_files(const std::string &id, nlohmann::json &messages, nlohmann::json &archives)
         {
             std::error_code ec;
             auto dir = cell::session_dir(id);
@@ -937,12 +1200,18 @@ namespace app
             st["ws"] = c->cwd_key;
             st["session"] = c->h.now().id();
             st["cwd"] = c->cwd;
-            st["busy"] = c->busy.load();
             st["promptChars"] = c->prompt.prompt_chars;
             st["skills"] = c->prompt.skill_count;
             st["promptInjected"] = c->prompt.injected;
-            if (with_history)
-                st["history"] = c->busy.load() ? nlohmann::json() : history_json(*c);
+            {
+                // one lock decides "busy" and the transcript snapshot together;
+                // the worker flips busy under the same lock (see worker_loop)
+                std::lock_guard<std::mutex> lk(c->hmx);
+                bool busy = c->busy.load();
+                st["busy"] = busy;
+                if (with_history)
+                    st["history"] = busy ? nlohmann::json() : history_json(*c);
+            }
             if (with_teamwork)
                 st["teamwork"] = teamwork_list(*c);
             return st;
@@ -992,7 +1261,19 @@ namespace app
             }
             return "";
         }
-        nlohmann::json sessions_list(size_t cap = 200)
+        // session title through the metadata cache (see meta_cache above)
+        std::string cached_title(const std::filesystem::path &p)
+        {
+            std::lock_guard<std::mutex> lk(meta_mx);
+            auto &e = meta_locked(p);
+            if (!e.title_valid)
+            {
+                e.title_valid = true;
+                e.title = session_title(p);
+            }
+            return e.title;
+        }
+        nlohmann::json sessions_list(size_t cap = 200, size_t *total_rows = nullptr)
         {
             struct row
             {
@@ -1035,10 +1316,8 @@ namespace app
                                 auto sys = std::chrono::file_clock::to_sys(ft);
                                 r.mtime = (long long)std::chrono::duration_cast<std::chrono::seconds>(sys.time_since_epoch()).count();
                             }
-                            std::ifstream mf(tf, std::ios::binary);
-                            r.msgs = (size_t)std::count(std::istreambuf_iterator<char>(mf),
-                                                        std::istreambuf_iterator<char>(), '\n');
-                            r.title = session_title(tf);
+                            r.msgs = cached_lines(tf);
+                            r.title = cached_title(tf);
                         }
                         // Teamwork 记录数（供侧栏徽标与详情视图判断）
                         auto twf = s.path() / "teamworks.json";
@@ -1064,6 +1343,8 @@ namespace app
                 }
             std::sort(rows.begin(), rows.end(), [](const row &a, const row &b)
                       { return a.mtime > b.mtime; });
+            if (total_rows)
+                *total_rows = rows.size();
             nlohmann::json out = nlohmann::json::array();
             for (size_t i = 0; i < rows.size() && i < cap; i++)
             {
@@ -1243,8 +1524,15 @@ namespace app
         //  Every command accepts an optional "ws"; commands that act on a
         //  session default to the active workspace.
         // -----------------------------------------------------------------
-        nlohmann::json exec_command(const std::string &name, const nlohmann::json &args)
+        nlohmann::json exec_command(const std::string &name, const nlohmann::json &args_in)
         {
+            // request arguments come from JSON clients: a null member means
+            // "not supplied" (args.value("ws","") throws type_error 302 on
+            // {"ws":null}, which used to abort a whole command with a cryptic
+            // "type must be string, but is null" error)
+            nlohmann::json args = args_in.is_object() ? args_in : nlohmann::json::object();
+            for (auto it = args.begin(); it != args.end();)
+                it = it->is_null() ? args.erase(it) : std::next(it);
             // track the command so the exit path can drain in-flight work
             struct inflight_guard
             {
@@ -1258,6 +1546,11 @@ namespace app
             } guard{this};
             try
             {
+                // once the shell starts tearing down, no command may create
+                // or mutate anything (a new workspace context would leave an
+                // unjoined worker thread behind on exit)
+                if (shutting_down.load())
+                    return ok_error("app is shutting down");
                 if (on_command)
                     on_command(name);
 
@@ -1292,8 +1585,16 @@ namespace app
                     workspace_ctx *c = find_ws(ws);
                     if (!c)
                         return ok_error("unknown workspace");
-                    if (c->busy.load())
-                        return ok_error("a turn is running in this workspace - stop it first");
+                    // quit all activity first: a running turn would keep the
+                    // worker busy, and a running teamwork job holds a raw
+                    // pointer into this workspace's engine (destroying the
+                    // context would be a use-after-free). Both are asked to
+                    // stop and given a bounded grace period.
+                    deny_pending_approvals(*c);
+                    if (!stop_turn_and_wait(*c, std::chrono::seconds(10)))
+                        return ok_error("a turn is still running - try closing again in a moment");
+                    if (!stop_workspace_jobs_and_wait(ws, std::chrono::seconds(15)))
+                        return ok_error("a teamwork job is still stopping - try closing again in a moment");
                     c->stop.store(true);
                     {
                         std::lock_guard<std::mutex> lk2(c->qmx);
@@ -1305,6 +1606,7 @@ namespace app
                     c->h.now().unload();
                     cell::async_io::flush();
                     {
+                        std::lock_guard<std::mutex> life(ctx_life_mx);
                         std::lock_guard<std::mutex> lk2(ctx_mx);
                         ctxs.erase(ws);
                         if (active_ws == ws)
@@ -1335,8 +1637,13 @@ namespace app
                         // 先关闭并卸载上下文（同 workspace.close）：unload() 会把
                         // 内存里的转录写回 messages.jsonl，顺序反了（先删记录）它
                         // 会把刚删掉的会话目录重建出来 —— 侧栏分组永远删不净
-                        if (c->busy.load())
-                            c->request_stop();
+                        // 运行中的回合 / Teamwork 任务必须先停下来：后者持有
+                        // 本工作区引擎运行时的裸指针，直接销毁上下文会 UAF。
+                        deny_pending_approvals(*c);
+                        if (!stop_turn_and_wait(*c, std::chrono::seconds(10)))
+                            return ok_error("a turn is still running - try deleting again in a moment");
+                        if (!stop_workspace_jobs_and_wait(ws, std::chrono::seconds(15)))
+                            return ok_error("a teamwork job is still stopping - try deleting again in a moment");
                         c->stop.store(true);
                         {
                             std::lock_guard<std::mutex> lk2(c->qmx);
@@ -1348,6 +1655,7 @@ namespace app
                         c->h.now().unload();
                         cell::async_io::flush();
                         {
+                            std::lock_guard<std::mutex> life(ctx_life_mx);
                             std::lock_guard<std::mutex> lk2(ctx_mx);
                             ctxs.erase(ws);
                             if (active_ws == ws)
@@ -1459,26 +1767,41 @@ namespace app
                 if (name == "settings.set")
                 {
                     std::lock_guard<std::mutex> lk(cmd_mx);
+                    std::string why;
+                    if (config_change_blocked(why))
+                        return ok_error(why);
                     return apply_settings(args.value("patch", nlohmann::json::object()));
                 }
                 if (name == "providers.add")
                 {
                     std::lock_guard<std::mutex> lk(cmd_mx);
+                    std::string why;
+                    if (config_change_blocked(why))
+                        return ok_error(why);
                     return providers_add(args);
                 }
                 if (name == "providers.rm")
                 {
                     std::lock_guard<std::mutex> lk(cmd_mx);
+                    std::string why;
+                    if (config_change_blocked(why))
+                        return ok_error(why);
                     return providers_rm(args.value("name", ""));
                 }
                 if (name == "providers.select")
                 {
                     std::lock_guard<std::mutex> lk(cmd_mx);
+                    std::string why;
+                    if (config_change_blocked(why))
+                        return ok_error(why);
                     return providers_select(args.value("name", ""));
                 }
                 if (name == "provider.set_key")
                 {
                     std::lock_guard<std::mutex> lk(cmd_mx);
+                    std::string why;
+                    if (config_change_blocked(why))
+                        return ok_error(why);
                     return provider_set_key(args.value("name", ""), args.value("key", ""));
                 }
                 if (name == "models.fetch")
@@ -1489,6 +1812,9 @@ namespace app
                 if (name == "model.set")
                 {
                     std::lock_guard<std::mutex> lk(cmd_mx);
+                    std::string why;
+                    if (config_change_blocked(why))
+                        return ok_error(why);
                     std::string m = args.value("model", "");
                     if (m.empty())
                         return ok_error("empty model name");
@@ -1501,8 +1827,11 @@ namespace app
                 if (name == "sessions.list")
                 {
                     std::lock_guard<std::mutex> lk(cmd_mx);
+                    size_t total = 0;
                     nlohmann::json r = ok();
-                    r["sessions"] = sessions_list();
+                    r["sessions"] = sessions_list(200, &total);
+                    r["total"] = (long long)total;
+                    r["truncated"] = total > (size_t)r["sessions"].size();
                     return r;
                 }
                 if (name == "session.select")
@@ -1538,6 +1867,7 @@ namespace app
                         cell::sys::logger::instance().info("sess", std::format("switched to={} msgs={}", id, (long long)c->h.now().msg().size()));
                     }
                     cfg.active_sessions[c->cwd_key] = id;
+                    save_cfg(); // a crash must not lose the active session
                     {
                         std::lock_guard<std::mutex> lk2(ctx_mx);
                         active_ws = c->cwd_key;
@@ -1559,6 +1889,7 @@ namespace app
                     c->h.forget_current();
                     c->eng->ensure_prompt();
                     cfg.active_sessions[c->cwd_key] = c->h.now().id();
+                    save_cfg(); // a crash must not lose the active session
                     cell::sys::logger::instance().info("sess", std::format("new id={} previous={} kept=true ws={}", c->h.now().id(), old_id, c->cwd_key));
                     broadcast_state();
                     return ok();
@@ -1570,8 +1901,13 @@ namespace app
                     workspace_ctx *c = target_ctx(args);
                     if (!c)
                         return ok_error("no workspace open");
-                    if (c->busy.load())
-                        c->request_stop();
+                    // 清空必须等回合真正结束：否则引擎线程会继续往刚清空的
+                    // messages 数组里写（数据竞争 + 半截回合落盘）
+                    deny_pending_approvals(*c);
+                    if (!stop_turn_and_wait(*c, std::chrono::seconds(10)))
+                        return ok_error("a turn is still running - try clearing again in a moment");
+                    if (!stop_session_jobs_and_wait(c->h.now().id(), std::chrono::seconds(15)))
+                        return ok_error("a teamwork job is still stopping - try clearing again in a moment");
                     long long before = (long long)c->h.now().msg().size();
                     c->h.now().msg().clear();
                     c->h.now().clear_interrupt(); // 可恢复的半截回合已不存在
@@ -1645,8 +1981,13 @@ namespace app
                         return ok();
                     }
                     bool active = (c->h.now().id() == id);
-                    if (active && c->busy.load())
-                        c->request_stop();
+                    // 同 session.clear：先停掉该会话的 Teamwork 任务与回合，
+                    // 否则后台/引擎线程会把刚删掉的目录重新写出来
+                    deny_pending_approvals(*c);
+                    if (!stop_session_jobs_and_wait(id, std::chrono::seconds(15)))
+                        return ok_error("a teamwork job is still stopping - try deleting again in a moment");
+                    if (active && !stop_turn_and_wait(*c, std::chrono::seconds(10)))
+                        return ok_error("a turn is still running - try deleting again in a moment");
                     // 先把当前会话落盘关闭，再删目录 —— 否则 unload/flush 会重建它
                     if (active)
                     {
@@ -1910,7 +2251,7 @@ namespace app
                         results.push_back({{"id", sid},
                                            {"ws", key.substr(0, slash)},
                                            {"cwd", cell::cwd_for_key(key.substr(0, slash))},
-                                           {"title", session_title(tf)},
+                                           {"title", cached_title(tf)},
                                            {"mtime", mt},
                                            {"hits", std::move(jhits)},
                                            {"more", hits.size() > 6 ? (long long)(hits.size() - 6) : 0}});

@@ -83,9 +83,35 @@ jobs:
         shell: msys2 {0}
         run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCELL_CXX_STANDARD=26
 
+      # the committed src/cell-ui.hpp + src/ui/index.html must match src/ui/src/
+      - name: Verify the generated UI bundle is current
+        shell: msys2 {0}
+        run: python build_ui.py --check
+
       - name: Build
         shell: msys2 {0}
         run: cmake --build build
+
+      # the windowed binary cannot print to a console, so probe the real HTTP
+      # service instead (this also exercises the loopback Host/Origin gate)
+      - name: Smoke test the HTTP service
+        shell: pwsh
+        run: |
+          $proc = Start-Process -FilePath "build/cell-app.exe" -ArgumentList '--headless','8799' -PassThru
+          try {
+            $ok = $false
+            for ($i = 0; $i -lt 40; $i++) {
+              Start-Sleep -Milliseconds 250
+              try {
+                $r = Invoke-WebRequest -Uri 'http://127.0.0.1:8799/' -UseBasicParsing -TimeoutSec 2
+                if ($r.StatusCode -eq 200) { $ok = $true; break }
+              } catch {}
+            }
+            if (-not $ok) { throw 'the HTTP service did not answer on 127.0.0.1:8799' }
+            Write-Host 'HTTP smoke OK'
+          } finally {
+            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+          }
 
       # the point of the static build: the import table must not name anything
       # outside the Windows system DLLs (a stray libcurl/libsodium/zlib DLL
@@ -135,6 +161,7 @@ jobs:
             gtk3 webkit2gtk-4.1 \
             curl libsodium \
             nlohmann-json boost \
+            python \
             xorg-server-xvfb xorg-xauth mesa \
             git
           # checkout runs as root inside the container; the workspace may be
@@ -147,6 +174,9 @@ jobs:
 
       - name: Configure
         run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCELL_CXX_STANDARD=26
+
+      - name: Verify the generated UI bundle is current
+        run: python build_ui.py --check
 
       - name: Build
         run: cmake --build build

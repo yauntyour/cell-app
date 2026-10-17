@@ -345,6 +345,9 @@ function applySlash(e) {
 function thinkLevelOf(s) {
   s = String(s || '').trim().toLowerCase();
   if (/^[0-4]$/.test(s)) return Number(s);
+  // 旧名字（minimal/medium）与 CLI 的别名仍然可用
+  const alias = { minimal: 1, medium: 2, med: 2, on: 1, maximum: 4 };
+  if (Object.prototype.hasOwnProperty.call(alias, s)) return alias[s];
   const hit = THINK_LEVELS.find(l => l.name === s);
   return hit ? hit.v : null;
 }

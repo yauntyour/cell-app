@@ -179,7 +179,9 @@ function noticeActions(t, id) {
 
 function highlightBody(body) {
   let h = esc(body || '');
-  h = h.replace(/'([^']{2,})'/g, '<span class="pathv">\'$1\'</span>');
+  // esc() turned ' into &#39;, so the old /'...'/ rule could never fire; match
+  // the escaped form instead (still safe: the captured text is already escaped)
+  h = h.replace(/&#39;([^&]{2,})&#39;/g, '<span class="pathv">&#39;$1&#39;</span>');
   h = h.replace(/(tw-[A-Za-z0-9\-_]+)/g, '<span class="pathv">$1</span>');
   return h;
 }

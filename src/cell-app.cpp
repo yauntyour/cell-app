@@ -10,10 +10,10 @@
 // lives in cell-app-core.hpp, the HTTP service in cell-app-http.hpp and the
 // embedded frontend in cell-ui.hpp.
 //
-//   JS  -> C++ :  host_ready       (page boot: state snapshot + history)
-//                 host_cmd         (async: [name, args] -> result JSON string)
-//                 host_pick_folder (sync: native folder picker -> path JSON)
-//   C++ -> JS  :  window.cellApp.pushBatch([...event objects...])
+//   JS  -> C++ :  host_pick_folder (sync: native folder picker -> path JSON)
+//   C++ -> JS  :  none — the page is a pure HTTP/SSE client, exactly like any
+//                 browser. (The old host_ready/host_cmd JS bridge was never
+//                 called by the shipped page and has been removed.)
 //
 // Threading: the agent turn runs on one worker thread; commands run on
 // short-lived threads (or the asio pool when they arrive over HTTP); every
@@ -29,96 +29,13 @@
 #include "cell-app-http.hpp"
 
 #include <csignal>
+#include <cstdlib> // std::strtol for the --serve/--headless port parser
 #ifdef _WIN32
 #include <shobjidl.h> // IFileOpenDialog — the native picker behind host_pick_folder
 #endif
 
 namespace app
 {
-    // =====================================================================
-    //  webview_sink — the event bus sink that feeds the WebView page.
-    //  Events are queued on arrival (any thread) and flushed to the page in
-    //  one eval per batch on the UI thread.
-    // =====================================================================
-    class webview_sink
-    {
-    public:
-        explicit webview_sink(event_bus &bus) : bus_(bus)
-        {
-            id_ = bus_.add([this](const std::string &line)
-                           { deliver(line); });
-        }
-        ~webview_sink() { bus_.remove(id_); }
-        void attach(webview::webview *w)
-        {
-            std::lock_guard<std::mutex> lk(mx_);
-            w_ = w;
-        }
-        void detach()
-        {
-            std::lock_guard<std::mutex> lk(mx_);
-            w_ = nullptr;
-            ready_ = false;
-        }
-        // called from the UI thread once the page is interactive
-        void set_ready()
-        {
-            std::lock_guard<std::mutex> lk(mx_);
-            ready_ = true;
-            schedule_locked();
-        }
-
-    private:
-        void deliver(const std::string &line)
-        {
-            std::lock_guard<std::mutex> lk(mx_);
-            if (!w_)
-                return;
-            q_.push_back(line);
-            schedule_locked();
-        }
-        // must hold mx_
-        void schedule_locked()
-        {
-            if (!ready_ || !w_ || scheduled_)
-                return;
-            scheduled_ = true;
-            w_->dispatch([this]()
-                         { flush(); });
-        }
-        void flush() // UI thread
-        {
-            for (;;)
-            {
-                std::deque<std::string> batch;
-                {
-                    std::lock_guard<std::mutex> lk(mx_);
-                    if (!w_ || q_.empty())
-                    {
-                        scheduled_ = false;
-                        return;
-                    }
-                    batch.swap(q_);
-                }
-                std::string js = "window.cellApp.pushBatch([";
-                for (auto &s : batch)
-                {
-                    js += s;
-                    js += ",";
-                }
-                js.back() = ']';
-                js += ");";
-                w_->eval(js); // only ever called from the UI thread
-            }
-        }
-        event_bus &bus_;
-        int id_;
-        std::mutex mx_;
-        std::deque<std::string> q_;
-        bool ready_ = false, scheduled_ = false;
-        webview::webview *w_ = nullptr;
-    };
-
 #ifdef _WIN32
     // =====================================================================
     //  pick_folder — the native folder picker behind the host_pick_folder
@@ -191,20 +108,39 @@ namespace app
         for (int i = 1; i < argc; i++)
         {
             std::string a = argv[i];
-            auto port_arg = [&]() -> int
+            // --serve / --headless take an optional port in 1..65535. A
+            // non-numeric/out-of-range value used to become 0 (silently no
+            // service, headless spun forever) - reject the command line instead.
+            auto port_arg = [&](const char *flag) -> int
             {
                 if (i + 1 < argc && argv[i + 1][0] != '-')
-                    return std::atoi(argv[++i]);
+                {
+                    const char *s = argv[++i];
+                    char *end = nullptr;
+                    long v = std::strtol(s, &end, 10);
+                    if (!end || *end != '\0' || v < 1 || v > 65535)
+                    {
+                        fprintf(stderr, "invalid port for %s: '%s' (expected 1..65535)\n", flag, s);
+                        return -1;
+                    }
+                    return (int)v;
+                }
                 return 8787;
             };
             if (a == "--ui" && i + 1 < argc)
                 ui_arg = argv[++i];
             else if (a == "--serve")
-                serve_port = port_arg();
+            {
+                serve_port = port_arg("--serve");
+                if (serve_port < 0)
+                    return 2;
+            }
             else if (a == "--headless")
             {
                 headless = true;
-                serve_port = port_arg();
+                serve_port = port_arg("--headless");
+                if (serve_port < 0)
+                    return 2;
             }
             else if (a == "--smoke")
                 smoke = 1;
@@ -224,9 +160,6 @@ namespace app
                 return 1;
             }
         }
-        if (serve_port < 0 || serve_port > 65535)
-            serve_port = 8787;
-
 #ifdef _WIN32
         // 进程唯一性（桌面窗口模式）：重复启动 = 把焦点交给已运行实例的窗口
         // 然后退出——两个 GUI 进程会抢同一个数据根、反复绑定服务端口。
@@ -388,9 +321,10 @@ namespace app
                 while (!g_signal_stop.load())
                     std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
-                core.shutdown();
-                core.wait_idle();
+                core.begin_shutdown();
                 http.stop();
+                core.wait_idle(std::chrono::seconds(30));
+                core.shutdown();
             }
             else
             {
@@ -417,7 +351,9 @@ namespace app
                         served = start_http();
                     }
                     if (!served)
-                        log.warn("http", "no free port in 8787..8806 - using the embedded page");
+                        log.error("http", "no free port in 8787..8806 - the embedded page has no HTTP "
+                                          "backend and boots in demo mode (set --serve PORT)");
+
                 }
 
                 // smoke tests: the page announces itself by issuing its boot
@@ -502,16 +438,8 @@ namespace app
                         }
                     };
 
-                // The JS bridge stays available but is attached lazily: only a
-                // page that actually calls host_ready (the legacy embedded UI)
-                // switches the event sink on. The HTTP page never does.
-                webview_sink sink(core.bus);
-                w.bind("host_ready", [&](std::string) -> std::string
-                       {
-                    sink.attach(&w);
-                    core.bus.post(core.build_state(true));
-                    sink.set_ready();
-                    return "{}"; });
+                // Only the native folder picker goes through the JS bridge; the
+                // page itself is a pure HTTP/SSE client like any browser tab.
 #ifdef _WIN32
                 // host_pick_folder — native folder picker for the "open
                 // workspace" dialog. Synchronous on purpose: the modal
@@ -523,18 +451,6 @@ namespace app
                         owner = reinterpret_cast<HWND>(win.value());
                     return pick_folder(owner); });
 #endif
-                w.bind("host_cmd", [&core, &w](std::string id, std::string req, void *) -> void
-                       {
-                    auto j = nlohmann::json::parse(req, nullptr, false);
-                    std::string name = (j.is_array() && !j.empty() && j[0].is_string()) ? j[0].get<std::string>() : "";
-                    nlohmann::json args = (j.is_array() && j.size() > 1 && j[1].is_object()) ? j[1] : nlohmann::json::object();
-                    std::thread([&core, &w, id, name, args]()
-                                {
-                        nlohmann::json out = core.exec_command(name, args);
-                        std::string payload = out.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
-                        w.dispatch([&w, id, payload]()
-                                   { w.resolve(id, 0, payload); }); })
-                        .detach(); }, nullptr);
 
                 if (served)
                 {
@@ -565,11 +481,16 @@ namespace app
                                             cell::box::mode_name(cell::box::sandbox_mode()), serve_port));
                 w.run(); // blocks until the window closes
 
-                // window closed: stop the workers, drain commands, stop service
-                core.shutdown();
-                core.wait_idle();
+                // window closed: refuse new commands, stop the service (no
+                // command can arrive afterwards), drain in-flight commands,
+                // then join the workspace workers. The old order - shutdown()
+                // before http.stop() - could leave a workspace opened in the
+                // gap with a joinable worker thread, aborting the process on
+                // exit.
+                core.begin_shutdown();
                 http.stop();
-                sink.detach();
+                core.wait_idle(std::chrono::seconds(30));
+                core.shutdown();
                 long long reqs = 0, tools = 0;
                 for (auto *c : core.all_ctxs())
                     if (c->eng)

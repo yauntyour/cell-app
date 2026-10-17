@@ -4,8 +4,11 @@ One agent runtime, one web UI, several ways to open it:
 
 - **Desktop**: a native window (WebView2 / WebKitGTK / WKWebView) that loads
   the same page a browser gets, served by the built-in HTTP service.
-- **Web service**: the UI and API exposed over HTTP, so a browser, a script
-  or another tool can drive the same workspaces.
+- **Web service**: the UI and API exposed over HTTP on `127.0.0.1` only, so a
+  browser, a script or another tool on the same machine can drive the same
+  workspaces. Requests must be loopback and same-origin (Host + Origin checks,
+  no CORS); there is no LAN/remote access, because the agent has full-access
+  tools.
 - **Multiple workspaces in parallel**: every working directory gets its own
   engine context (history, turn worker, approvals). Different directories run
   agent turns truly in parallel; within one directory there is exactly one
@@ -99,12 +102,27 @@ Homebrew LLVM clang++ (needed to parse the Apple SDK headers under
 - *macOS*: system frameworks + system libcurl; only libsodium comes from
   Homebrew. TLS via the system keychain.
 
-Vendored `servic.hpp` carries two small patches:
-1. the per-connection `std::cout` line is removed (no console in the shell);
-2. a failed socket write now throws instead of being swallowed, so an SSE
-   handler can notice a disconnected client.
+Vendored `servic.hpp` carries these patches:
+1. query strings are stripped from the routed path (the page reads
+   `?theme=` / `?dock=` / `?mock=1` itself);
+2. a failed socket write throws instead of being swallowed, so an SSE handler
+   can notice a disconnected client;
+3. requests run on dedicated, bounded worker threads instead of the io_context
+   threads, so a long command or a long-lived SSE stream cannot starve
+   accept/read (the desktop shell and every browser tab stay responsive);
+4. the listen endpoint is explicit and the shell binds `127.0.0.1` only;
+5. the request head is bounded (64 KiB), `Content-Length` is parsed
+   case-insensitively and validated, `Transfer-Encoding: chunked` is rejected
+   with `411`, and `Expect: 100-continue` is honoured.
 
 ## HTTP API (for scripts and integrations)
+
+The service binds `127.0.0.1` only. Every request must carry a loopback
+`Host` header (`127.0.0.1:PORT`, `localhost:PORT`) and be same-origin: an
+`Origin` from another site, or `Sec-Fetch-Site: cross-site`, is refused with
+`403` (request methods are enforced too — anything but the listed one gets
+`405`). There is no CORS at all: the page is always served from this same
+origin, so no other website can reach the API even from the user's browser.
 
 | method | path | body / notes |
 |---|---|---|
@@ -112,7 +130,7 @@ Vendored `servic.hpp` carries two small patches:
 | POST | `/api/cmd/<name>` | JSON body = command args; JSON result |
 | GET | `/api/state` | full snapshot of the active workspace (same as `cmd/state`) |
 | GET | `/api/events` | SSE: one `data: {…}` line per agent event |
-| OPTIONS | `/api/*` | CORS preflight (`Access-Control-Allow-Origin: *`, PNA allowed) |
+| — | other methods | `405 Method Not Allowed`; `OPTIONS` is refused as well (no CORS) |
 
 Commands (all return `{"ok":true,...}` or `{"ok":false,"error":"..."}`).
 Every command accepts an optional `"ws"` (workspace key); omitted = the
@@ -197,7 +215,10 @@ curl -X POST http://127.0.0.1:8787/api/cmd/send \
   /workspace /theme /help`.
 - **Settings page** — providers, model, agent (thinking/tools/system
   prompt), sandbox, compaction, performance limits, theme and animation
-  level; everything maps to the same config the CLI writes.
+  level; everything maps to the same config the CLI writes. Provider/model/
+  agent changes are refused while a turn is running (the engine reads that
+  config on its worker thread); retry when it finishes. Teamwork jobs are
+  unaffected: each job runs on its own snapshot of the settings.
 - **Themes & motion** — the built-in look is locked to a **black/white/gray
   dark** palette: neutral gray surfaces, flat borders, no textures, no colored
   accent (highlights, links, badges and role dots are all grays, with links
@@ -211,8 +232,10 @@ curl -X POST http://127.0.0.1:8787/api/cmd/send \
   animation levels and `prefers-reduced-motion` are respected.
 
 One command bus and one event stream feed every client: a desktop window and
-any number of browser tabs can watch and drive the same workspaces, and an
-approval answered in one client closes the dialog in the others.
+several browser tabs can watch and drive the same workspaces, and an approval
+answered in one client closes the dialog in the others. Every request (SSE
+streams included) runs on its own worker thread, so a long command or several
+open tabs can no longer starve the service's accept/read side.
 
 ## Cross-session file claims
 
