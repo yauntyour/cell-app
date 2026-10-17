@@ -97,19 +97,25 @@ const Layout = {
   sizes() {
     const v = this.load();
     const avail = this.availWidth();
+    // 窄窗口（<=980px）里右栏是覆盖式的（04-layout.css 的媒体查询），不再
+    // 从主区宽度里扣它，否则侧栏会被一起挤进窄态降级。它仍然按比例拿宽度，
+    // 只是浮在内容之上。
+    const overlayDock = window.innerWidth <= 980;
     let sb = clamp(v.sidebar * avail, this.pxMin.sidebar,
                    Math.min(this.pxMax.sidebar, avail));
-    let dk = S.dockOpen
+    const dk = S.dockOpen
       ? clamp(v.dock * avail, this.pxMin.dock, Math.min(this.pxMax.dock, avail))
       : 0;
-    // 主区底线：avail 装不下「侧栏下限 + dock 下限 + 主区」时（很窄的窗口），
-    // 按当前比例等比缩小两侧，把主区保到 mainMin——它是真正干活的地方。
-    // 三条竖分隔条 margin:-3px，净宽 0，所以 avail 就是 shell 的宽度。
-    const need = this.mainMin;
-    if (sb + dk > avail - need) {
-      const budget = Math.max(0, avail - need);
-      const room = sb + dk;
-      if (room > 0) { sb = sb / room * budget; dk = dk / room * budget; }
+    if (!overlayDock) {
+      // 主区底线：avail 装不下「侧栏下限 + dock 下限 + 主区」时（很窄的窗口），
+      // 按当前比例等比缩小两侧，把主区保到 mainMin——它是真正干活的地方。
+      // 三条竖分隔条 margin:-3px，净宽 0，所以 avail 就是 shell 的宽度。
+      const need = this.mainMin;
+      if (sb + dk > avail - need) {
+        const budget = Math.max(0, avail - need);
+        const room = sb + dk;
+        if (room > 0) { sb = sb / room * budget; }
+      }
     }
     return {sidebar: Math.round(sb), dock: Math.round(dk)};
   },
@@ -126,10 +132,15 @@ const Layout = {
     this.drag($('#rzDock'), 'dock', 'x', true);
     // 把手在悬浮卡的顶边：往下拖 = 顶边下移 = 卡片变矮，所以取反
     this.drag($('#rzComposer'), 'composer', 'y', true);
+    this._overlay = window.innerWidth <= 980;
     window.addEventListener('resize', () => {
       // 比例不变，像素重算——这就是"自适应缩放"：窗口变了三区仍按 20/50/30 分配
       this.set('composer', this.load().composer, false);
       this.apply();
+      // 宽 -> 窄跨档时收起一次右栏：窄窗口里它是覆盖式，继续开着会盖住输入栏
+      const ov = window.innerWidth <= 980;
+      if (ov && !this._overlay && S.dockOpen) closeDock();
+      this._overlay = ov;
     });
   },
 

@@ -88,7 +88,7 @@
 - 右栏默认打开 `start`（首次/无记忆时），开合与页签记在 localStorage `cell.dock`；`?dock=<name>` 可覆盖。
 - 输入卡：宽度 `min(calc(100% - 56px), var(--composer-max))`，底部 22px，圆角 `--radius-xl`，表面 `--elev-2` + 1px `--line2` 描边；聚焦时描边 `--accent` + 外环 `--accent-soft`。
 - 消息流列宽 `min(100% - 48px, var(--chat-max))` 居中；底部留白 `var(--composer-h) + 28px`。
-- 响应式：<1100px 侧栏可降到 240px；<980px 右栏默认收起；侧栏 <280px 隐藏文字标签（容器查询）。
+- 响应式：<1100px 侧栏可降到 240px；<980px 右栏改为覆盖式且首次启动默认收起（宽->窄跨档时自动收起）；侧栏容器查询的阈值按 **content-box** 计（侧栏有 10px 内边距，264px 最小宽度对应 content 244px，阈值 224px），避免未最大化窗口被误判成窄态而隐藏全部文字标签。
 - 拖拽分隔条机制沿用 `03-layout.js`（比例 + 像素护栏），只调默认值与上下限。
 
 ## 4. 组件规范（css/02-atoms.css、03-molecules.css）

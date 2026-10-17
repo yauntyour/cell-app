@@ -435,7 +435,9 @@ function dockRestore() {
       if (j && DOCK_LABEL[j.tab]) S.dock = j.tab;
     }
   } catch (e) {}
-  if (!had) { S.dockOpen = true; S.dock = 'start'; }
+  // 首次启动：宽窗口默认打开「开始」，窄窗口（右栏是覆盖式）默认收起，
+  // 否则面板会盖住输入栏与消息区
+  if (!had) { S.dockOpen = window.innerWidth > 980; S.dock = 'start'; }
   if (!DOCK_LABEL[S.dock]) S.dock = 'start';
   const dk = $('#rightdock');
   if (dk) dk.classList.toggle('open', S.dockOpen);

@@ -420,7 +420,7 @@ select{appearance:none;background-image:url("data:image/svg+xml;charset=utf-8,%3
 .thkmenu .sname{font-size:12.5px;font-weight:600;color:var(--fg)}
 .thkmenu .sdesc{font-size:10.5px;color:var(--fg3)}
 /* 3.7 窄侧栏降级（容器查询） --------------------------------------- */
-@container sb (max-width: 252px){
+@container sb (max-width: 224px){
   .brand-name,.brand-badge{display:none}
   .sb-nav-item .ni-label{display:none}
   .sb-nav-item{justify-content:center;padding:0}
@@ -432,7 +432,7 @@ select{appearance:none;background-image:url("data:image/svg+xml;charset=utf-8,%3
   .sb-gear{display:none}
   .smeta .sid{display:none}
 }
-@container sb (max-width: 300px){
+@container sb (max-width: 236px){
   .stitle{padding-right:0}
   .sitem .idel{display:none}
 }
@@ -497,10 +497,10 @@ select{appearance:none;background-image:url("data:image/svg+xml;charset=utf-8,%3
 
 /* 横幅 / 重连 */
 /* 演示/连接横幅：浮动胶囊，不占布局高度（对齐 DSH 的轻量提示） */
-#banner{position:fixed;top:9px;left:50%;transform:translateX(-50%);z-index:65;display:none;
+#banner{position:fixed;top:8px;right:104px;z-index:65;display:none;
   padding:5px 12px;border-radius:var(--radius-full);background:var(--panel2);
   border:1px solid var(--line2);color:var(--fg2);font-size:11.5px;font-weight:500;
-  box-shadow:var(--shadow-sm);white-space:nowrap;max-width:min(720px,calc(100vw - 600px));
+  box-shadow:var(--shadow-sm);white-space:nowrap;max-width:min(420px,calc(100vw - 780px));
   overflow:hidden;text-overflow:ellipsis}
 #banner.show{display:block}
 #reconnect{position:absolute;left:50%;bottom:14px;transform:translateX(-50%);z-index:70;
@@ -531,6 +531,8 @@ body.locked{overflow:hidden}
 }
 @media (max-width:980px){
   #rightdock.open{position:absolute;right:0;top:0;bottom:0;z-index:45;box-shadow:var(--shadow)}
+  /* 覆盖式面板不能拖（也避免 margin:-3px 的分隔条把 body 撑出 3px 横向滚动） */
+  #rzDock{display:none}
 }
 
 /* ==== css/05-stream.css =============================================== */
@@ -4332,7 +4334,9 @@ function dockRestore() {
       if (j && DOCK_LABEL[j.tab]) S.dock = j.tab;
     }
   } catch (e) {}
-  if (!had) { S.dockOpen = true; S.dock = 'start'; }
+  // 首次启动：宽窗口默认打开「开始」，窄窗口（右栏是覆盖式）默认收起，
+  // 否则面板会盖住输入栏与消息区
+  if (!had) { S.dockOpen = window.innerWidth > 980; S.dock = 'start'; }
   if (!DOCK_LABEL[S.dock]) S.dock = 'start';
   const dk = $('#rightdock');
   if (dk) dk.classList.toggle('open', S.dockOpen);
@@ -5934,19 +5938,25 @@ const Layout = {
   sizes() {
     const v = this.load();
     const avail = this.availWidth();
+    // 窄窗口（<=980px）里右栏是覆盖式的（04-layout.css 的媒体查询），不再
+    // 从主区宽度里扣它，否则侧栏会被一起挤进窄态降级。它仍然按比例拿宽度，
+    // 只是浮在内容之上。
+    const overlayDock = window.innerWidth <= 980;
     let sb = clamp(v.sidebar * avail, this.pxMin.sidebar,
                    Math.min(this.pxMax.sidebar, avail));
-    let dk = S.dockOpen
+    const dk = S.dockOpen
       ? clamp(v.dock * avail, this.pxMin.dock, Math.min(this.pxMax.dock, avail))
       : 0;
-    // 主区底线：avail 装不下「侧栏下限 + dock 下限 + 主区」时（很窄的窗口），
-    // 按当前比例等比缩小两侧，把主区保到 mainMin——它是真正干活的地方。
-    // 三条竖分隔条 margin:-3px，净宽 0，所以 avail 就是 shell 的宽度。
-    const need = this.mainMin;
-    if (sb + dk > avail - need) {
-      const budget = Math.max(0, avail - need);
-      const room = sb + dk;
-      if (room > 0) { sb = sb / room * budget; dk = dk / room * budget; }
+    if (!overlayDock) {
+      // 主区底线：avail 装不下「侧栏下限 + dock 下限 + 主区」时（很窄的窗口），
+      // 按当前比例等比缩小两侧，把主区保到 mainMin——它是真正干活的地方。
+      // 三条竖分隔条 margin:-3px，净宽 0，所以 avail 就是 shell 的宽度。
+      const need = this.mainMin;
+      if (sb + dk > avail - need) {
+        const budget = Math.max(0, avail - need);
+        const room = sb + dk;
+        if (room > 0) { sb = sb / room * budget; }
+      }
     }
     return {sidebar: Math.round(sb), dock: Math.round(dk)};
   },
@@ -5963,10 +5973,15 @@ const Layout = {
     this.drag($('#rzDock'), 'dock', 'x', true);
     // 把手在悬浮卡的顶边：往下拖 = 顶边下移 = 卡片变矮，所以取反
     this.drag($('#rzComposer'), 'composer', 'y', true);
+    this._overlay = window.innerWidth <= 980;
     window.addEventListener('resize', () => {
       // 比例不变，像素重算——这就是"自适应缩放"：窗口变了三区仍按 20/50/30 分配
       this.set('composer', this.load().composer, false);
       this.apply();
+      // 宽 -> 窄跨档时收起一次右栏：窄窗口里它是覆盖式，继续开着会盖住输入栏
+      const ov = window.innerWidth <= 980;
+      if (ov && !this._overlay && S.dockOpen) closeDock();
+      this._overlay = ov;
     });
   },
 

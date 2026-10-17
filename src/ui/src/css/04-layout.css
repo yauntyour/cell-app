@@ -56,10 +56,10 @@
 
 /* 横幅 / 重连 */
 /* 演示/连接横幅：浮动胶囊，不占布局高度（对齐 DSH 的轻量提示） */
-#banner{position:fixed;top:9px;left:50%;transform:translateX(-50%);z-index:65;display:none;
+#banner{position:fixed;top:8px;right:104px;z-index:65;display:none;
   padding:5px 12px;border-radius:var(--radius-full);background:var(--panel2);
   border:1px solid var(--line2);color:var(--fg2);font-size:11.5px;font-weight:500;
-  box-shadow:var(--shadow-sm);white-space:nowrap;max-width:min(720px,calc(100vw - 600px));
+  box-shadow:var(--shadow-sm);white-space:nowrap;max-width:min(420px,calc(100vw - 780px));
   overflow:hidden;text-overflow:ellipsis}
 #banner.show{display:block}
 #reconnect{position:absolute;left:50%;bottom:14px;transform:translateX(-50%);z-index:70;
@@ -90,4 +90,6 @@ body.locked{overflow:hidden}
 }
 @media (max-width:980px){
   #rightdock.open{position:absolute;right:0;top:0;bottom:0;z-index:45;box-shadow:var(--shadow)}
+  /* 覆盖式面板不能拖（也避免 margin:-3px 的分隔条把 body 撑出 3px 横向滚动） */
+  #rzDock{display:none}
 }

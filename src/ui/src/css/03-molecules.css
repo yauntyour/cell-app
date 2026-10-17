@@ -168,7 +168,7 @@
 .thkmenu .sname{font-size:12.5px;font-weight:600;color:var(--fg)}
 .thkmenu .sdesc{font-size:10.5px;color:var(--fg3)}
 /* 3.7 窄侧栏降级（容器查询） --------------------------------------- */
-@container sb (max-width: 252px){
+@container sb (max-width: 224px){
   .brand-name,.brand-badge{display:none}
   .sb-nav-item .ni-label{display:none}
   .sb-nav-item{justify-content:center;padding:0}
@@ -180,7 +180,7 @@
   .sb-gear{display:none}
   .smeta .sid{display:none}
 }
-@container sb (max-width: 300px){
+@container sb (max-width: 236px){
   .stitle{padding-right:0}
   .sitem .idel{display:none}
 }
