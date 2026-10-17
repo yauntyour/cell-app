@@ -1,116 +1,617 @@
-/* ---------- I. 输入栏 ---------------------------------------------- */
-// 发送/停止按钮图标（内联 SVG：随主题取色，不依赖 emoji 字体）：
-//   空闲 = 浅色圆 + 深色上箭头；工作中 = 同款圆 + 深色圆角方块（停止）
-const SEND_ICON = '<svg class="ico-send" viewBox="0 0 24 24" aria-hidden="true">'
-  + '<path d="M12 3 21 20.5 12 15.8 3 20.5Z" fill="currentColor" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>';
-const STOP_ICON = '<svg class="ico-stop" viewBox="0 0 24 24" aria-hidden="true">'
-  + '<rect x="4.8" y="4.8" width="14.4" height="14.4" rx="3.4" fill="currentColor"/></svg>';
+/* =====================================================================
+   I. 输入栏（Composer）· DSH 式悬浮输入卡
+   ---------------------------------------------------------------------
+   结构（全部由 ComposerUI.init() 建在骨架的 #composerInner 内）：
+     #composerInner  ← 卡片本体（--elev-2 / --radius-xl / 1px --line2，
+                        :focus-within 时 accent 边 + 外环）
+       #inputBox     ← 编辑区（textarea + 附件条 + 附件 chips），拖拽落点
+         #ta
+         #attachBar（#btnPickFile）
+         #chips
+         #fileInput
+       #teamEditor   ← Teamwork 工作流编辑器（team 模式显示）
+       .cmp-bar      ← 底部工具条：
+         + 添加附件 · 模式 chip · 沙箱 chip  ……  模型+思考 chip · accent 发送钮
+     .cmp-stat       ← 卡片外的状态行（连接点 / 左侧状态 / 右侧 token·round）
+                       由 Lead 的 renderStatLine 写 #statLeft/#connDot，
+                       这里只负责右侧 token/round（#statRight）。
 
-function focusInput() { const ta = $('#ta'); if (ta) ta.focus(); }
-function syncComposerText(txt) {
-  const t = S.tabs.get(S.active); if (!t) return;
-  t.composer.text = txt;
-  const ta = $('#ta'); if (ta) { ta.value = txt; autosize(ta); }
-  buildSlash();
+   兼容契约（docs/ui-redesign.md §7.1）：保留全部旧全局函数
+   renderComposer / syncComposerInput / setComposerMode / sendCurrent /
+   focusInput / autosize / buildSlash / renderChips / syncComposerText /
+   addFiles / enterSlash / applySlash / execSlash / layoutSlash / slashSel；
+   并新增 window.ComposerUI = { init, render, refresh, ... } 供 boot 优先调用。
+   ===================================================================== */
+
+const CMP_PLACEHOLDER = '描述你想构建的内容，/ 调用指令，@ 文件或对话';
+const CMP_ATTACH_PLACEHOLDER = '为附件添加说明，或直接发送…';
+
+/* 模式 / 沙箱 / 图标映射（图标名取自 00-core.js 的 ICON_PATHS） */
+const CMP_MODES = [
+  { v: 'text', label: '文本', icon: 'pencil', desc: '普通对话 · Enter 发送，Shift+Enter 换行' },
+  { v: 'attach', label: '附件', icon: 'clip', desc: '拖入或粘贴文件，随消息一起发送' },
+  { v: 'team', label: 'Teamwork', icon: 'users', desc: '编排多代理团队工作流' },
+];
+const CMP_SANDBOX = {
+  'read-only': { label: '只读', icon: 'eye', desc: '禁止任何写入或执行' },
+  'edit-only': { label: '仅编辑', icon: 'pencil', desc: '允许修改文件，禁止执行命令' },
+  'full-access': { label: '完全访问', icon: 'terminal', desc: '可读写并执行命令' },
+};
+const CMP_CMD_ICONS = {
+  '/new': 'plus', '/clear': 'trash', '/session': 'message', '/model': 'cpu',
+  '/provider': 'database', '/think': 'bulb', '/tools': 'settings', '/sandbox': 'terminal',
+  '/autoallow': 'check', '/compact': 'archive', '/stop': 'stop', '/teamwork': 'users',
+  '/notice': 'bell', '/archive': 'archive', '/workspace': 'folder', '/theme': 'eye',
+  '/help': 'info',
+};
+const CMP_ARG_ICONS = {
+  sessions: 'message', models: 'cpu', providers: 'database', think: 'bulb',
+  sandbox: 'terminal', onoff: 'check', theme: 'eye', teamwork: 'users', workspaces: 'folder',
+};
+
+/* 发送/停止/运行图标用内联 SVG 直接给：停止方块与播放三角填充更扎实 */
+const CMP_ICON_SEND = '<svg class="uico" viewBox="0 0 24 24" aria-hidden="true">'
+  + '<path d="M12 19V5M5 12l7-7 7 7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const CMP_ICON_STOP = '<svg class="uico" viewBox="0 0 24 24" aria-hidden="true">'
+  + '<rect x="6.5" y="6.5" width="11" height="11" rx="2.6" fill="currentColor"/></svg>';
+const CMP_ICON_RUN = '<svg class="uico" viewBox="0 0 24 24" aria-hidden="true">'
+  + '<path d="M8 5.2v13.6a.8.8 0 0 0 1.22.68l10.8-6.8a.8.8 0 0 0 0-1.36L9.22 4.52A.8.8 0 0 0 8 5.2Z" fill="currentColor"/></svg>';
+
+let slashSel = 0;
+let cmpMenu = null;        // 当前打开的 composer 弹出菜单
+let cmpModelFetching = false;
+let cmpMetaSig = '';       // 状态行右侧 token/round 的缓存签名
+
+/* ---------- I1. 构建 DOM ------------------------------------------- */
+function cmpHost() { return $('#composerInner') || $('.composer-inner'); }
+function cmpStack(host) {
+  const el0 = host || cmpHost();
+  if (!el0) return null;
+  if (el0.parentElement && el0.parentElement.classList.contains('composer-stack')) return el0.parentElement;
+  return el0.closest ? el0.closest('.composer-stack') : null;
 }
-function autosize(ta) { ta.style.height = 'auto'; ta.style.height = Math.min(200, ta.scrollHeight) + 'px'; }
+function ensureSlashPanel() {
+  let panel = $('#slashPanel');
+  if (panel) return panel;
+  panel = el('div', 'slash');
+  panel.id = 'slashPanel';
+  const stack = cmpStack(null) || $('#composer');
+  if (!stack) return null;
+  stack.insertBefore(panel, stack.firstChild);
+  return panel;
+}
 
-function setComposerMode(mode) {
-  const t = S.tabs.get(S.active); if (!t) return;
-  t.composer.mode = mode;
-  renderComposer();
-  buildSlash();
+function buildComposerDom() {
+  const host = cmpHost();
+  if (!host) return false;
+  host.id = 'composerInner';
+  host.classList.add('cmp-card');
+  host.replaceChildren();
+
+  /* — 编辑区（#inputBox 同时是拖拽落点） — */
+  const box = el('div', 'cmp-box');
+  box.id = 'inputBox';
+  const ta = el('textarea');
+  ta.id = 'ta';
+  ta.rows = 1;
+  ta.placeholder = CMP_PLACEHOLDER;
+  ta.setAttribute('aria-label', '输入消息');
+  ta.spellcheck = false;
+  box.appendChild(ta);
+
+  const attachBar = el('div', 'cmp-attach');
+  attachBar.id = 'attachBar';
+  attachBar.hidden = true;
+  const pick = el('button', 'btn sm ghost');
+  pick.id = 'btnPickFile';
+  pick.type = 'button';
+  pick.title = '选择要发送的文件';
+  pick.innerHTML = iconHtml('clip', 'sm') + '<span>选择文件</span>';
+  const hint = el('span', 'cmp-attach-hint', '也可把文件拖进输入框，或直接粘贴');
+  attachBar.appendChild(pick);
+  attachBar.appendChild(hint);
+  box.appendChild(attachBar);
+
+  const chips = el('div', 'cmp-chips');
+  chips.id = 'chips';
+  chips.hidden = true;
+  box.appendChild(chips);
+
+  const fin = el('input');
+  fin.type = 'file';
+  fin.id = 'fileInput';
+  fin.multiple = true;
+  fin.hidden = true;
+  box.appendChild(fin);
+
+  host.appendChild(box);
+
+  /* — Teamwork 工作流编辑器（team 模式显示） — */
+  const team = el('div', 'cmp-team');
+  team.id = 'teamEditor';
+  team.hidden = true;
+  host.appendChild(team);
+
+  /* — 底部工具条 — */
+  const bar = el('div', 'cmp-bar');
+
+  const left = el('div', 'cmp-bar-l');
+  const add = el('button', 'cmp-add');
+  add.id = 'btnAttach';
+  add.type = 'button';
+  add.title = '添加附件（也可拖入 / 粘贴）';
+  add.setAttribute('aria-label', '添加附件');
+  add.innerHTML = iconHtml('plus');
+  left.appendChild(add);
+
+  const modeChip = el('button', 'cmp-chip');
+  modeChip.id = 'modeChip';
+  modeChip.type = 'button';
+  modeChip.title = '输入模式（Shift+Tab 切换）';
+  modeChip.setAttribute('aria-haspopup', 'menu');
+  left.appendChild(modeChip);
+
+  const sandboxChip = el('button', 'cmp-chip');
+  sandboxChip.id = 'sandboxChip';
+  sandboxChip.type = 'button';
+  sandboxChip.title = '沙箱模式';
+  sandboxChip.setAttribute('aria-haspopup', 'menu');
+  left.appendChild(sandboxChip);
+
+  const right = el('div', 'cmp-bar-r');
+  const modelChip = el('button', 'cmp-chip cmp-chip-model');
+  modelChip.id = 'modelChip';
+  modelChip.type = 'button';
+  modelChip.title = '模型 / 供应商 / 思考级别';
+  modelChip.setAttribute('aria-haspopup', 'menu');
+  right.appendChild(modelChip);
+
+  const send = el('button', 'cmp-send');
+  send.id = 'sendBtn';
+  send.type = 'button';
+  send.title = '发送 (Enter)';
+  send.setAttribute('aria-label', '发送');
+  send.innerHTML = CMP_ICON_SEND;
+  right.appendChild(send);
+
+  bar.appendChild(left);
+  bar.appendChild(right);
+  host.appendChild(bar);
+
+  /* — 状态行：放在卡片外（.composer-stack 末尾），视觉上是漂浮卡下的细行 — */
+  const stack = cmpStack(host);
+  let stat = null;
+  if (stack) stat = stack.querySelector('.cmp-stat, .cstat');
+  if (stat && host.contains(stat)) stat = null;
+  if (!stat) stat = el('div', 'cmp-stat');
+  stat.className = 'cmp-stat';
+  stat.replaceChildren();
+  const dot = el('span', 'pulse');
+  dot.id = 'connDot';
+  dot.title = '连接状态';
+  const statL = el('span', 'cmp-stat-l trunc');
+  statL.id = 'statLeft';
+  statL.textContent = '就绪';
+  const statR = el('span', 'cmp-stat-r');
+  statR.id = 'statRight';
+  stat.appendChild(dot);
+  stat.appendChild(statL);
+  stat.appendChild(el('span', 'grow'));
+  stat.appendChild(statR);
+  if (stack) { if (stat.parentElement !== stack) stack.appendChild(stat); }
+  else host.appendChild(stat);
+
+  ensureSlashPanel();
+  autosize(ta);
+  host.__cmpBuilt = true;
+  return true;
+}
+
+/* ---------- I2. 事件绑定 ------------------------------------------- */
+function bindComposer() {
+  const host = cmpHost();
+  if (!host || host.__cmpBound) return;
+  host.__cmpBound = true;
+
+  const ta = $('#ta');
+  const send = $('#sendBtn');
+  const fin = $('#fileInput');
+  const pick = $('#btnPickFile');
+  const add = $('#btnAttach');
+
+  if (ta) {
+    ta.addEventListener('input', () => {
+      const t = curTab();
+      if (!t) return;
+      t.composer.text = ta.value;
+      slashSel = 0;
+      autosize(ta);
+      buildSlash();
+      paintSendState(t);
+    });
+    ta.addEventListener('keydown', onComposerKeydown);
+  }
+  if (send) send.addEventListener('click', () => sendCurrent());
+  if (add && fin) add.addEventListener('click', () => { if (!add.disabled) fin.click(); });
+  if (pick && fin) pick.addEventListener('click', () => fin.click());
+  if (fin) fin.addEventListener('change', () => {
+    if (fin.files && fin.files.length) addFiles(fin.files);
+    fin.value = ''; // 同一个文件可以再次选择
+  });
+
+  const modeChip = $('#modeChip');
+  if (modeChip) modeChip.addEventListener('click', () => toggleModeMenu(modeChip));
+  const sandboxChip = $('#sandboxChip');
+  if (sandboxChip) sandboxChip.addEventListener('click', () => toggleSandboxMenu(sandboxChip));
+  const modelChip = $('#modelChip');
+  if (modelChip) modelChip.addEventListener('click', () => toggleModelMenu(modelChip));
+
+  /* 拖拽入卡：整张卡片都是落点（编辑区高亮） */
+  const stop = ev => { ev.preventDefault(); ev.stopPropagation(); };
+  host.addEventListener('dragenter', ev => {
+    stop(ev);
+    if (!hasFileDrag(ev)) return;
+    host.classList.add('dropping');
+  });
+  host.addEventListener('dragover', ev => {
+    stop(ev);
+    if (!hasFileDrag(ev)) return;
+    host.classList.add('dropping');
+    try { ev.dataTransfer.dropEffect = 'copy'; } catch (e) {}
+  });
+  host.addEventListener('dragleave', ev => {
+    if (ev.relatedTarget && host.contains(ev.relatedTarget)) return;
+    host.classList.remove('dropping');
+  });
+  host.addEventListener('drop', ev => {
+    stop(ev);
+    host.classList.remove('dropping');
+    const dt = ev.dataTransfer;
+    if (!dt || !dt.files || !dt.files.length) return;
+    const t = curTab();
+    if (t && t.composer.mode !== 'attach') setComposerMode('attach');
+    addFiles(dt.files);
+  });
+
+  /* 粘贴：带文件的剪贴板 → 附件（沿用旧行为，全局生效） */
+  document.addEventListener('paste', ev => {
+    const t = curTab();
+    if (!t || !ev.clipboardData) return;
+    const files = ev.clipboardData.files;
+    if (files && files.length) {
+      if (t.composer.mode !== 'attach') setComposerMode('attach');
+      addFiles(files);
+      ev.preventDefault();
+    }
+  });
+
+  /* 点卡片空白处聚焦输入框 */
+  host.addEventListener('mousedown', ev => {
+    if (ev.button !== 0) return;
+    if (ev.target === host || ev.target.classList.contains('cmp-box') || ev.target.classList.contains('cmp-bar')) {
+      ev.preventDefault();
+      focusInput();
+    }
+  });
+
+  /* 宽度自适应：主区变窄（分栏/窗口）时把 chip 收成图标，避免文字挤成「文…」 */
+  applyComposerWidthClass();
+  if (typeof ResizeObserver !== 'undefined') {
+    const ro = new ResizeObserver(() => applyComposerWidthClass());
+    ro.observe(host);
+    host.__cmpRO = ro;
+  }
+
+  /* 拖动 --composer-h 的手柄后重新自适配高度（布局本身由 03-layout.js 负责） */
+  const rz = $('#rzComposer');
+  if (rz) {
+    rz.addEventListener('pointerup', () => renderComposer());
+    rz.addEventListener('keyup', () => renderComposer());
+  }
+  window.addEventListener('resize', () => { try { renderComposer(); } catch (e) {} });
+}
+
+function applyComposerWidthClass() {
+  const host = $('#composerInner');
+  if (!host) return;
+  const w = host.getBoundingClientRect().width || 0;
+  host.classList.toggle('cmp-narrow', w > 0 && w < 650);
+  host.classList.toggle('cmp-tiny', w > 0 && w < 520);
+}
+
+function hasFileDrag(ev) {
+  const dt = ev.dataTransfer;
+  if (!dt) return false;
+  if (dt.types && Array.from(dt.types).indexOf('Files') >= 0) return true;
+  return !!(dt.files && dt.files.length);
+}
+
+function onComposerKeydown(ev) {
+  if (ev.isComposing || ev.keyCode === 229) return; // 输入法组合中：交给 IME
+  const panel = $('#slashPanel');
+  const open = !!(panel && panel.classList.contains('show'));
+  const entries = (panel && panel._entries) || [];
+
+  if (open) {
+    if (ev.key === 'ArrowDown') { ev.preventDefault(); moveSlashSel(1); return; }
+    if (ev.key === 'ArrowUp') { ev.preventDefault(); moveSlashSel(-1); return; }
+    if (ev.key === 'Tab' && !ev.shiftKey) { ev.preventDefault(); if (entries[slashSel]) applySlash(entries[slashSel]); return; }
+    if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); enterSlash(); return; }
+    if (ev.key === 'Escape') { ev.preventDefault(); closeSlash(); return; }
+  }
+  if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); sendCurrent(); return; }
+  if (ev.key === 'Tab' && ev.shiftKey) { ev.preventDefault(); cycleComposerMode(); return; }
+  if (ev.key === 'Escape' && cmpMenu) { closeComposerMenu(); return; }
+}
+
+function closeSlash() {
+  const p = $('#slashPanel');
+  if (p) { p.classList.remove('show'); p._entries = []; }
+}
+
+function cycleComposerMode() {
+  const t = curTab();
+  if (!t) return;
+  const order = CMP_MODES.map(m => m.v);
+  const i = order.indexOf(t.composer.mode);
+  setComposerMode(order[(i + 1) % order.length]);
+}
+
+/* ---------- I3. 核心渲染 ------------------------------------------- */
+function ensureComposer() {
+  const host = cmpHost();
+  if (host && host.__cmpBuilt && $('#ta')) return true;
+  if (!buildComposerDom()) return false;
+  bindComposer();
+  return true;
+}
+
+function paintModeChip(mode) {
+  const chip = $('#modeChip');
+  if (!chip) return;
+  const m = CMP_MODES.find(x => x.v === mode) || CMP_MODES[0];
+  chip.innerHTML = '<span class="cmp-chip-ico">' + iconHtml(m.icon) + '</span>'
+    + '<span class="cmp-chip-txt"></span>'
+    + '<span class="cmp-chev">' + iconHtml('chevronDown') + '</span>';
+  const txt = chip.querySelector('.cmp-chip-txt');
+  if (txt) txt.textContent = m.label;
+  chip.title = '输入模式：' + m.label + '（Shift+Tab 切换）';
+  chip.setAttribute('aria-expanded', cmpMenu && cmpMenu.kind === 'mode' ? 'true' : 'false');
+}
+
+function paintSandboxChip(mode) {
+  const chip = $('#sandboxChip');
+  if (!chip) return;
+  const m = CMP_SANDBOX[mode] || CMP_SANDBOX['full-access'];
+  chip.innerHTML = '<span class="cmp-chip-ico">' + iconHtml(m.icon) + '</span>'
+    + '<span class="cmp-chip-txt"></span>'
+    + '<span class="cmp-chev">' + iconHtml('chevronDown') + '</span>';
+  const txt = chip.querySelector('.cmp-chip-txt');
+  if (txt) txt.textContent = m.label;
+  chip.title = '沙箱模式：' + m.label + ' · ' + m.desc;
+  chip.setAttribute('aria-expanded', cmpMenu && cmpMenu.kind === 'sandbox' ? 'true' : 'false');
+}
+
+function paintModelChip(t) {
+  const chip = $('#modelChip');
+  if (!chip) return;
+  const lv = Number((S.settings || {}).think_level || 0);
+  const lvl = THINK_LEVELS[lv] || THINK_LEVELS[0];
+  const name = S.model || '(未选择模型)';
+  chip.innerHTML = '<span class="cmp-chip-ico">' + iconHtml('cpu') + '</span>'
+    + '<span class="cmp-model-name trunc"></span>'
+    + '<span class="cmp-sep">·</span>'
+    + '<span class="cmp-think' + (lv > 0 ? ' on' : '') + '"></span>'
+    + '<span class="cmp-chev">' + iconHtml('chevronDown') + '</span>';
+  const nm = chip.querySelector('.cmp-model-name');
+  if (nm) nm.textContent = name;
+  const th = chip.querySelector('.cmp-think');
+  if (th) th.textContent = lv > 0 ? ('思考 ' + lvl.name) : '思考 off';
+  chip.title = '模型：' + name + '\n思考：' + (lv > 0 ? lvl.name + ' (' + lvl.v + ') · ' + lvl.desc : '关闭')
+    + '\n点击切换模型 / 供应商 / 思考级别';
+  chip.disabled = !t;
+  chip.setAttribute('aria-expanded', cmpMenu && cmpMenu.kind === 'model' ? 'true' : 'false');
+}
+
+function paintSendState(t) {
+  const send = $('#sendBtn');
+  if (!send) return;
+  const mode = t ? (t.composer.mode || 'text') : 'text';
+  send.classList.toggle('stop', !!(t && t.busy));
+  send.classList.remove('dim');
+  if (!t) {
+    send.disabled = true;
+    send.innerHTML = CMP_ICON_SEND;
+    send.title = '先打开一个工作区';
+    return;
+  }
+  send.disabled = false;
+  if (t.busy) {
+    send.innerHTML = CMP_ICON_STOP;
+    send.title = '停止：中断当前回合与该工作区的全部 Teamwork 任务';
+    send.setAttribute('aria-label', '停止');
+    return;
+  }
+  send.setAttribute('aria-label', '发送');
+  if (mode === 'team') {
+    send.innerHTML = CMP_ICON_RUN;
+    send.title = '创建工作流并运行';
+    return;
+  }
+  send.innerHTML = CMP_ICON_SEND;
+  send.title = '发送 (Enter)';
+  const has = !!(String(t.composer.text || '').trim() || (t.composer.attachments || []).length);
+  if (!has) send.classList.add('dim');
 }
 
 function renderComposer() {
+  if (!ensureComposer()) return;
   const t = curTab();
-  const box = $('#inputBox');
   const composer = $('#composer');
-  // 零工作区时输入栏整体停用：启动不再自动打开任何目录，没有工作区就没有
-  // 可发送的上下文。与其留一个能打字但发不出去的输入框，不如明确置灰。
   if (composer) composer.classList.toggle('disabled', !t);
-  if (!t || !box) {
-    if (t) renderChips(t);
-    // 置灰时把占位文案换成原因，否则用户只看到一句无法解释的灰框
-    const ta0 = $('#ta');
-    if (ta0) ta0.placeholder = '先打开一个工作区…';
-    renderStatLine();
+  const ta = $('#ta');
+  const send = $('#sendBtn');
+  const box = $('#inputBox');
+  const teamHost = $('#teamEditor');
+  const attachBar = $('#attachBar');
+
+  if (!t) {
+    if (ta) { ta.disabled = true; ta.value = ''; ta.placeholder = '先打开一个工作区…'; }
+    if (box) box.hidden = false;
+    if (teamHost) { teamHost.hidden = true; teamHost.replaceChildren(); teamHost.__builtFor = ''; }
+    if (attachBar) attachBar.hidden = true;
+    renderChips(null);
+    if (send) { send.disabled = true; send.classList.remove('stop'); send.innerHTML = CMP_ICON_SEND; send.title = '先打开一个工作区'; }
+    ['#modeChip', '#sandboxChip', '#btnAttach'].forEach(s => { const b = $(s); if (b) b.disabled = true; });
+    paintModeChip('text');
+    paintSandboxChip(S.sandbox || 'full-access');
+    paintModelChip(null);
+    closeComposerMenu();
+    closeSlash();
+    paintStatRight(null);
+    // 状态行左侧（#statLeft）归 Lead 的 renderStatLine；这里顺带刷新，
+    // 避免 composer 重建后左侧还停在上一次（如「没有打开的工作区」）的文案
+    if (typeof renderStatLine === 'function') renderStatLine();
     return;
   }
-  $$('.modebtn').forEach(b => b.classList.toggle('on', b.dataset.mode === t.composer.mode));
-  // Teamwork 模式的工作流编辑器更高：给悬浮卡一个 team 态（见 03-molecules.css）
-  if (composer) composer.classList.toggle('team', t.composer.mode === 'team');
-  // 附件模式才显示文件选择条（文本/Teamwork 模式下拖拽与粘贴仍可唤起附件）
-  const attachBar = $('#attachBar');
-  if (attachBar) attachBar.hidden = t.composer.mode !== 'attach';
-  const ta = $('#ta'), send = $('#sendBtn');
+
+  ta.disabled = false;
+  const mode = t.composer.mode || 'text';
+  if (composer) composer.classList.toggle('team', mode === 'team');
+  ['#modeChip', '#sandboxChip', '#btnAttach'].forEach(s => { const b = $(s); if (b) b.disabled = false; });
+  paintModeChip(mode);
+  paintSandboxChip(S.sandbox || 'full-access');
+  paintModelChip(t);
+
+  if (mode === 'team') {
+    if (box) box.hidden = true;
+    if (attachBar) attachBar.hidden = true;
+    if (teamHost) {
+      teamHost.hidden = false;
+      if (teamHost.__builtFor !== t.ws) { teamHost.__builtFor = t.ws; renderWorkflowEditor(t); }
+    }
+  } else {
+    if (teamHost) teamHost.hidden = true;
+    if (box) box.hidden = false;
+    if (attachBar) attachBar.hidden = mode !== 'attach';
+    if (ta) {
+      if (ta.value !== (t.composer.text || '')) ta.value = t.composer.text || '';
+      ta.placeholder = mode === 'attach' ? CMP_ATTACH_PLACEHOLDER : CMP_PLACEHOLDER;
+      autosize(ta);
+    }
+  }
+
   renderChips(t);
-  const teamEditor = $('#teamEditor');
-  const textRow = $('.inputrow');
-  if (t.composer.mode === 'team') {
-    if (textRow) textRow.style.display = 'none';
-    if (teamEditor) teamEditor.style.display = '';
-    renderWorkflowEditor(t);
-  } else {
-    if (textRow) textRow.style.display = '';
-    if (teamEditor) teamEditor.style.display = 'none';
-  }
-  if (t.busy) {
-    send.classList.add('stop');
-    send.title = '停止：中断当前回合与该工作区的全部 Teamwork 任务';
-    send.innerHTML = STOP_ICON;
-  } else {
-    send.classList.remove('stop');
-    send.title = '发送 (Enter)';
-    send.innerHTML = SEND_ICON;
-  }
-  const ta2 = $('#ta');
-  if (ta2) {
-    if (ta2.value !== t.composer.text) { ta2.value = t.composer.text; autosize(ta2); }
-    ta2.placeholder = t.composer.mode === 'attach'
-      ? '为附件添加说明，或直接发送…'
-      : '输入消息，/ 唤起指令…';
-  }
-  renderStatLine();
+  paintSendState(t);
+  paintStatRight(t);
+  if (typeof renderStatLine === 'function') renderStatLine();
 }
 
 function syncComposerInput() { renderComposer(); }
 
+function syncComposerText(txt) {
+  const t = curTab();
+  if (!t) return;
+  t.composer.text = txt;
+  const ta = $('#ta');
+  if (ta) { ta.value = txt; autosize(ta); }
+  paintSendState(t);
+  buildSlash();
+}
+
+function focusInput() {
+  const t = curTab();
+  if (t && t.composer.mode === 'team') {
+    const goal = $('#twGoal');
+    if (goal) { goal.focus(); return; }
+  }
+  const ta = $('#ta');
+  if (ta && !ta.disabled) ta.focus();
+}
+
+function autosize(ta) {
+  if (!ta) return;
+  ta.style.height = 'auto';
+  let cap = 200;
+  try {
+    const h = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--composer-h')) || 156;
+    cap = Math.max(44, Math.round(h - 74));
+  } catch (e) {}
+  const want = Math.max(24, Math.min(cap, ta.scrollHeight));
+  ta.style.height = want + 'px';
+  ta.style.overflowY = ta.scrollHeight > cap ? 'auto' : 'hidden';
+}
+
+function setComposerMode(mode) {
+  const t = curTab();
+  if (!t) return;
+  closeComposerMenu();
+  closeSlash();
+  t.composer.mode = mode;
+  renderComposer();
+  if (mode === 'team') {
+    const goal = $('#twGoal');
+    if (goal) goal.focus();
+  } else {
+    focusInput();
+  }
+}
+
+/* ---------- I4. 附件 chips ----------------------------------------- */
 function renderChips(t) {
   const wrap = $('#chips');
   if (!wrap) return;
+  const list = (t && t.composer && t.composer.attachments) || [];
   wrap.replaceChildren();
-  const list = t.composer.attachments || [];
-  if (!list.length) { wrap.style.display = 'none'; return; }
-  wrap.style.display = '';
+  if (!list.length) { wrap.hidden = true; return; }
+  wrap.hidden = false;
   list.forEach((a, i) => {
-    const c = el('div', 'chip' + (a.uploading ? ' up' : ''));
-    c.appendChild(el('span', 'trunc', a.name));
-    c.appendChild(el('span', 'csize', a.uploading ? '上传中…' : fmtBytes(a.size)));
-    const x = el('span', 'cx', '✕');
-    x.onclick = () => { list.splice(i, 1); renderChips(t); };
+    const c = el('div', 'cf-chip' + (a.uploading ? ' up' : '') + (a.error ? ' err' : ''));
+    c.title = a.path || a.name || '';
+    const ico = el('span', 'cf-ico');
+    ico.innerHTML = iconHtml(a.uploading ? 'clock' : (a.error ? 'alert' : 'file'));
+    c.appendChild(ico);
+    c.appendChild(el('span', 'cf-name trunc', a.name || 'file'));
+    c.appendChild(el('span', 'cf-size', a.uploading ? '上传中…' : (a.error ? '失败' : fmtBytes(a.size))));
+    const x = el('button', 'cf-x');
+    x.type = 'button';
+    x.title = '移除附件';
+    x.setAttribute('aria-label', '移除附件');
+    x.innerHTML = iconHtml('x');
+    x.onclick = ev => {
+      ev.stopPropagation();
+      list.splice(i, 1);
+      renderChips(t);
+      if (t === curTab()) paintSendState(t);
+    };
     c.appendChild(x);
-    c.title = a.path || a.name;
     wrap.appendChild(c);
   });
 }
 
 async function addFiles(files) {
-  const t = S.tabs.get(S.active); if (!t || !files || !files.length) return;
+  const t = curTab();
+  if (!t || !files || !files.length) return;
   for (const f of Array.from(files)) {
     const item = { name: f.name, size: f.size, uploading: true, path: '' };
     t.composer.attachments.push(item);
     renderChips(t);
+    paintSendState(t);
     try {
       const b64 = await fileToB64(f);
       const out = await cmd('upload', { ws: t.ws, name: f.name, data_b64: b64 });
       if (out && out.ok) { item.path = out.path; item.name = out.name; item.size = out.size; }
-      else { item.uploading = false; item.path = ''; item.error = true; }
-    } catch (e) { item.error = true; toast('上传失败：' + e.message, 'bad'); }
+      else { item.error = true; item.path = ''; }
+    } catch (e) {
+      item.error = true;
+      toast('上传失败：' + e.message, 'bad');
+    }
     item.uploading = false;
     renderChips(t);
+    paintSendState(t);
   }
 }
+
 function fileToB64(file) {
   return new Promise((res, rej) => {
     const r = new FileReader();
@@ -120,17 +621,20 @@ function fileToB64(file) {
   });
 }
 
+/* ---------- I5. 发送 / 停止 ---------------------------------------- */
 async function sendCurrent() {
-  const t = S.tabs.get(S.active); if (!t) return;
-  if (t.busy) { stopAllActivity(t); return; }
-  if (t.composer.mode === 'team') { await submitWorkflow(t); return; }
+  const t = curTab();
+  if (!t) return;
+  closeComposerMenu();
+  if (t.busy) { closeSlash(); stopAllActivity(t); return; }
+  if (t.composer.mode === 'team') { closeSlash(); await submitWorkflow(t, 'run'); return; }
   let text = (t.composer.text || '').trim();
   const atts = (t.composer.attachments || []).filter(a => a.path);
   if (!text && !atts.length) return;
   // 斜杠指令在前端执行，绝不作为消息发给模型（见 slashIntent 注释）
   const it = slashIntent(text);
   if (it.kind !== 'message') {
-    $('#slashPanel').classList.remove('show');
+    closeSlash();
     if (it.kind === 'exec') { syncComposerText(''); runSlash(t, it); }
     else { syncComposerText(it.name + ' '); buildSlash(); focusInput(); } // complete：先出参数候选
     return;
@@ -138,15 +642,20 @@ async function sendCurrent() {
   if (atts.length) {
     text += (text ? '\n\n' : '') + '[附件]\n' + atts.map(a => '- ' + a.path).join('\n');
   }
+  closeSlash();
   const optimistic = { id: uid(), role: 'user', text: text, ts: nowSec() };
   t.msgs.push(optimistic);
   t.composer.text = '';
   t.composer.attachments = [];
-  const ta = $('#ta'); if (ta) { ta.value = ''; autosize(ta); }
-  renderChips(t); buildSlash(true);
+  const ta = $('#ta');
+  if (ta) { ta.value = ''; autosize(ta); }
+  renderChips(t);
+  paintSendState(t);
+  buildSlash(true);
   markChat(t.ws);
   const out = await cmd('send', { ws: t.ws, text: text });
   if (out && out.ok === false) { markChat(t.ws); }
+  focusInput();
 }
 
 // 「停止」= 终止该工作区的全部活动：进行中的回合 + 所有 run 状态的 Teamwork
@@ -163,9 +672,306 @@ async function stopAllActivity(t) {
   setTimeout(() => refreshTeamwork(t.ws), 400);
 }
 
-/* ---------- 斜杠面板 ----------------------------------------------- */
+/* ---------- I6. 状态行右侧：token / round -------------------------- */
+function cmpTurnUsage(t) {
+  let start = 0;
+  for (let i = t.msgs.length - 1; i >= 0; i--) {
+    if (t.msgs[i] && t.msgs[i].role === 'user') { start = i; break; }
+  }
+  let tin = 0, tout = 0, cache = 0, rounds = 0;
+  for (let i = start; i < t.msgs.length; i++) {
+    const m = t.msgs[i];
+    if (!m || m.role !== 'round') continue;
+    rounds++;
+    tin += Number(m.tok_in || 0);
+    tout += Number(m.tok_out || 0);
+    cache += Number(m.cache || 0);
+  }
+  return { tin: tin, tout: tout, cache: cache, rounds: rounds };
+}
+function cmpFmtTok(n) {
+  n = Number(n) || 0;
+  if (n >= 1000000) return (n / 1000000).toFixed(n >= 10000000 ? 0 : 1) + 'M';
+  if (n >= 10000) return Math.round(n / 1000) + 'k';
+  if (n >= 1000) return (n / 1000).toFixed(1) + 'k';
+  return String(n);
+}
+function paintStatRight(t) {
+  const box = $('#statRight');
+  if (!box) return;
+  let meta = box.querySelector('.cmp-stat-meta');
+  if (!t) { if (meta) { meta.textContent = ''; meta.hidden = true; } cmpMetaSig = ''; return; }
+  const u = cmpTurnUsage(t);
+  const parts = [];
+  if (t.busy) parts.push('运行中');
+  if (u.rounds) parts.push('第 ' + u.rounds + ' 轮');
+  if (u.tin || u.tout) parts.push('↑' + cmpFmtTok(u.tin) + ' ↓' + cmpFmtTok(u.tout));
+  const txt = parts.join(' · ');
+  const sig = [t.busy ? 1 : 0, u.rounds, u.tin, u.tout, u.cache].join('|');
+  if (!txt) { if (meta) { meta.textContent = ''; meta.hidden = true; } cmpMetaSig = sig; return; }
+  if (!meta) {
+    meta = el('span', 'cmp-stat-meta');
+    meta.hidden = false;
+    box.appendChild(meta);
+  }
+  meta.hidden = false;
+  if (meta.textContent !== txt) meta.textContent = txt;
+  meta.title = '本回合 tokens —— 输入 ' + u.tin + ' · 输出 ' + u.tout
+    + (u.cache ? ' · 缓存命中 ' + u.cache : '') + (u.rounds ? ' · 共 ' + u.rounds + ' 轮' : '');
+  meta.classList.toggle('busy', !!t.busy);
+  cmpMetaSig = sig;
+}
+// 回合进行中轮次事件不触发 composer 重绘：用极廉价的心跳补上 token/round
+setInterval(() => {
+  if (document.hidden) return;
+  const t = curTab();
+  if (!t) return;
+  const u = cmpTurnUsage(t);
+  const sig = [t.busy ? 1 : 0, u.rounds, u.tin, u.tout, u.cache].join('|');
+  if (sig === cmpMetaSig) return;
+  paintStatRight(t);
+}, 700);
+
+/* ---------- I7. 弹出菜单（模式 / 沙箱 / 模型） --------------------- */
+function closeComposerMenu(restoreFocus) {
+  if (!cmpMenu) return;
+  const m = cmpMenu;
+  const focused = m.el.contains(document.activeElement);
+  m.el.remove();
+  document.removeEventListener('pointerdown', m.out, true);
+  document.removeEventListener('keydown', m.key, true);
+  if (m.resize) window.removeEventListener('resize', m.resize);
+  try { m.anchor.setAttribute('aria-expanded', 'false'); } catch (e) {}
+  cmpMenu = null;
+  try {
+    if (restoreFocus !== false && focused && m.anchor && m.anchor.isConnected) m.anchor.focus({ preventScroll: true });
+  } catch (e) {}
+}
+
+function cmpMenuRow(icon, label, sub, on) {
+  const b = el('button', 'cmp-mi' + (on ? ' on' : ''));
+  b.type = 'button';
+  b.setAttribute('role', 'menuitem');
+  const ico = el('span', 'cmp-mi-ico');
+  ico.innerHTML = iconHtml(icon);
+  b.appendChild(ico);
+  const tx = el('span', 'cmp-mi-tx');
+  tx.appendChild(el('span', 'cmp-mi-label trunc', label));
+  if (sub) tx.appendChild(el('span', 'cmp-mi-sub trunc', sub));
+  b.appendChild(tx);
+  if (on) {
+    const ck = el('span', 'cmp-mi-ck');
+    ck.innerHTML = iconHtml('check');
+    b.appendChild(ck);
+  }
+  return b;
+}
+function cmpMenuHead(text) { return el('div', 'cmp-menu-head', text); }
+function cmpMenuSep() { return el('div', 'cmp-menu-sep'); }
+
+function openComposerMenu(anchor, opts) {
+  if (!anchor) return;
+  if (cmpMenu && cmpMenu.anchor === anchor && cmpMenu.kind === opts.kind) { closeComposerMenu(); return; }
+  closeComposerMenu(false);
+  const menu = el('div', 'cmp-menu');
+  menu.setAttribute('role', 'menu');
+  opts.build(menu);
+  document.body.appendChild(menu);
+
+  // 定位：优先贴在 chip 上方；上下空间不够时按可用高度收缩（菜单内部滚动），
+  // 任何情况下都不越出视口——弹出菜单是 fixed 层，不受输入卡 overflow 影响。
+  const r = anchor.getBoundingClientRect();
+  const gap = 8, margin = 8;
+  const spaceAbove = r.top - gap - margin;
+  const spaceBelow = window.innerHeight - r.bottom - gap - margin;
+  const useAbove = spaceAbove >= spaceBelow;
+  const avail = Math.max(140, useAbove ? spaceAbove : spaceBelow);
+  menu.style.maxHeight = Math.min(520, avail) + 'px';
+  const mw = menu.offsetWidth || 240;
+  const mh = menu.offsetHeight || 200;
+  let left = opts.align === 'right' ? (r.right - mw) : r.left;
+  left = Math.max(margin, Math.min(left, window.innerWidth - mw - margin));
+  let top = useAbove ? (r.top - gap - mh) : (r.bottom + gap);
+  top = Math.max(margin, Math.min(top, window.innerHeight - mh - margin));
+  menu.style.left = Math.round(left) + 'px';
+  menu.style.top = Math.round(top) + 'px';
+
+  const rows = () => Array.from(menu.querySelectorAll('.cmp-mi'));
+  menu.addEventListener('keydown', ev => {
+    const rs = rows();
+    const i = rs.indexOf(document.activeElement);
+    if (ev.key === 'ArrowDown') { ev.preventDefault(); (rs[i + 1] || rs[0]).focus({ preventScroll: true }); }
+    else if (ev.key === 'ArrowUp') { ev.preventDefault(); (rs[i - 1] || rs[rs.length - 1]).focus({ preventScroll: true }); }
+  });
+  const out = ev => {
+    if (!menu.contains(ev.target) && !anchor.contains(ev.target)) closeComposerMenu();
+  };
+  const key = ev => {
+    if (ev.key !== 'Escape') return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    closeComposerMenu();
+  };
+  const onResize = () => closeComposerMenu(false);
+  document.addEventListener('pointerdown', out, true);
+  document.addEventListener('keydown', key, true);
+  window.addEventListener('resize', onResize);
+  cmpMenu = { el: menu, anchor: anchor, out: out, key: key, resize: onResize, kind: opts.kind };
+  const first = menu.querySelector('.cmp-mi.on') || rows()[0];
+  if (first) { try { first.focus({ preventScroll: true }); } catch (e) {} }
+  anchor.setAttribute('aria-expanded', 'true');
+}
+
+function toggleModeMenu(anchor) {
+  const t = curTab();
+  if (!t) return;
+  openComposerMenu(anchor, {
+    kind: 'mode',
+    build: menu => {
+      menu.appendChild(cmpMenuHead('输入模式'));
+      for (const m of CMP_MODES) {
+        const row = cmpMenuRow(m.icon, m.label, m.desc, t.composer.mode === m.v);
+        row.onclick = () => {
+          closeComposerMenu(false);
+          if (t.composer.mode !== m.v) setComposerMode(m.v);
+          else focusInput();
+        };
+        menu.appendChild(row);
+      }
+      menu.appendChild(cmpMenuSep());
+      const hint = el('div', 'cmp-menu-hint');
+      hint.innerHTML = '<kbd>Shift</kbd>+<kbd>Tab</kbd> 快速切换模式';
+      menu.appendChild(hint);
+    },
+  });
+}
+
+function toggleSandboxMenu(anchor) {
+  const t = curTab();
+  if (!t) return;
+  const cur = S.sandbox || 'full-access';
+  openComposerMenu(anchor, {
+    kind: 'sandbox',
+    build: menu => {
+      menu.appendChild(cmpMenuHead('沙箱模式'));
+      for (const m of SANDBOX_MODES) {
+        const info = CMP_SANDBOX[m.v] || { label: m.v, icon: 'terminal', desc: m.desc };
+        const row = cmpMenuRow(info.icon, info.label, m.desc || info.desc, cur === m.v);
+        row.onclick = () => { closeComposerMenu(false); if (cur !== m.v) setSandboxMode(m.v); else focusInput(); };
+        menu.appendChild(row);
+      }
+    },
+  });
+}
+
+function toggleModelMenu(anchor) {
+  const t = curTab();
+  if (!t) return;
+  const lv = Number((S.settings || {}).think_level || 0);
+  openComposerMenu(anchor, {
+    kind: 'model',
+    align: 'right',
+    build: menu => {
+      menu.appendChild(cmpMenuHead('模型'));
+      if (S.models.length) {
+        for (const m of S.models) {
+          const row = cmpMenuRow('cpu', m, m === S.model ? '当前模型' : '', m === S.model);
+          row.onclick = () => switchModel(m);
+          menu.appendChild(row);
+        }
+      } else {
+        const row = cmpMenuRow('refresh', '拉取模型列表', 'models.fetch', false);
+        row.onclick = ev => { ev.stopPropagation(); fetchModels(true); };
+        menu.appendChild(row);
+      }
+      const setRow = cmpMenuRow('settings', '打开模型设置…', '设置 · 模型', false);
+      setRow.onclick = () => { closeComposerMenu(false); openSettings('models'); };
+      menu.appendChild(setRow);
+
+      menu.appendChild(cmpMenuSep());
+      menu.appendChild(cmpMenuHead('供应商'));
+      if (S.providers.length) {
+        for (const p of S.providers) {
+          const row = cmpMenuRow('database', p.name, p.current ? '当前供应商' : (p.api_style || ''), !!p.current);
+          row.onclick = () => { closeComposerMenu(false); execSlash(t, '/provider', p.name); focusInput(); };
+          menu.appendChild(row);
+        }
+      } else {
+        const row = cmpMenuRow('database', '打开供应商设置…', '', false);
+        row.onclick = () => { closeComposerMenu(false); openSettings('providers'); };
+        menu.appendChild(row);
+      }
+
+      menu.appendChild(cmpMenuSep());
+      menu.appendChild(cmpMenuHead('思考级别'));
+      for (const l of THINK_LEVELS) {
+        const row = cmpMenuRow('bulb', l.name + ' (' + l.v + ')', l.desc, lv === l.v);
+        row.onclick = () => { closeComposerMenu(false); execSlash(t, '/think', String(l.v)); focusInput(); };
+        menu.appendChild(row);
+      }
+    },
+  });
+  autoFetchModels();
+}
+
+function autoFetchModels() {
+  if (S.models.length || cmpModelFetching) return;
+  fetchModels(false);
+}
+function fetchModels(force) {
+  if (cmpModelFetching) return;
+  cmpModelFetching = true;
+  cmd('models.fetch', {}).then(out => {
+    cmpModelFetching = false;
+    if (!out || out.ok === false || !Array.isArray(out.models)) return;
+    S.models = out.models;
+    if (out.models.length) {
+      if (force) toast('已拉取 ' + out.models.length + ' 个模型', 'ok');
+      // 只有真的拿到列表才重开菜单（空列表重开会再次触发拉取，造成死循环）
+      if (cmpMenu && cmpMenu.kind === 'model') reopenModelMenu();
+    } else if (force) {
+      toast('供应商未返回模型列表', 'bad');
+    }
+  });
+}
+function reopenModelMenu() {
+  const anchor = $('#modelChip');
+  closeComposerMenu(false);
+  if (anchor) toggleModelMenu(anchor);
+}
+
+async function switchModel(m) {
+  closeComposerMenu(false);
+  if (!m) return focusInput();
+  if (m === S.model) return focusInput();
+  const out = await cmd('model.set', { model: m });
+  if (!out || out.ok === false) return;
+  S.model = m;
+  renderComposer();
+  if (typeof renderFoot === 'function') renderFoot();
+  if (typeof renderStatLine === 'function') renderStatLine();
+  toast('模型：' + m, 'ok');
+  focusInput();
+}
+
+async function setSandboxMode(v) {
+  closeComposerMenu(false);
+  const info = CMP_SANDBOX[v] || { label: v };
+  const out = await cmd('settings.set', { patch: { sandbox_mode: v } });
+  if (!out || out.ok === false) return;
+  S.sandbox = v;
+  if (!S.settings) S.settings = {};
+  S.settings.sandbox_mode = v;
+  try { await resync(); } catch (e) {}
+  renderComposer();
+  if (typeof renderStatLine === 'function') renderStatLine();
+  toast('沙箱模式：' + info.label, 'ok');
+  focusInput();
+}
+
+/* ---------- I8. 斜杠面板 ------------------------------------------- */
 // 面板浮在输入卡之上，高度不能顶穿 #centre 的顶边（标签栏/横幅下沿）。
-// 把可用高度写进 --slash-max，CSS 用 min(330px, var(--slash-max)) 取用——
+// 把可用高度写进 --slash-max，CSS 用 min(360px, var(--slash-max)) 取用——
 // 纯 CSS 表达不了「相对于卡片顶边到容器顶边的距离」，所以由 JS 量一次。
 function layoutSlash() {
   const panel = $('#slashPanel');
@@ -173,7 +979,7 @@ function layoutSlash() {
   const centre = $('#centre');
   if (!panel || !stack || !centre) return;
   const top = stack.getBoundingClientRect().top;
-  const avail = Math.floor(top - centre.getBoundingClientRect().top - 10);
+  const avail = Math.floor(top - centre.getBoundingClientRect().top - 12);
   panel.style.setProperty('--slash-max', Math.max(96, avail) + 'px');
 }
 
@@ -188,18 +994,17 @@ function fuzzy(q, s) {
 }
 
 function slashArgItems(cmdName) {
-  const t = S.tabs.get(S.active);
   const c = COMMANDS.find(x => x.name === cmdName);
   if (!c || !c.ctx) return [];
   const out = [];
-  const add = (label, insert, desc, run) => out.push({ label, insert, desc, run });
+  const add = (label, insert, desc, run) => out.push({ label: label, insert: insert, desc: desc, run: run });
   switch (c.ctx) {
     case 'sessions':
-      for (const s of S.sessions.filter(s => s.ws === S.active))
+      for (const s of S.sessions.filter(x => x.ws === S.active))
         add((s.title || shortId(s.id)).slice(0, 40), s.id, relTime(s.mtime));
       break;
     case 'models':
-      add('↻ 拉取模型列表', '__fetch__', 'models.fetch');
+      add('◌ 拉取模型列表', '__fetch__', 'models.fetch');
       for (const m of S.models) add(m, m, m === S.model ? '当前' : '');
       break;
     case 'providers':
@@ -216,12 +1021,14 @@ function slashArgItems(cmdName) {
       break;
     case 'theme':
       add('default', '', '默认外观（与 /export 导出的会话页同源）');
-      for (const t of Theme.list()) add(t.name, t.name, t.label + (t.desc ? ' · ' + t.desc : ''));
+      for (const th of Theme.list()) add(th.name, th.name, th.label + (th.desc ? ' · ' + th.desc : ''));
       break;
     case 'teamwork': {
-      const t2 = S.tabs.get(S.active);
+      const t2 = curTab();
       for (const j of (t2 ? t2.jobs : [])) add(j.id, j.id, j.status + ' · ' + (j.work_type || ''));
-      add('run <id>', 'run ', '运行任务'); add('resume <id>', 'resume ', '恢复任务'); add('stop <id>', 'stop ', '停止任务');
+      add('run <id>', 'run ', '运行任务');
+      add('resume <id>', 'resume ', '恢复任务');
+      add('stop <id>', 'stop ', '停止任务');
       break;
     }
     case 'workspaces': {
@@ -235,123 +1042,167 @@ function slashArgItems(cmdName) {
   return out;
 }
 
-let slashSel = 0;
+function slashRowIcon(e) {
+  if (e.kind === 'cmd') return CMP_CMD_ICONS[e.name] || 'command';
+  if (e.kind === 'arg' && e.cmd && CMP_ARG_ICONS[e.cmd.ctx]) return CMP_ARG_ICONS[e.cmd.ctx];
+  return 'info';
+}
+
 function buildSlash(forceClose) {
   const panel = $('#slashPanel');
   if (!panel) return;
-  const t = S.tabs.get(S.active);
+  const t = curTab();
   const v = t ? (t.composer.text || '') : '';
   // team 模式下输入行是隐藏的（换成工作流编辑器），斜杠面板无从补全，
   // 留着只会是一块浮在工作流编辑器上、关不掉的死面板
   const teamMode = !!t && t.composer.mode === 'team';
-  if (forceClose || teamMode || !v.startsWith('/') || !v || v.includes('\n')) { panel.classList.remove('show'); return; }
+  if (forceClose || teamMode || !v || !v.startsWith('/') || v.includes('\n')) {
+    panel.classList.remove('show');
+    panel._entries = [];
+    return;
+  }
   const sp = v.indexOf(' ');
   const token = sp < 0 ? v : v.slice(0, sp);
   const rest = sp < 0 ? '' : v.slice(sp + 1);
   let entries = [];
+  let title = '指令';
   if (!rest && !v.includes(' ')) {
-    const scored = COMMANDS.map(c => ({ c, sc: fuzzy(token.slice(1), c.name.slice(1)) }))
+    const scored = COMMANDS.map(c => ({ c: c, sc: fuzzy(token.slice(1), c.name.slice(1)) }))
       .filter(x => x.sc > 0).sort((a, b) => b.sc - a.sc);
     entries = scored.map(x => ({ kind: 'cmd', name: x.c.name, usage: x.c.usage, desc: x.c.desc, cmd: x.c }));
   } else {
     const c = COMMANDS.find(x => x.name === token);
-    if (c) entries = slashArgItems(c.name).map(a => ({ kind: 'arg', ...a, cmd: c }));
-    if (!entries.length && c) entries.push({ kind: 'hint', desc: c.desc });
-  }
-  if (!entries.length) { panel.classList.remove('show'); return; }
-  if (slashSel >= entries.length) slashSel = 0;
-  panel.replaceChildren();
-  panel.scrollTop = 0; // 换了候选列表就从顶部看起（否则沿用上一轮的滚动位置）
-  layoutSlash();
-  entries.forEach((e, i) => {
-    const row = el('div', 'scmd' + (i === slashSel ? ' sel' : ''));
-    if (e.kind === 'cmd') {
-      row.appendChild(el('span', 'sname', e.name));
-      row.appendChild(el('span', 'susage', e.usage.replace(e.name, '').trim()));
-      row.appendChild(el('span', 'sdesc', e.desc));
-    } else if (e.kind === 'arg') {
-      row.appendChild(el('span', 'sname', e.label));
-      if (e.insert && e.insert !== e.label) row.appendChild(el('span', 'susage mono', e.insert.slice(0, 24)));
-      row.appendChild(el('span', 'sdesc', e.desc || ''));
-    } else {
-      row.appendChild(el('span', 'sdesc', e.desc));
+    if (c) {
+      entries = slashArgItems(c.name).map(a => Object.assign({ kind: 'arg', cmd: c }, a));
+      title = c.name + ' 的参数';
     }
-    row.onclick = () => applySlash(entries[slashSel = i]);
-    panel.appendChild(row);
+    if (!entries.length && c) entries.push({ kind: 'hint', desc: c.desc, cmd: c });
+  }
+  if (!entries.length) { panel.classList.remove('show'); panel._entries = []; return; }
+  if (slashSel >= entries.length) slashSel = 0;
+
+  panel.replaceChildren();
+  const head = el('div', 'sx-head');
+  head.appendChild(el('span', 'sx-title', title));
+  head.appendChild(el('span', 'sx-count', String(entries.length)));
+  panel.appendChild(head);
+
+  const list = el('div', 'sx-list');
+  panel._rows = [];
+  entries.forEach((e, i) => {
+    const row = el('div', 'sx-row' + (i === slashSel ? ' sel' : ''));
+    row.setAttribute('role', 'option');
+    const ico = el('span', 'sx-ico');
+    ico.innerHTML = iconHtml(slashRowIcon(e));
+    row.appendChild(ico);
+    const main = el('span', 'sx-main');
+    if (e.kind === 'cmd') {
+      main.appendChild(el('span', 'sx-name', e.name));
+      const usage = String(e.usage || '').replace(e.name, '').trim();
+      if (usage) main.appendChild(el('span', 'sx-usage', usage));
+    } else if (e.kind === 'arg') {
+      main.appendChild(el('span', 'sx-name', e.label));
+      if (e.insert && e.insert !== e.label) main.appendChild(el('span', 'sx-usage', String(e.insert).slice(0, 24)));
+    } else {
+      main.appendChild(el('span', 'sx-name', '说明'));
+    }
+    row.appendChild(main);
+    if (e.desc) row.appendChild(el('span', 'sx-desc trunc', e.desc));
+    row.onclick = () => { slashSel = i; applySlash(entries[i]); };
+    list.appendChild(row);
+    panel._rows.push(row);
   });
+  panel.appendChild(list);
+
+  const foot = el('div', 'sx-foot');
+  foot.innerHTML = '<span class="sx-k"><kbd>↑</kbd><kbd>↓</kbd> 选择</span>'
+    + '<span class="sx-k"><kbd>Tab</kbd> 补全</span>'
+    + '<span class="sx-k"><kbd>Enter</kbd> 执行</span>'
+    + '<span class="sx-k"><kbd>Esc</kbd> 关闭</span>';
+  panel.appendChild(foot);
+
+  panel.scrollTop = 0; // 换了候选列表就从顶部看起（否则沿用上一轮的滚动位置）
   panel.classList.add('show');
   panel._entries = entries;
+  layoutSlash();
+  moveSlashSel(0);
+}
+
+function moveSlashSel(delta) {
+  const panel = $('#slashPanel');
+  if (!panel) return;
+  const entries = panel._entries || [];
+  if (!entries.length) return;
+  slashSel = ((slashSel + delta) % entries.length + entries.length) % entries.length;
+  const rows = panel._rows || [];
+  rows.forEach((r, i) => r.classList.toggle('sel', i === slashSel));
+  const cur = rows[slashSel];
+  if (cur && cur.scrollIntoView) cur.scrollIntoView({ block: 'nearest' });
+  const list = panel.querySelector('.sx-list');
+  if (list && rows[slashSel] && list.scrollIntoView) {
+    // scrollIntoView 在嵌套滚动容器里可能带动整页：面板是真滚动容器，只滚它
+    const top = rows[slashSel].offsetTop - 8;
+    const bot = top + rows[slashSel].offsetHeight + 8;
+    if (top < list.scrollTop) list.scrollTop = top;
+    else if (bot > list.scrollTop + list.clientHeight) list.scrollTop = bot - list.clientHeight;
+  }
 }
 
 function applySlash(e) {
-  const t = S.tabs.get(S.active); if (!t) return;
+  const t = curTab();
+  if (!t) return;
   const panel = $('#slashPanel');
-  const entries = panel._entries || [];
+  const entries = (panel && panel._entries) || [];
   if (e.kind === 'cmd') {
-    if (e.cmd.run) { panel.classList.remove('show'); syncComposerText(''); e.cmd.run(t); return; }
+    closeSlash();
+    if (e.cmd.run) { syncComposerText(''); e.cmd.run(t); return; }
     if (e.cmd.ctx) { syncComposerText(e.name + ' '); buildSlash(); focusInput(); return; }
-    panel.classList.remove('show'); syncComposerText(''); e.cmd.run && e.cmd.run(t); return;
+    syncComposerText(''); return;
   }
-  if (e.kind === 'hint') { panel.classList.remove('show'); syncComposerText(''); execSlash(t, e.cmd.name, ''); return; }
+  if (e.kind === 'hint') { closeSlash(); syncComposerText(''); execSlash(t, e.cmd.name, ''); return; }
   // arg
-  if (e.run) { panel.classList.remove('show'); syncComposerText(''); e.run(t); return; }
+  closeSlash();
+  if (e.run) { syncComposerText(''); e.run(t); return; }
   if (e.insert === '__fetch__') {
-    cmd('models.fetch', {}).then(out => {
-      if (out && out.ok && Array.isArray(out.models)) { S.models = out.models; toast('已拉取 ' + out.models.length + ' 个模型', 'ok'); }
-      else if (out && out.error) toast(out.error, 'bad');
-    });
-    panel.classList.remove('show'); syncComposerText(''); return;
+    fetchModels(true);
+    syncComposerText('');
+    return;
   }
-  if (e.insert === '__open__') { panel.classList.remove('show'); syncComposerText(''); openWsDialog(); return; }
+  if (e.insert === '__open__') { syncComposerText(''); openWsDialog(); return; }
   const cur = t.composer.text || '';
   const sp = cur.indexOf(' ');
   const head = sp < 0 ? cur : cur.slice(0, sp);
-  const tail = sp < 0 ? '' : cur.slice(sp + 1);
-  if (e.cmd && (e.cmd.name === '/teamwork') && ['run ', 'resume ', 'stop '].includes(e.insert)) {
+  if (e.cmd && e.cmd.name === '/teamwork' && ['run ', 'resume ', 'stop '].includes(e.insert)) {
     syncComposerText(e.cmd.name + ' ' + e.insert);
     buildSlash(); focusInput(); return;
   }
   const full = head + ' ' + (e.insert || e.label);
   // 单参数指令：直接执行并清空输入框（是否生效由 execSlash 的 toast 提示）；
   // 其余（多段指令的中间补全）保留补全文本，等下一步继续选
-  if (['/model', '/provider', '/think', '/sandbox', '/tools', '/autoallow', '/compact', '/theme', '/session', '/workspace'].includes(head) && e.insert && !String(e.insert).endsWith(' ')) {
-    panel.classList.remove('show');
+  if (['/model', '/provider', '/think', '/sandbox', '/tools', '/autoallow', '/compact', '/theme', '/session', '/workspace'].includes(head)
+      && e.insert && !String(e.insert).endsWith(' ')) {
     syncComposerText('');
     execSlash(t, head, String(e.insert));
     return;
   }
-  panel.classList.remove('show');
   syncComposerText(full + ' ');
   focusInput();
 }
 
-/* ---------------------------------------------------------------------
-   斜杠指令的执行语义（2026-10-15 晚第三轮）
-
-   以 / 开头的输入分三类（slashIntent）：
-     exec     已写完的指令（/cmd 或 /cmd arg）——前端直接执行，绝不作为
-              消息发给模型：引擎的指令表只挂在 CLI REPL，GUI 发的
-              "/think 4" 只会当普通消息交给模型（模型顺着说"已设置"，
-              设置其实没变）。执行的输入框一律清空。
-     complete 裸指令名且需要参数（/think）——先补全出参数候选。
-     message  其余（未知名字、无参指令后跟了多余文本）——普通消息。
-
-   Enter 在面板开着时走 enterSlash：已写完整的指令按"用户输入"执行，
-   不再照高亮候选执行 —— 旧行为下输入 "/think 4" 会把高亮默认项
-   off(0) 执行掉（输入 4 执行成 0），且既不关面板也不清输入框。
-   ↑↓ 仍移动高亮，Tab / 点击仍然接受候选（补全）。
-   --------------------------------------------------------------------- */
-// 思考级别：数字 0-4 与面板列出的名称（off/minimal/low/medium/high）都收
+/* 斜杠指令的执行语义（保留旧行为）：
+     exec     已写完的指令（/cmd 或 /cmd arg）——前端直接执行，绝不作为消息发给模型
+     complete 裸指令名且需要参数——先补全出参数候选
+     message  其余——普通消息
+   Enter 在面板开着时走 enterSlash：已写完整的指令按「用户输入」执行，
+   不再照高亮候选执行；↑↓ 移动高亮，Tab / 点击接受候选（补全）。 */
 function thinkLevelOf(s) {
   s = String(s || '').trim().toLowerCase();
   if (/^[0-4]$/.test(s)) return Number(s);
-  // 旧名字（minimal/medium）与 CLI 的别名仍然可用
   const alias = { minimal: 1, medium: 2, med: 2, on: 1, maximum: 4 };
   if (Object.prototype.hasOwnProperty.call(alias, s)) return alias[s];
   const hit = THINK_LEVELS.find(l => l.name === s);
   return hit ? hit.v : null;
 }
-// on/off 参数（tools/autoallow/compact）：非法返回 null
 function onoffOf(s) {
   s = String(s || '').trim().toLowerCase();
   return (s === 'on') ? true : (s === 'off' ? false : null);
@@ -364,25 +1215,23 @@ function slashIntent(text) {
   const arg = sp < 0 ? '' : v.slice(sp + 1).trim();
   const c = COMMANDS.find(x => x.name === name);
   if (!c) return { kind: 'message' };
-  if (!arg) return c.ctx ? { kind: 'complete', c, name, arg } : { kind: 'exec', c, name, arg };
-  return c.ctx ? { kind: 'exec', c, name, arg } : { kind: 'message' };
+  if (!arg) return c.ctx ? { kind: 'complete', c: c, name: name, arg: arg } : { kind: 'exec', c: c, name: name, arg: arg };
+  return c.ctx ? { kind: 'exec', c: c, name: name, arg: arg } : { kind: 'message' };
 }
-// exec 形态的统一执行入口：带参指令走 execSlash（含参数校验与结果提示），
-// 无参指令走指令表里的 run
 function runSlash(t, it) {
   if (it.c.ctx) return execSlash(t, it.name, it.arg);
   if (it.c.run) return it.c.run(t);
   return undefined;
 }
-// 面板开着时的 Enter
 function enterSlash() {
-  const t = S.tabs.get(S.active); if (!t) return;
+  const t = curTab();
+  if (!t) return;
   const v = (t.composer.text || '').trim();
   const it = slashIntent(v);
   const panel = $('#slashPanel');
   const entries = (panel && panel._entries) || [];
   if (it.kind === 'exec') { // 已写完的指令：按输入执行
-    panel.classList.remove('show');
+    closeSlash();
     syncComposerText('');
     runSlash(t, it);
     return;
@@ -392,14 +1241,17 @@ function enterSlash() {
     return;
   }
   // 非指令形态（如 "/clear 请忽略"）：关面板，交回普通发送
-  panel.classList.remove('show');
+  closeSlash();
   sendCurrent();
 }
 
 // 设置类指令的统一收尾：成功 → resync + 结果 toast；失败 → 交给 cmd 的错误提示
 function afterSet(out, msg) {
   if (!out || out.ok === false) return;
-  return resync().then(() => toast(msg, 'ok'));
+  return resync().then(() => {
+    renderComposer();
+    toast(msg, 'ok');
+  });
 }
 
 async function execSlash(t, name, arg) {
@@ -410,25 +1262,43 @@ async function execSlash(t, name, arg) {
     case '/session': if (arg) return cmd('session.select', { ws: t.ws, id: arg }).then(resync); break;
     case '/model':
       if (!arg) { openSettings('models'); return; }
-      return cmd('model.set', { model: arg }).then(() => { S.model = arg; renderFoot(); toast('模型已切换', 'ok'); });
+      return cmd('model.set', { model: arg }).then(out => {
+        if (out && out.ok === false) return;
+        S.model = arg;
+        renderComposer();
+        if (typeof renderFoot === 'function') renderFoot();
+        if (typeof renderStatLine === 'function') renderStatLine();
+        toast('模型已切换', 'ok');
+      });
     case '/provider':
-      if (arg) return cmd('providers.select', { name: arg }).then(out => afterSet(out, '供应商：' + arg));
+      if (arg) return cmd('providers.select', { name: arg }).then(out => {
+        if (out && out.ok === false) return;
+        return afterSet(out, '供应商：' + arg);
+      });
       break;
     case '/think': {
       const lv = thinkLevelOf(arg);
       if (lv == null) { toast('无效的思考级别：' + arg + '（0-4 或 ' + THINK_LEVELS.map(l => l.name).join('/') + '）', 'bad'); break; }
       const l = THINK_LEVELS[lv];
-      return cmd('settings.set', { patch: { think_level: lv } }).then(out => afterSet(out, '思考级别：' + l.name + ' (' + l.v + ') · ' + l.desc));
+      return cmd('settings.set', { patch: { think_level: lv } }).then(out => {
+        if (!out || out.ok === false) return;
+        if (!S.settings) S.settings = {};
+        S.settings.think_level = lv;
+        return afterSet(out, '思考级别：' + l.name + ' (' + l.v + ') · ' + l.desc);
+      });
     }
     case '/tools': {
       const on = onoffOf(arg);
       if (on == null) { toast('用法：/tools on|off', 'bad'); break; }
-      return cmd('settings.set', { patch: { tools: on } }).then(out => afterSet(out, '工具调用：' + (on ? '开' : '关')));
+      return cmd('settings.set', { patch: { tools: on } }).then(out => {
+        if (out && out.ok !== false) S.tools = on;
+        return afterSet(out, '工具调用：' + (on ? '开' : '关'));
+      });
     }
     case '/sandbox': {
       const m = SANDBOX_MODES.find(x => x.v === arg);
       if (!m) { toast('无效的沙箱模式：' + arg + '（' + SANDBOX_MODES.map(x => x.v).join(' / ') + '）', 'bad'); break; }
-      return cmd('settings.set', { patch: { sandbox_mode: m.v } }).then(out => afterSet(out, '沙箱模式：' + m.v));
+      return setSandboxMode(m.v);
     }
     case '/autoallow': {
       const on = onoffOf(arg);
@@ -450,9 +1320,9 @@ async function execSlash(t, name, arg) {
         break;
       }
       if (arg === 'default') { Theme.set(''); toast('主题：默认', 'ok'); break; }
-      const t = Theme.list().find(x => x.name === arg);
-      if (!t) { toast('未知主题：' + arg + '（可用：default' + (Theme.list().length ? '、' + Theme.list().map(x => x.name).join('、') : '') + '）', 'bad'); break; }
-      Theme.set(arg); toast('主题：' + t.label, 'ok');
+      const th = Theme.list().find(x => x.name === arg);
+      if (!th) { toast('未知主题：' + arg + '（可用：default' + (Theme.list().length ? '、' + Theme.list().map(x => x.name).join('、') : '') + '）', 'bad'); break; }
+      Theme.set(arg); toast('主题：' + th.label, 'ok');
       break;
     }
     case '/workspace':
@@ -469,118 +1339,189 @@ async function execSlash(t, name, arg) {
   }
 }
 
-/* ---------- Teamwork 工作流编辑器 ---------------------------------- */
+/* ---------- I9. Teamwork 工作流编辑器 ------------------------------ */
 function renderWorkflowEditor(t) {
   let host = $('#teamEditor');
   if (!host) {
-    host = el('div'); host.id = 'teamEditor';
-    host.style.padding = '8px 10px';
-    $('#inputBox').appendChild(host);
+    host = el('div', 'cmp-team');
+    host.id = 'teamEditor';
+    const card = $('#composerInner');
+    if (card) card.appendChild(host);
   }
   const wf = t.composer.workflow || (t.composer.workflow = defaultWorkflow());
   host.replaceChildren();
 
-  const top = el('div', 'row gap6');
-  top.style.marginBottom = '8px';
-  top.appendChild(el('span', 'small mut', '团队工作流'));
-  top.appendChild(el('span', 'grow'));
-  const b1 = el('button', 'btn sm', '仅创建');
-  b1.onclick = () => submitWorkflow(t, 'create');
-  const b2 = el('button', 'btn sm primary', '创建并运行');
-  b2.onclick = () => submitWorkflow(t, 'run');
-  top.appendChild(b1); top.appendChild(b2);
-  host.appendChild(top);
+  let stageCount = wf.stages.length, agentCount = 0;
+  for (const st of wf.stages) agentCount += (st.agents || []).length;
 
-  const goalWrap = el('div', 'field');
-  goalWrap.style.marginBottom = '10px';
-  goalWrap.appendChild(el('label', null, '目标描述（用于「让 LLM 规划」）'));
-  const goal = el('textarea'); goal.rows = 2; goal.id = 'twGoal';
+  const head = el('div', 'tw-head');
+  const ttl = el('span', 'tw-title');
+  const ttlIco = el('span', 'tw-title-ico');
+  ttlIco.innerHTML = iconHtml('users');
+  ttl.appendChild(ttlIco);
+  ttl.appendChild(el('span', null, '团队工作流'));
+  ttl.appendChild(el('span', 'tw-title-sub', stageCount + ' 阶段 · ' + agentCount + ' 子代理'));
+  head.appendChild(ttl);
+  head.appendChild(el('span', 'grow'));
+  const b1 = el('button', 'btn sm');
+  b1.type = 'button';
+  b1.textContent = '仅创建';
+  b1.onclick = () => submitWorkflow(t, 'create');
+  const b2 = el('button', 'btn sm accent');
+  b2.type = 'button';
+  b2.textContent = '创建并运行';
+  b2.onclick = () => submitWorkflow(t, 'run');
+  head.appendChild(b1);
+  head.appendChild(b2);
+  host.appendChild(head);
+
+  const scroll = el('div', 'tw-scroll');
+  host.appendChild(scroll);
+
+  /* 目标描述：让 LLM 规划整条工作流 */
+  const goalWrap = el('div', 'tw-goal');
+  const goalLbl = el('label', null, '目标描述');
+  goalLbl.htmlFor = 'twGoal';
+  goalWrap.appendChild(goalLbl);
+  const goal = el('textarea');
+  goal.rows = 2;
+  goal.id = 'twGoal';
   goal.placeholder = '例如：调研本项目的事件总线并给出重构建议，最后写一份报告';
   goal.value = t.composer.goal || '';
   goal.oninput = () => { t.composer.goal = goal.value; };
   goalWrap.appendChild(goal);
+  const planRow = el('div', 'tw-goal-row');
   const planBtn = el('button', 'btn sm');
-  planBtn.style.marginTop = '6px'; planBtn.style.alignSelf = 'flex-start';
-  planBtn.textContent = '让 LLM 规划（发送目标，并提示使用 tw 工具）';
+  planBtn.type = 'button';
+  planBtn.innerHTML = iconHtml('sparkles', 'sm') + '<span>让 LLM 规划</span>';
+  planBtn.title = '发送目标，并提示模型使用 teamwork（tw）工具拆解工作流';
   planBtn.onclick = () => {
     const g = (t.composer.goal || '').trim();
     if (!g) { toast('请先填写目标描述', 'bad'); return; }
     const msg = g + '\n\n请使用 teamwork（tw）工具把上述目标拆解为一个多阶段、可按需并行的团队工作流，' +
       '先创建任务（create），再按需运行（run），完成后汇总各子代理报告。';
     t.composer.text = '';
-    const ta = $('#ta'); if (ta) ta.value = '';
+    const ta = $('#ta');
+    if (ta) ta.value = '';
     const optimistic = { id: uid(), role: 'user', text: msg, ts: nowSec() };
     t.msgs.push(optimistic); markChat(t.ws);
     cmd('send', { ws: t.ws, text: msg });
     toast('已发送规划请求', 'ok');
   };
-  goalWrap.appendChild(planBtn);
-  host.appendChild(goalWrap);
+  planRow.appendChild(planBtn);
+  planRow.appendChild(el('span', 'tiny dim', '发送目标，并提示模型用 tw 工具拆解'));
+  goalWrap.appendChild(planRow);
+  scroll.appendChild(goalWrap);
 
-  const stagesBox = el('div'); stagesBox.style.display = 'flex'; stagesBox.style.flexDirection = 'column'; stagesBox.style.gap = '10px';
+  const stagesBox = el('div', 'tw-stages');
   wf.stages.forEach((st, si) => stagesBox.appendChild(renderStageEditor(t, wf, st, si, stagesBox)));
-  host.appendChild(stagesBox);
+  scroll.appendChild(stagesBox);
 
-  const addStage = el('button', 'btn sm');
-  addStage.style.marginTop = '8px'; addStage.textContent = '＋ 添加阶段';
-  addStage.onclick = () => { wf.stages.push({ name: 'stage ' + (wf.stages.length + 1), mode: 'serial', gate: false, agents: [{ works: '', name: '', model: '', think: 'off' }] }); renderWorkflowEditor(t); };
-  host.appendChild(addStage);
+  const addStage = el('button', 'btn sm tw-add');
+  addStage.type = 'button';
+  addStage.innerHTML = iconHtml('plus', 'sm') + '<span>添加阶段</span>';
+  addStage.onclick = () => {
+    wf.stages.push({ name: '阶段 ' + (wf.stages.length + 1), mode: 'serial', gate: false, agents: [{ works: '', name: '', model: '', think: 'off' }] });
+    renderWorkflowEditor(t);
+  };
+  scroll.appendChild(addStage);
 }
 
 function renderStageEditor(t, wf, st, si, parent) {
-  const card = el('div', 'card');
-  const hd = el('div', 'row gap8');
-  const idx = el('span', 'pill accent', '阶段 ' + (si + 1));
-  hd.appendChild(idx);
-  const nm = el('input'); nm.type = 'text'; nm.value = st.name || ''; nm.placeholder = '阶段名称';
-  nm.style.flex = '1'; nm.oninput = () => { st.name = nm.value; };
+  const card = el('div', 'tw-stage');
+  const hd = el('div', 'tw-stage-head');
+  hd.appendChild(el('span', 'pill accent', '阶段 ' + (si + 1)));
+  const nm = el('input');
+  nm.type = 'text';
+  nm.className = 'tw-name';
+  nm.value = st.name || '';
+  nm.placeholder = '阶段名称';
+  nm.oninput = () => { st.name = nm.value; };
   hd.appendChild(nm);
-  const seg = el('div', 'seg');
+
+  const seg = el('div', 'tw-seg');
   const mk = (val, txt) => {
     const b = el('button', st.mode === val ? 'on' : '', txt);
+    b.type = 'button';
     b.onclick = () => { st.mode = val; renderWorkflowEditor(t); };
     return b;
   };
-  seg.appendChild(mk('serial', '串行')); seg.appendChild(mk('parallel', '并行'));
+  seg.appendChild(mk('serial', '串行'));
+  seg.appendChild(mk('parallel', '并行'));
   hd.appendChild(seg);
-  const gateLbl = el('label', 'row gap6 small');
-  const gate = el('input'); gate.type = 'checkbox'; gate.checked = !!st.gate;
+
+  const gateLbl = el('label', 'tw-gate');
+  const gate = el('input');
+  gate.type = 'checkbox';
+  gate.checked = !!st.gate;
   gate.onchange = () => { st.gate = gate.checked; };
-  gateLbl.appendChild(gate); gateLbl.appendChild(el('span', null, '关卡'));
+  gateLbl.appendChild(gate);
+  gateLbl.appendChild(el('span', null, '关卡'));
   hd.appendChild(gateLbl);
-  const del = el('button', 'btn ghost sm', '✕');
+
+  const del = el('button', 'icon-btn sm');
+  del.type = 'button';
   del.title = '删除阶段';
+  del.innerHTML = iconHtml('trash');
   del.onclick = () => { wf.stages.splice(si, 1); renderWorkflowEditor(t); };
   hd.appendChild(del);
   card.appendChild(hd);
 
-  const agents = el('div'); agents.style.marginTop = '9px'; agents.style.display = 'flex'; agents.style.flexDirection = 'column'; agents.style.gap = '7px';
+  const agents = el('div', 'tw-agents');
   (st.agents || []).forEach((ag, ai) => {
-    const row = el('div', 'row gap6');
-    row.style.alignItems = 'flex-start';
-    const works = el('textarea'); works.rows = 1; works.value = ag.works || ''; works.placeholder = '子代理任务（works）';
-    works.style.flex = '2'; works.style.minHeight = '34px';
-    works.oninput = () => { ag.works = works.value; works.style.height = 'auto'; works.style.height = Math.min(90, works.scrollHeight) + 'px'; };
+    const row = el('div', 'tw-agent');
+    const works = el('textarea');
+    works.className = 'tw-works';
+    works.rows = 1;
+    works.value = ag.works || '';
+    works.placeholder = '子代理任务（works）';
+    works.oninput = () => {
+      ag.works = works.value;
+      works.style.height = 'auto';
+      works.style.height = Math.min(88, works.scrollHeight) + 'px';
+    };
     row.appendChild(works);
-    const anm = el('input'); anm.type = 'text'; anm.value = ag.name || ''; anm.placeholder = '名称'; anm.style.flex = '1';
+    const anm = el('input');
+    anm.type = 'text';
+    anm.className = 'tw-aname';
+    anm.value = ag.name || '';
+    anm.placeholder = '名称';
     anm.oninput = () => { ag.name = anm.value; };
     row.appendChild(anm);
-    const amd = el('input'); amd.type = 'text'; amd.value = ag.model || ''; amd.placeholder = '模型（可空）'; amd.style.flex = '1';
+    const amd = el('input');
+    amd.type = 'text';
+    amd.className = 'tw-amodel';
+    amd.value = ag.model || '';
+    amd.placeholder = '模型（可空）';
     amd.oninput = () => { ag.model = amd.value; };
     row.appendChild(amd);
-    const thk = el('select'); thk.style.width = '104px';
-    for (const l of THINK_LEVELS) { const o = el('option', null, l.name); o.value = l.name; if ((ag.think || 'off') === l.name) o.selected = true; thk.appendChild(o); }
+    const thk = el('select');
+    thk.className = 'tw-athink';
+    for (const l of THINK_LEVELS) {
+      const o = el('option', null, l.name);
+      o.value = l.name;
+      if ((ag.think || 'off') === l.name) o.selected = true;
+      thk.appendChild(o);
+    }
     thk.onchange = () => { ag.think = thk.value; };
     row.appendChild(thk);
-    const ax = el('button', 'btn ghost sm', '✕');
+    const ax = el('button', 'icon-btn sm');
+    ax.type = 'button';
+    ax.title = '删除子代理';
+    ax.innerHTML = iconHtml('x');
     ax.onclick = () => { st.agents.splice(ai, 1); renderWorkflowEditor(t); };
     row.appendChild(ax);
     agents.appendChild(row);
   });
   card.appendChild(agents);
-  const addAg = el('button', 'btn ghost sm', '＋ 子代理');
-  addAg.style.marginTop = '7px';
-  addAg.onclick = () => { (st.agents = st.agents || []).push({ works: '', name: '', model: '', think: 'off' }); renderWorkflowEditor(t); };
+
+  const addAg = el('button', 'btn ghost sm tw-add-agent');
+  addAg.type = 'button';
+  addAg.innerHTML = iconHtml('plus', 'sm') + '<span>子代理</span>';
+  addAg.onclick = () => {
+    (st.agents = st.agents || []).push({ works: '', name: '', model: '', think: 'off' });
+    renderWorkflowEditor(t);
+  };
   card.appendChild(addAg);
   return card;
 }
@@ -599,14 +1540,14 @@ async function submitWorkflow(t, mode) {
       agents.push(a);
     }
     if (!agents.length) continue;
-    const s = { agents };
+    const s = { agents: agents };
     if (st.name) s.name = st.name;
     s.mode = st.mode || 'serial';
     if (st.gate) s.gate = true;
     stages.push(s);
   }
   if (!stages.length) { toast('至少需要一个带任务的阶段', 'bad'); return; }
-  const out = await cmd('teamwork.create', { ws: t.ws, workflow: { stages }, work_type: wf.work_type || 'serial' });
+  const out = await cmd('teamwork.create', { ws: t.ws, workflow: { stages: stages }, work_type: wf.work_type || 'serial' });
   if (!out || out.ok === false) return;
   toast('已创建任务 ' + out.job, 'ok');
   if (mode === 'run') {
@@ -616,3 +1557,30 @@ async function submitWorkflow(t, mode) {
   openDock('teamwork');
   setTimeout(() => refreshTeamwork(t.ws), 500);
 }
+
+/* ---------- I10. 对外接口（boot 优先调用 ComposerUI.init） ---------- */
+const ComposerUI = {
+  init() {
+    // 幂等：重复调用（boot 与懒加载兜底都可能在同一次启动里触发）不重建 DOM，
+    // 否则会掉一遍事件绑定（新节点没绑上，输入/回车全部失效）
+    const host = cmpHost();
+    if (host && host.__cmpBuilt && $('#ta')) {
+      bindComposer();
+      this.render();
+      if (typeof renderStatLine === 'function') renderStatLine();
+      return true;
+    }
+    if (!buildComposerDom()) return false;
+    bindComposer();
+    this.render();
+    if (typeof renderStatLine === 'function') renderStatLine();
+    return true;
+  },
+  render() { renderComposer(); },
+  refresh() { renderComposer(); if (typeof renderStatLine === 'function') renderStatLine(); },
+  focus() { focusInput(); },
+  setMode(mode) { setComposerMode(mode); },
+  openModelMenu() { const a = $('#modelChip'); if (a) toggleModelMenu(a); },
+  closeMenus() { closeComposerMenu(false); closeSlash(); },
+};
+window.ComposerUI = ComposerUI;

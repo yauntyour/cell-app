@@ -1,105 +1,93 @@
-/* ---- §4 区域 Regions ---------------------------------------------- */
-#app{display:flex;flex-direction:column;height:100vh;width:100vw}
-/* 顶部导航栏：后退/前进/刷新/主页。position+z-index 使其浮于设置页/弹窗之上，
-   任何情况下都可见可点，保证能返回主页面 */
-#navbar{height:36px;flex:none;display:flex;align-items:center;gap:2px;padding:0 8px;
-  background:var(--panel);border-bottom:1px solid var(--line);position:relative;z-index:100}
-#shell{flex:1;min-height:0;display:flex}
-.nbtn{width:30px;height:26px;border-radius:var(--radius-s);display:flex;align-items:center;
-  justify-content:center;color:var(--fg2);position:relative;
-  transition:background var(--dur) var(--ease),color var(--dur) var(--ease)}
-.nbtn:hover:not([disabled]){background:var(--raise);color:var(--fg)}
-.nbtn[disabled]{opacity:.35;pointer-events:none}
-.nbtn svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;
-  stroke-linecap:round;stroke-linejoin:round}
-/* 面板开关：按下态用 --accent，与右侧面板的开关状态一致 */
-.nbtn.docktoggle.on{background:var(--accent-soft);color:var(--accent)}
-.nbtn.docktoggle.on::after{content:"";position:absolute;left:5px;right:5px;bottom:2px;
-  height:1.5px;border-radius:2px;background:var(--accent)}
-/* 三区默认按 20% / 50% / 30% 分配（真正的宽度由 Layout 按比例算成像素写进
-   inline style；这里的百分比是 JS 生效前的首屏兜底，必须与 Layout.def 一致）。
+/* ---- §4 布局 Regions ---------------------------------------------- */
+#app{height:100vh;width:100vw;display:flex;flex-direction:column}
+#shell{flex:1;min-height:0;display:flex;background:var(--bg)}
 
-   🔴 dock 在 DOM 里是 #main 的后代（#shell > #main > #workarea > #rightdock），
-   所以 `#rightdock{width:30%}` 的百分比基数是 **#workarea**，不是 #shell——
-   直接写 30% 会得到 0.30 × (剩余宽度)，三区比例因此对不上。
-   首屏兜底改用 vw（视口单位，基数就是 shell），真正的值一律由
-   Layout.rail() 按 shell 可分配宽度算成像素写进 inline style。 */
+/* 侧栏：整高、略亮于画布，右侧 1px 淡边 */
 #sidebar{width:20vw;flex:none;background:var(--panel);border-right:1px solid var(--line);
-  display:flex;flex-direction:column;
-  /* 窄宽降级用容器查询（见 03-molecules.css §3.1b）：拖窄侧栏时窗口宽度
-     并没有变，媒体查询察觉不到，只能问侧栏自己的宽度 */
+  display:flex;flex-direction:column;min-width:0;position:relative;
   container-type:inline-size;container-name:sb;
-  transition:margin-left var(--dur) var(--ease)}
-/* 收起时用 translateX 而不是负 margin：宽度已由 JS 写到 inline style，
-   负 margin 会被拖动后的宽度覆盖，导致收不干净 */
-#sidebar.collapsed{margin-left:0;transform:translateX(-100%)}
+  transition:margin-left var(--dur) var(--ease),transform var(--dur) var(--ease)}
+#sidebar.collapsed{width:0!important;padding:0!important;border-right:none;overflow:hidden;transform:translateX(-100%)}
 #main{flex:1;min-width:0;display:flex;flex-direction:column;position:relative;background:var(--bg)}
-#tabbar{height:44px;flex:none;display:flex;align-items:stretch;gap:1px;padding:0 8px;
-  background:var(--panel);border-bottom:1px solid var(--line);overflow-x:auto;overflow-y:hidden}
+#topbar{height:var(--topbar-h);flex:none;display:flex;align-items:center;gap:8px;
+  padding:0 10px 0 12px;border-bottom:1px solid var(--line);background:var(--bg)}
+#tabbar{flex:1;min-width:0;display:flex;align-items:center;gap:4px;overflow-x:auto;overflow-y:hidden;
+  scrollbar-width:none}
 #tabbar::-webkit-scrollbar{height:0}
+#topActions{display:flex;align-items:center;gap:2px;flex:none}
 #workarea{flex:1;min-height:0;display:flex;position:relative}
-/* position:relative —— 悬浮输入卡与它的拖动把手都以「主区」为定位上下文，
-   否则会相对 #workarea（含右侧 dock）定位而横跨到面板底下 */
 #centre{flex:1;min-width:0;display:flex;flex-direction:column;position:relative}
-#rightdock{width:0;flex:none;background:var(--panel);border-left:1px solid var(--line);
-  display:flex;flex-direction:column;overflow:hidden;transition:width var(--dur) var(--ease)}
-/* 首屏兜底 = 30vw（与 Layout.def.dock 一致，且基数是视口而非 #workarea）；
-   实际宽度由 Layout.rail() 算成像素写进 inline style */
-#rightdock.open{width:30vw}
+#tabview{flex:1;min-height:0;display:flex;flex-direction:column;position:relative}
+/* 每个工作区一个 pane，叠放在 tabview 里（消息流 / 空态由 chat 模块渲染） */
+.tabpane{position:absolute;inset:0;display:none;flex-direction:column;min-height:0;min-width:0}
+.tabpane.active{display:flex}
 
-/* ---- 可拖动分隔条（见 03-layout.js） ------------------------------
-   三处功能区交界各一条 6px 的透明热区：常态不占视觉，悬停/拖动时高亮。
-   放在 border 之上（z-index）以覆盖 border 成为命中区。            */
+/* 右侧面板：默认收起（宽度 0），打开时由 Layout 写像素宽 */
+#rightdock{width:0;flex:none;background:var(--bg);border-left:1px solid var(--line);
+  display:flex;flex-direction:column;overflow:hidden;
+  transition:width var(--dur) var(--ease)}
+#rightdock.open{width:26vw}
+
+/* 可拖动分隔条 */
 .rz{flex:none;position:relative;z-index:6;background:transparent;
   transition:background var(--dur) var(--ease)}
 .rz-v{width:6px;margin:0 -3px;cursor:col-resize}
 .rz-h{height:6px;margin:-3px 0;cursor:row-resize}
-/* 输入栏的把手：卡片的第一个流内子元素（14px 热区，视觉上就是卡片顶边）。
-   宽度随 .composer-stack 的 --composer-max 盒，不再单独设上限 */
-.rz-composer{width:100%;height:14px;margin:0;flex:none}
-.rz-composer::after{left:0;right:0;top:7px;bottom:7px}
+.rz-composer{width:100%;height:12px;margin:0;flex:none}
 .rz::after{content:"";position:absolute;background:var(--accent);opacity:0;
   transition:opacity var(--dur) var(--ease)}
 .rz-v::after{top:0;bottom:0;left:2px;right:2px}
 .rz-h::after{left:0;right:0;top:2px;bottom:2px}
-.rz:hover::after,.rz.dragging::after,.rz:focus-visible::after{opacity:.55}
-.rz:focus-visible{outline:2px solid var(--accent);outline-offset:-2px;border-radius:0}
-#tabview{flex:1;min-height:0;display:flex;flex-direction:column;position:relative}
-#banner{display:none;padding:5px 14px;color:var(--bg);font-weight:650;font-size:12px;text-align:center;
-  letter-spacing:.03em;background:var(--fg)}
+.rz:hover::after,.rz.dragging::after,.rz:focus-visible::after{opacity:.6}
+.rz:focus-visible{outline:2px solid var(--accent-soft);outline-offset:-2px;border-radius:0}
+.rz-composer::after{left:0;right:0;top:5px;bottom:5px}
+
+/* 悬浮输入卡外壳：卡片本体外观由 05-composer.js/05b-composer.css 负责 */
+#composer{position:absolute;left:0;right:0;bottom:18px;z-index:20;display:flex;justify-content:center;
+  pointer-events:none}
+.composer-stack{position:relative;pointer-events:auto;width:min(calc(100% - 56px),var(--composer-max));
+  display:flex;flex-direction:column}
+#composer.disabled{opacity:.72}
+#composerInner{pointer-events:auto}
+/* hero 空态：输入卡下移到视口中部，hero 内容由消息流负责在其上方居中
+   （chat 侧 .hero-wrap 用 padding-bottom 让内容整体上移） */
+#centre.hero #composer,#centre.no-ws #composer{bottom:auto;top:calc(50% + 34px)}
+#centre.hero #tabview,#centre.no-ws #tabview{padding-bottom:0}
+
+/* 横幅 / 重连 */
+/* 演示/连接横幅：浮动胶囊，不占布局高度（对齐 DSH 的轻量提示） */
+#banner{position:fixed;top:9px;left:50%;transform:translateX(-50%);z-index:65;display:none;
+  padding:5px 12px;border-radius:var(--radius-full);background:var(--panel2);
+  border:1px solid var(--line2);color:var(--fg2);font-size:11.5px;font-weight:500;
+  box-shadow:var(--shadow-sm);white-space:nowrap;max-width:min(720px,calc(100vw - 600px));
+  overflow:hidden;text-overflow:ellipsis}
 #banner.show{display:block}
-.backdrop{position:fixed;inset:0;z-index:60;display:flex;opacity:0;pointer-events:none;
-  background:color-mix(in srgb,var(--bg) 55%,transparent);backdrop-filter:blur(2px);
-  transition:opacity var(--dur) var(--ease)}
-.backdrop.show{opacity:1;pointer-events:auto}
-#settings{position:fixed;left:0;right:0;bottom:0;top:36px;z-index:70;background:var(--bg);display:none;flex-direction:column}
-#settings.show{display:flex;animation:fadeUp 240ms var(--ease)}
+#reconnect{position:absolute;left:50%;bottom:14px;transform:translateX(-50%);z-index:70;
+  padding:6px 14px;border-radius:var(--radius-full);background:var(--panel2);border:1px solid var(--line2);
+  color:var(--warn);font-size:12px;box-shadow:var(--shadow-sm);display:none}
+#reconnect.show{display:block}
+
+/* 整页浮层（设置页）：脚本负责内部结构，这里只给容器定位 */
+#settings{position:fixed;inset:0;z-index:70;background:var(--bg);display:none;flex-direction:column}
+#settings.show{display:flex;animation:fadeUp 220ms var(--ease)}
+/* 通用弹窗容器 */
 .modal{position:fixed;inset:0;z-index:80;display:none;align-items:center;justify-content:center;
-  background:color-mix(in srgb,var(--bg) 55%,transparent);backdrop-filter:blur(2px)}
-.modal.show{display:flex;animation:fadeUp 180ms var(--ease)}
-/* 搜索弹窗：全会话内容检索（聊天/存档/团队/工作流） */
-.searchbox-lg{width:min(780px,94vw);height:min(640px,88vh);background:var(--panel2);
-  border:1px solid var(--line2);border-radius:var(--radius);box-shadow:var(--shadow);
-  display:flex;flex-direction:column;overflow:hidden}
-.sm-head{display:flex;align-items:center;gap:10px;padding:13px 16px;border-bottom:1px solid var(--line)}
-.sm-head .sm-ico{display:flex;align-items:center;opacity:.6;flex:none}
-.sm-head .sm-ico .uico{width:16px;height:16px;stroke-width:1.8}
-.sm-head input{flex:1;border:none;background:transparent;font-size:15px;outline:none;box-shadow:none;padding:0}
-.sm-chips{display:flex;flex-wrap:wrap;gap:6px;padding:10px 16px;border-bottom:1px solid var(--line)}
-.sm-chip{padding:3px 10px;border-radius:999px;background:var(--bg2);border:1px solid var(--line);
-  font-size:11.5px;color:var(--fg2);cursor:pointer;transition:all var(--dur) var(--ease)}
-.sm-chip:hover{border-color:var(--line2);color:var(--fg)}
-.sm-chip.on{background:var(--accent-soft);border-color:var(--accent);color:var(--accent);font-weight:650}
-.sm-body{flex:1;overflow-y:auto;padding:8px 10px 12px}
-.sm-item{border-radius:var(--radius-s);padding:9px 11px;cursor:pointer;border:1px solid transparent}
-.sm-item:hover{background:var(--raise)}
-.sm-item.sel{background:var(--accent-soft);border-color:color-mix(in srgb,var(--accent) 30%,transparent)}
-.sm-item .sm-title{font-size:13px;font-weight:650;color:var(--fg);margin-bottom:2px}
-.sm-item .sm-meta{display:flex;gap:8px;font-size:10.5px;color:var(--fg3);align-items:center;flex-wrap:wrap}
-.sm-hit{display:flex;gap:8px;font-size:12px;color:var(--fg2);padding:3px 0;line-height:1.5}
-.sm-hit .sm-kind{flex:none;font-size:10px;font-weight:700;width:36px;text-align:center;
-  border-radius:4px;background:var(--raise);color:var(--fg3);height:17px;line-height:17px;margin-top:1px}
-.sm-hit .sm-snip{min-width:0;word-break:break-all}
-.sm-foot{display:flex;align-items:center;gap:10px;padding:9px 16px;border-top:1px solid var(--line);
-  font-size:11px;color:var(--fg3)}
-mark{background:var(--accent-soft);color:var(--accent);border-radius:3px;padding:0 1px}
+  background:rgba(5,5,7,.55);backdrop-filter:blur(3px)}
+.modal.show{display:flex;animation:fadeUp 160ms var(--ease)}
+/* 浮窗 / toast / 右键菜单容器（内容样式见 07b-overlays.css） */
+#windows{position:fixed;inset:0;pointer-events:none;z-index:75}
+#windows>*{pointer-events:auto}
+#toasts{position:fixed;right:16px;bottom:16px;z-index:120;display:flex;flex-direction:column;gap:8px;
+  align-items:flex-end;pointer-events:none}
+#toasts>*{pointer-events:auto}
+#ctxmenu{position:fixed;display:none;z-index:130;min-width:170px;padding:5px;
+  background:var(--panel2);border:1px solid var(--line2);border-radius:10px;box-shadow:var(--shadow)}
+/* 滚动锁：设置页/弹窗打开时消息流不滚动（由脚本切换 body 类） */
+body.locked{overflow:hidden}
+/* 响应式：窄窗口收起侧栏标签、右栏浮层化 */
+@media (max-width:1180px){
+  #sidebar{width:264px}
+}
+@media (max-width:980px){
+  #rightdock.open{position:absolute;right:0;top:0;bottom:0;z-index:45;box-shadow:var(--shadow)}
+}

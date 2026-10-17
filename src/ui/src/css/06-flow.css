@@ -1,115 +1,122 @@
 /* =====================================================================
-   §6 Teamwork：任务卡 + 工作流图
-   工作流图直接沿用 cell.cpp /export 的 DOM 与样式语义（.flow / .fnode /
-   .frail / .fdot / .fbox / .fhd / .fbr.fan / .frow / .kbadge）：一条竖轨
-   （用 border 画，不用 SVG），每个阶段一个节点，并行阶段把子代理扇出成分
-   支盒，关卡（gate）用虚线框 + 菱形点，首尾各一个起点 / 状态终点。
-   导出页只有深色，本 UI 的默认令牌同样是深色（黑白灰），第三方主题可覆盖。
+   §6 Teamwork：任务卡 + 工作流图（css/06-flow.css）
+
+   工作流图沿用 /export 的 DOM 语义（.flow / .fnode / .frail / .fdot /
+   .fbox / .fhd / .fbr.fan / .frow / .kbadge）：一条竖轨 + 每阶段一个
+   节点，并行阶段扇出成分支卡，关卡用虚线框 + 菱形点，首尾各一个端点。
+   视觉走 00-tokens.css 的新令牌：卡片 --elev-1、描边 --line、强调 --accent。
    ===================================================================== */
 
 /* ---- 6.1 任务卡 ---------------------------------------------------- */
-.job{border:1px solid var(--line);border-radius:var(--radius);background:var(--bg2);
-  margin:0 0 14px;overflow:hidden}
-.jobhead{display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid var(--line);
-  cursor:pointer;user-select:none}
-.jobhead .jid{font-family:var(--mono);font-size:11.5px;font-weight:700}
-.jobhead .status{margin-left:auto}
-.jobhead .chev{color:var(--fg3);transition:transform var(--dur) var(--ease);font-size:13px}
-.job.open .jobhead .chev{transform:rotate(90deg)}
-/* 存档卡（dock 存档架）：点击在小窗里看全文，悬停给一点反馈 */
-.job.arch .jobhead:hover{background:var(--raise)}
-.jobbody{padding:10px 12px}
-.jobbody[hidden]{display:none}
-.jobmeta{display:flex;gap:8px;flex-wrap:wrap;margin-top:9px;font-size:11px;color:var(--fg3)}
-.jobmeta .mono{font-family:var(--mono)}
-.jobctl{display:flex;gap:6px;flex-wrap:wrap;padding:9px 12px;border-top:1px solid var(--line)}
+.twcard{background:var(--elev-1);border:1px solid var(--line);border-radius:var(--radius);
+  margin:0 0 10px;overflow:hidden;
+  transition:border-color var(--dur) var(--ease),background var(--dur) var(--ease)}
+.twcard:last-child{margin-bottom:0}
+.twcard.run{border-color:color-mix(in srgb,var(--accent) 28%,var(--line))}
+.twcard.bad{border-color:color-mix(in srgb,var(--bad) 36%,var(--line))}
+.twcard-head{display:flex;align-items:center;gap:8px;width:100%;min-height:38px;padding:8px 12px;
+  text-align:left;transition:background var(--dur) var(--ease)}
+.twcard-head:hover{background:var(--raise)}
+.status-orb{width:7px;height:7px;border-radius:50%;flex:none;background:var(--fg4)}
+.status-orb.run{background:var(--accent);animation:pulseRing 1.5s var(--ease) infinite}
+.status-orb.ok{background:var(--ok)}
+.status-orb.bad{background:var(--bad)}
+.tw-id{font-family:var(--mono);font-size:12.5px;font-weight:650;color:var(--fg);
+  min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tw-count{font-family:var(--mono);font-size:10.5px;color:var(--fg4);white-space:nowrap}
+.tw-chev{display:flex;color:var(--fg4);flex:none;transition:transform var(--dur) var(--ease)}
+.twcard.open .tw-chev{transform:rotate(90deg)}
+.twcard-body{border-top:1px solid var(--line);padding:10px 12px 12px}
+.twcard-body[hidden]{display:none}
+.tw-meta{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:8px;
+  font-size:11px;color:var(--fg4)}
+.tw-meta-i{font-family:var(--mono)}
+.tw-ctl{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:10px;
+  padding-top:10px;border-top:1px solid var(--line)}
 
-/* ---- 6.2 工作流图（/export 同款：竖轨 + 扇出分支） ------------------ */
-.flowwrap{margin:6px 0 2px;overflow-x:auto;padding:2px 0}
-.flow{--railx:15px;--fork:14px;position:relative;margin:10px 0 2px}
-.flow::before{content:"";position:absolute;left:var(--railx);top:14px;bottom:14px;
-  border-left:1px solid var(--line)}
-.fnode{display:flex;align-items:stretch;margin:0 0 10px}
-.frail{position:relative;flex:0 0 32px;min-height:26px}
-.fnode:not(:last-child) .frail::after{content:"";position:absolute;left:calc(var(--railx) - 5px);
-  bottom:-5px;width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent;
-  border-top:6px solid var(--line)}
-.fdot{position:absolute;left:var(--railx);top:18px;width:9px;height:9px;margin:-4.5px 0 0 -4.5px;
-  border-radius:50%;background:var(--fg3);border:1.5px solid var(--bg)}
+/* ---- 6.2 工作流图 -------------------------------------------------- */
+.flowwrap{margin:2px -2px 0;overflow-x:auto;padding:2px 2px 4px}
+.flow{--railx:13px;--fork:12px;position:relative;margin:2px 0}
+.flow::before{content:"";position:absolute;left:var(--railx);top:12px;bottom:12px;
+  border-left:1px solid var(--line2)}
+.fnode{display:flex;align-items:stretch;margin:0 0 8px}
+.fnode:last-child{margin-bottom:0}
+.frail{position:relative;flex:0 0 28px;min-height:24px}
+.fnode:not(:last-child) .frail::after{content:"";position:absolute;left:calc(var(--railx) - 4px);
+  bottom:-4px;width:0;height:0;border-left:4px solid transparent;border-right:4px solid transparent;
+  border-top:5px solid var(--line2)}
+.fdot{position:absolute;left:var(--railx);top:16px;width:8px;height:8px;margin:-4px 0 0 -4px;
+  border-radius:50%;background:var(--fg4);border:1.5px solid var(--bg)}
 .fdot.ok{background:var(--ok)}
-.fdot.run{background:var(--run)}
+.fdot.run{background:var(--accent);animation:breathe 1.6s var(--ease) infinite}
 .fdot.bad{background:var(--bad)}
 .fnode.gate .fdot{border-radius:1px;transform:rotate(45deg);background:var(--warn)}
-.fnode.cap .fdot{background:var(--bg);border-color:var(--fg3);width:7px;height:7px;margin:-3.5px 0 0 -3.5px}
-.fdot.run{animation:breathe 1.6s var(--ease) infinite}
-.fbox{flex:1 1 auto;min-width:0;border:1px solid var(--line);border-radius:9px;
-  padding:9px 12px 10px;background:var(--panel2)}
-.fnode.gate .fbox{border-style:dashed}
-.fnode.now .fbox{border-color:var(--fg3);background:var(--code-bg)}
-.fnode.cap .fbox{border:0;background:none;padding:2px 0 0 2px}
-.fhd{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.fhd .fn{font-family:var(--mono);font-size:10px;color:var(--fg3)}
-.fname{font-size:12.5px;font-weight:600}
-.fnode.cap .fname{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--fg3)}
-.fmeta{font-family:var(--mono);font-size:10.5px;color:var(--fg3)}
-.kbadge{font-family:var(--mono);font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;
-  color:var(--fg2);border:1px solid var(--line);border-radius:20px;padding:0 7px}
-/* 分支列表：并行阶段（fan）自动按可用宽度折叠列数 —— 停靠栏只有 380px，
-   4 个代理会自然折成两列 / 一列，不需要第二套布局 */
+.fnode.cap .fdot{width:6px;height:6px;margin:-3px 0 0 -3px;background:var(--bg);border-color:var(--fg4)}
+.fbox{flex:1 1 auto;min-width:0;border:1px solid var(--line);border-radius:var(--radius-s);
+  padding:7px 10px 8px;background:var(--bg2)}
+.fnode.gate .fbox{border-style:dashed;border-color:color-mix(in srgb,var(--warn) 30%,var(--line))}
+.fnode.now .fbox{border-color:color-mix(in srgb,var(--accent) 45%,var(--line));
+  background:color-mix(in srgb,var(--accent) 5%,var(--bg2))}
+.fnode.cap .fbox{border:0;background:none;padding:1px 0 0 2px}
+.fhd{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.fhd .fn{font-family:var(--mono);font-size:10px;color:var(--fg4)}
+.fname{font-size:12.5px;font-weight:600;color:var(--fg)}
+.fnode.cap .fname{font-family:var(--mono);font-size:10px;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--fg4);font-weight:500}
+.kbadge{font-family:var(--mono);font-size:9.5px;letter-spacing:.06em;text-transform:lowercase;
+  color:var(--fg3);border:1px solid var(--line2);border-radius:var(--radius-full);padding:0 7px;
+  line-height:15px;height:16px;display:inline-flex;align-items:center}
+.kbadge.warn{color:var(--warn);border-color:color-mix(in srgb,var(--warn) 35%,var(--line))}
+
+/* 分支列表：并行阶段按可用宽度折列（容器查询，dock 拖宽才重排） */
 .fbr{display:grid;grid-template-columns:var(--cols,repeat(auto-fill,minmax(104px,1fr)));
-  gap:8px;margin:9px 0 0;padding:0;list-style:none}
-.fbr:not(.fan)>li{padding:4px 0;border-top:1px solid var(--line-soft)}
+  gap:6px;margin:8px 0 0;padding:0;list-style:none}
+.fbr:not(.fan)>li{padding:3px 0;border-top:1px solid var(--line)}
 .fbr:not(.fan)>li:first-child{border-top:0;padding-top:0}
-.fbr.fan{--forkop:1;--fork:12px;position:relative;margin-top:16px;padding-top:var(--fork)}
-.fbr.fan::before{content:"";position:absolute;pointer-events:none;top:0;left:24%;right:24%;
-  border-top:1px solid var(--line);opacity:var(--forkop)}
-.fbr.fan>li{position:relative;border:1px solid var(--line-soft);border-radius:7px;padding:7px 9px;
-  background:var(--bg2);cursor:pointer;transition:border-color var(--dur) var(--ease);
-  min-width:0;overflow:hidden}
-.fbr.fan>li:hover{border-color:var(--accent)}
+.fbr.fan{--forkop:1;position:relative;margin-top:14px;padding-top:var(--fork)}
+.fbr.fan::before{content:"";position:absolute;pointer-events:none;top:0;left:26%;right:26%;
+  border-top:1px solid var(--line2);opacity:var(--forkop)}
+.fbr.fan>li{position:relative;border:1px solid var(--line);border-radius:var(--radius-xs);
+  padding:6px 8px;background:var(--bg3);cursor:pointer;min-width:0;overflow:hidden;
+  transition:border-color var(--dur) var(--ease),background var(--dur) var(--ease)}
+.fbr.fan>li:hover{border-color:color-mix(in srgb,var(--accent) 45%,var(--line));
+  background:color-mix(in srgb,var(--accent) 5%,var(--bg3))}
 .fbr.fan>li::before{content:"";position:absolute;pointer-events:none;top:calc(-1*var(--fork));
-  left:50%;height:var(--fork);width:0;border-left:1px solid var(--line);opacity:var(--forkop)}
-.fbr.fan.stack{--cols:minmax(0,1fr);--fork:0px;--forkop:0}
-.frow{display:flex;align-items:center;gap:7px;flex-wrap:wrap;min-width:0}
-.frow .wd{width:7px;height:7px;border-radius:50%;flex:none;background:var(--fg3)}
-.frow .wd.ok{background:var(--ok)}.frow .wd.run{background:var(--run);animation:pulseRing 1.4s var(--ease) infinite}
+  left:50%;height:var(--fork);width:0;border-left:1px solid var(--line2);opacity:var(--forkop)}
+.frow{display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-width:0}
+.frow .wd{width:6px;height:6px;border-radius:50%;flex:none;background:var(--fg4)}
+.frow .wd.ok{background:var(--ok)}
+.frow .wd.run{background:var(--accent);animation:pulseRing 1.4s var(--ease) infinite}
 .frow .wd.bad{background:var(--bad)}
-.frow .nm{font-family:var(--mono);font-size:11.5px;overflow:hidden;text-overflow:ellipsis;
-  white-space:nowrap;min-width:0}
-.frow .st{font-family:var(--mono);font-size:10px;color:var(--fg3)}
-/* 子代理的任务摘要：严格两行截断。line-clamp 自己就负责截断，
-   此前额外写的 max-height:2.4em 比两行实际高度小，把第二行腰斩，
-   文字看起来像「溢出」了分支盒。 */
+.frow .nm{font-family:var(--mono);font-size:11px;font-weight:500;color:var(--fg2);
+  min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.frow .st{font-family:var(--mono);font-size:9.5px;color:var(--fg4)}
 .fbr .ex{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;
-  margin-top:3px;font-size:11px;line-height:1.5;color:var(--fg2);overflow-wrap:anywhere}
-/* dock 可拖到 1200px：窄时并行分支折成单列，宽了重新扇出成多列。
-   用容器查询而不是媒体查询 —— 拖宽 dock 时窗口宽度并没有变。 */
-.dockbody{container-type:inline-size;container-name:dock}
-@container dock (max-width:620px){
-  .dockbody .fbr.fan{--cols:minmax(0,1fr);--fork:0px;--forkop:0}
+  margin-top:3px;font-size:10.5px;line-height:1.5;color:var(--fg3);overflow-wrap:anywhere}
+
+/* dock 宽窄自适应：窄了折成单列、收起扇出竖线；宽了重新扇出 */
+@container dk (max-width:420px){
+  .fbr.fan{--cols:minmax(0,1fr);--fork:0px;--forkop:0}
+  .fbr.fan{grid-template-columns:minmax(0,1fr)}
 }
-@container dock (min-width:621px){
-  /* auto-fit 会把「没有项目的轨道」折叠成 0px 并留在 grid 里，撑出空隙；
-     auto-fill 保留空轨道，列宽干净。子代理数量少时也不会多出空列。 */
-  .dockbody .fbr.fan{--cols:repeat(auto-fill,minmax(190px,1fr));--fork:12px;--forkop:1}
-}
-/* dock 很窄：只有一个代理的分支不必扇出 */
-@media (max-width:1100px){
-  .fbr.fan{--fork:10px}
-  .fbr{flex-wrap:wrap}
+@container dk (min-width:421px){
+  .fbr.fan{grid-template-columns:repeat(auto-fill,minmax(180px,1fr));--fork:10px;--forkop:1}
 }
 
 /* ---- 6.3 子代理行 -------------------------------------------------- */
-.wrow{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:var(--radius-s);
-  cursor:pointer;transition:background var(--dur) var(--ease)}
+.wlist{margin-top:8px;padding-top:6px;border-top:1px solid var(--line)}
+.wrow{display:flex;align-items:center;gap:8px;width:100%;min-height:30px;padding:5px 7px;
+  border-radius:var(--radius-xs);text-align:left;color:var(--fg2);
+  transition:background var(--dur) var(--ease)}
 .wrow:hover{background:var(--raise)}
-.wrow .wname{font-family:var(--mono);font-size:11.5px;font-weight:650;white-space:nowrap;
-  overflow:hidden;text-overflow:ellipsis;flex:0 1 auto}
-.wrow .wmeta{font-size:10.5px;color:var(--fg3);font-family:var(--mono);white-space:nowrap;
-  overflow:hidden;text-overflow:ellipsis;flex:0 1 auto}
-.wrow .run-dot{width:7px;height:7px;border-radius:50%;background:var(--fg3);flex:none}
-.wrow .run-dot.run{background:var(--run);animation:pulseRing 1.4s var(--ease) infinite}
-.wrow .run-dot.ok{background:var(--ok)}.wrow .run-dot.bad{background:var(--bad)}
+.wrow .run-dot{width:6px;height:6px;border-radius:50%;flex:none;background:var(--fg4)}
+.wrow .run-dot.run{background:var(--accent);animation:pulseRing 1.4s var(--ease) infinite}
+.wrow .run-dot.ok{background:var(--ok)}
+.wrow .run-dot.bad{background:var(--bad)}
+.wrow .wname{font-family:var(--mono);font-size:11.5px;font-weight:500;color:var(--fg);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:0 1 auto;max-width:52%}
+.wrow .wstage{font-size:10px;color:var(--fg3);padding:1px 6px;border-radius:4px;
+  background:var(--raise);flex:none;white-space:nowrap}
+.wrow .wmeta{font-family:var(--mono);font-size:10.5px;color:var(--fg4);white-space:nowrap;flex:none}
 .wrow .grow{flex:1 1 auto;min-width:0}
-.wrow .acts{flex:none;display:flex;gap:4px}
-.wrow .btn{white-space:nowrap;flex:none}
+.wrow .btn{height:22px;padding:0 7px;font-size:11px;flex:none}

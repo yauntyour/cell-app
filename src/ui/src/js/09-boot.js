@@ -8,56 +8,71 @@ function wireEvents() {
   $('#btnOpenWs').onclick = () => openWsDialog();
   $('#btnSettings').onclick = () => toggleSettings();
   $('#btnSearch').onclick = () => openSearch();
-  $('#searchModal').onclick = ev => { if (ev.target === ev.currentTarget) closeSearch(); };
+  $('#btnTopSearch').onclick = () => openSearch();
+  $('#btnFiles').onclick = () => openDock('files');
+  $('#btnGit').onclick = () => openDock('git');
+  $('#btnTerminal').onclick = () => openDock('terminal');
+  $('#btnWsFilter').onclick = () => toggleSidebarFilter();
+  $('#btnSidebarToggle').onclick = () => toggleSidebar();
   $('#navBack').onclick = () => Nav.back();
   $('#navFwd').onclick = () => Nav.fwd();
   $('#navRefresh').onclick = () => Nav.refresh();
   $('#navHome').onclick = () => Nav.home();
   $('#navDock').onclick = () => toggleDock();
+  $('#btnTopDock').onclick = () => toggleDock();
   $('#dockClose').onclick = () => closeDock();
-  $$('.docktab').forEach(b => b.onclick = () => { S.dock = b.dataset.dock; openDock(b.dataset.dock); });
-  $$('.modebtn').forEach(b => b.onclick = () => setComposerMode(b.dataset.mode));
-  $('#sendBtn').onclick = () => sendCurrent();
-  // 附件上传：文件选择按钮 + 隐藏 input（拖拽 / 粘贴入口见下方 drop/paste）
+  $('#searchModal').onclick = ev => { if (ev.target === ev.currentTarget) closeSearch(); };
+  // 右侧页签：事件委托，面板由 renderDock 分发
+  const dockTabs = $('#dockTabs');
+  if (dockTabs) dockTabs.addEventListener('click', ev => {
+    const b = ev.target.closest('.docktab');
+    if (b && b.dataset.dock) openDock(b.dataset.dock);
+  });
+  if (window.Panels && Panels.init) Panels.init();
+  if (window.ComposerUI && ComposerUI.init) ComposerUI.init();
+  else wireComposerLegacy();
+
+  document.addEventListener('keydown', onGlobalKey);
+  window.addEventListener('hashchange', () => {
+    if (location.hash === '#/settings') openSettings();
+    else if (S.settingsOpen) closeSettings();
+  });
+}
+
+/* 旧输入栏兜底绑定：ComposerUI 未加载时保持页面可用 */
+function wireComposerLegacy() {
+  const send = $('#sendBtn');
+  if (send) send.onclick = () => sendCurrent();
   const pick = $('#btnPickFile'), fin = $('#fileInput');
   if (pick && fin) {
     pick.onclick = () => fin.click();
     fin.addEventListener('change', () => {
       if (fin.files && fin.files.length) addFiles(fin.files);
-      fin.value = ''; // 同一个文件可以再次选择
+      fin.value = '';
     });
   }
-
   const ta = $('#ta');
-  ta.addEventListener('input', () => {
-    const t = S.tabs.get(S.active); if (t) t.composer.text = ta.value;
-    autosize(ta); slashSel = 0; buildSlash();
-  });
-  ta.addEventListener('keydown', ev => {
-    const panel = $('#slashPanel');
-    const open = panel.classList.contains('show');
-    if (open) {
-      const entries = panel._entries || [];
-      if (ev.key === 'ArrowDown') { ev.preventDefault(); slashSel = (slashSel + 1) % entries.length; paintSlashSelection(panel); return; }
-      if (ev.key === 'ArrowUp') { ev.preventDefault(); slashSel = (slashSel - 1 + entries.length) % entries.length; paintSlashSelection(panel); return; }
-      if (ev.key === 'Tab') { ev.preventDefault(); if (entries[slashSel]) applySlash(entries[slashSel]); return; }
-      // Enter：已写完整的指令按输入执行；半成品才接受高亮候选（见 enterSlash）
-      if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); enterSlash(); return; }
-      if (ev.key === 'Escape') { ev.preventDefault(); panel.classList.remove('show'); return; }
-    }
-    if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); sendCurrent(); return; }
-    if (ev.key === 'Tab' && ev.shiftKey) { ev.preventDefault(); cycleMode(); return; }
-  });
-
-  $('#inputBox').addEventListener('dragover', ev => { ev.preventDefault(); $('#inputBox').classList.add('dropping'); });
-  $('#inputBox').addEventListener('dragleave', () => $('#inputBox').classList.remove('dropping'));
-  $('#inputBox').addEventListener('drop', ev => {
-    ev.preventDefault(); $('#inputBox').classList.remove('dropping');
-    if (ev.dataTransfer && ev.dataTransfer.files && ev.dataTransfer.files.length) {
-      if (S.tabs.get(S.active) && S.tabs.get(S.active).composer.mode !== 'attach') setComposerMode('attach');
-      addFiles(ev.dataTransfer.files);
-    }
-  });
+  if (ta) {
+    ta.addEventListener('input', () => {
+      const t = S.tabs.get(S.active); if (t) t.composer.text = ta.value;
+      autosize(ta); slashSel = 0; buildSlash();
+    });
+    ta.addEventListener('keydown', onComposerKey);
+  }
+  $$('.modebtn').forEach(b => b.onclick = () => setComposerMode(b.dataset.mode));
+  const ib = $('#inputBox');
+  if (ib) {
+    ib.addEventListener('dragover', ev => { ev.preventDefault(); ib.classList.add('dropping'); });
+    ib.addEventListener('dragleave', () => ib.classList.remove('dropping'));
+    ib.addEventListener('drop', ev => {
+      ev.preventDefault(); ib.classList.remove('dropping');
+      if (ev.dataTransfer && ev.dataTransfer.files && ev.dataTransfer.files.length) {
+        const t = S.tabs.get(S.active);
+        if (t && t.composer.mode !== 'attach') setComposerMode('attach');
+        addFiles(ev.dataTransfer.files);
+      }
+    });
+  }
   document.addEventListener('paste', ev => {
     const t = S.tabs.get(S.active);
     if (!t || !ev.clipboardData) return;
@@ -68,32 +83,59 @@ function wireEvents() {
       ev.preventDefault();
     }
   });
+}
 
-  document.addEventListener('keydown', ev => {
-    if (ev.key === 'Escape') {
-      if (searchOpen()) { closeSearch(); return; }
-      if (modalOpen()) { closeModal(); return; }
-      if ($('#approvalModal').classList.contains('show')) { const t = S.tabs.get(S.active); if (t && t.approval) approve(t.approval, false); return; }
-      if ($('#slashPanel').classList.contains('show')) { $('#slashPanel').classList.remove('show'); return; }
-      if (S.settingsOpen) { closeSettings(); return; }
-    }
-    if (ev.key === 'Enter' && $('#approvalModal').classList.contains('show') && !modalOpen()) {
-      const t = S.tabs.get(S.active); if (t && t.approval) { ev.preventDefault(); approve(t.approval, true); }
-    }
-    if ((ev.ctrlKey || ev.metaKey) && ev.key === 'n') { ev.preventDefault(); $('#btnNewSession').click(); }
-    if ((ev.ctrlKey || ev.metaKey) && ev.key === ',') { ev.preventDefault(); toggleSettings(); }
-    if ((ev.ctrlKey || ev.metaKey) && ev.shiftKey && (ev.key === 'F' || ev.key === 'f')) { ev.preventDefault(); openSearch(); }
-  });
-  window.addEventListener('hashchange', () => {
-    if (location.hash === '#/settings') openSettings(setSection);
-    else if (S.settingsOpen) closeSettings();
-  });
+/* 输入框键盘：斜杠面板导航 + Enter 发送（ComposerUI 负责时会自己绑定） */
+function onComposerKey(ev) {
+  const panel = $('#slashPanel');
+  const open = panel && panel.classList.contains('show');
+  if (open) {
+    const entries = panel._entries || [];
+    if (ev.key === 'ArrowDown') { ev.preventDefault(); slashSel = (slashSel + 1) % entries.length; paintSlashSelection(panel); return; }
+    if (ev.key === 'ArrowUp') { ev.preventDefault(); slashSel = (slashSel - 1 + entries.length) % entries.length; paintSlashSelection(panel); return; }
+    if (ev.key === 'Tab') { ev.preventDefault(); if (entries[slashSel]) applySlash(entries[slashSel]); return; }
+    if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); enterSlash(); return; }
+    if (ev.key === 'Escape') { ev.preventDefault(); panel.classList.remove('show'); return; }
+  }
+  if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); sendCurrent(); return; }
+  if (ev.key === 'Tab' && ev.shiftKey) { ev.preventDefault(); cycleMode(); return; }
+}
+
+function isTypingTarget(t) {
+  if (!t) return false;
+  const tag = (t.tagName || '').toLowerCase();
+  return tag === 'input' || tag === 'textarea' || tag === 'select' || t.isContentEditable;
+}
+
+function onGlobalKey(ev) {
+  const mod = ev.ctrlKey || ev.metaKey;
+  if (ev.key === 'Escape') {
+    if (typeof closePreview === 'function' && typeof previewOpen === 'function' && previewOpen()) { closePreview(); return; }
+    if (typeof quickOpenOpen === 'function' && quickOpenOpen()) { closeQuickOpen(); return; }
+    if (searchOpen()) { closeSearch(); return; }
+    if (modalOpen()) { closeModal(); return; }
+    if ($('#approvalModal').classList.contains('show')) { const t = S.tabs.get(S.active); if (t && t.approval) approve(t.approval, false); return; }
+    const slash = $('#slashPanel');
+    if (slash && slash.classList.contains('show')) { slash.classList.remove('show'); return; }
+    if (S.settingsOpen) { closeSettings(); return; }
+    if (S.dockOpen) { closeDock(); return; }
+  }
+  if (!mod) return;
+  const k = (ev.key || '').toLowerCase();
+  if (k === 'n') { ev.preventDefault(); $('#btnNewSession').click(); return; }
+  if (ev.key === ',') { ev.preventDefault(); toggleSettings(); return; }
+  if (ev.shiftKey && k === 'f') { ev.preventDefault(); openSearch(); return; }
+  if (k === 'p') { ev.preventDefault(); if (window.openQuickOpen) openQuickOpen(); else openDock('files'); return; }
+  if (k === 'g') { ev.preventDefault(); openDock('git'); return; }
+  if (ev.key === 'Backquote' || ev.code === 'Backquote' || ev.key === '\u0060') { ev.preventDefault(); openDock('terminal'); return; }
+  if (k === 'b' && !ev.shiftKey) { ev.preventDefault(); toggleSidebar(); return; }
+  if (k === 'b' && ev.shiftKey) { ev.preventDefault(); toggleDock(); return; }
+  if (k === 'e' && ev.shiftKey) { ev.preventDefault(); toggleDock(); return; }
 }
 
 function paintSlashSelection(panel) {
   const rows = $$('.scmd', panel);
   rows.forEach((r, i) => r.classList.toggle('sel', i === slashSel));
-  // 面板是真滚动容器（此前被卡片裁掉，看不到全部条目），↑↓ 要把选中行带进视野
   const cur = rows[slashSel];
   if (cur && cur.scrollIntoView) cur.scrollIntoView({ block: 'nearest' });
 }
@@ -112,24 +154,27 @@ function enterDemo(reason) {
   b.classList.add('show');
   S.connected = true;
   Mock.start();
-  // demo has no async boot: render everything in the same tick so the first
-  // frame already shows the whole UI (one paint, no double layout)
   renderPanes(); renderTabbar(); renderSidebar(); renderFoot(); renderStatLine(); renderDock();
-  if (S.active) renderChat(S.active);
-  setTimeout(() => { refreshSessions(); renderSidebar(); }, 60);
+  if (S.active) { renderChat(S.active); renderChatHead(S.active); }
+  renderDock();
+  setTimeout(() => { refreshSessions(); renderSidebar(); renderDock(); }, 60);
 }
 
 async function boot() {
   Theme.init();
   S.closedTabs = loadClosedTabs();
   S.groupsClosed = loadGroupState();
+  restoreSidebarState();
+  dockRestore();
   Layout.init();
   wireEvents();
-  // dev/debug + screenshots: ?dock=teamwork|notices opens the right dock at boot
-  {
-    const qd = new URLSearchParams(location.search).get('dock');
-    if (qd === 'teamwork' || qd === 'notices') openDock(qd);
-  }
+  // dev/debug + screenshots: ?dock=... 打开右侧面板；?settings=1 打开设置
+  try {
+    const q = new URLSearchParams(location.search);
+    const qd = q.get('dock');
+    if (qd && { start: 1, files: 2, git: 3, terminal: 4, teamwork: 5, notices: 6, archives: 7 }[qd]) openDock(qd);
+    if (q.get('settings') === '1') openSettings(q.get('section') || undefined);
+  } catch (e) {}
   if (MOCK) { enterDemo('file:// 或 ?mock=1'); return; }
   renderPanes(); renderTabbar(); renderSidebar(); renderFoot(); renderStatLine(); renderDock();
   try {

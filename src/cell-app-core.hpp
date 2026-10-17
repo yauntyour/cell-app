@@ -28,6 +28,9 @@
 #include <map>
 #include <set>
 
+// desktop-workbench commands (git.* / fs.* / term.*); see docs/api-tools.md
+#include "cell-app-tools.hpp"
+
 namespace app
 {
     // =====================================================================
@@ -2516,6 +2519,10 @@ namespace app
                     r["reply_to"] = cur;
                     return r;
                 }
+
+                // ---- desktop workbench: git.* / fs.* / term.* ----
+                if (auto r = tools::try_handle(name, args, this); r)
+                    return *r;
 
                 return ok_error("unknown command: " + name);
             }

@@ -1,89 +1,77 @@
-/* ---------- G. Teamwork -------------------------------------------- */
-// 导航栏的 #navDock 按钮：面板开合的唯一 UI 入口。关闭后仍可随时唤回，
-// 不必靠切换会话（此前没有任何按钮能打开它）。
-function toggleDock() { S.dockOpen ? closeDock() : openDock(S.dock); }
+/* ---------- G. Teamwork：任务卡 / 工作流图 / 子代理浮窗 / 存档架 -------
+   面板内容以磁盘为准：LLM 通过 tw 工具创建/运行的任务没有 SSE 事件，
+   jobsFor 失效后按需静默重拉（与存档架同一套路）。样式见 06-flow.css
+   与 06b-sidepanels.css。                                               */
 
-function openDock(name) {
-  S.dock = name || S.dock;
-  S.dockOpen = true;
-  $('#rightdock').classList.add('open');
-  Layout.apply(); // 用记住的宽度（可被分隔条拖到 1200px），而非 CSS 的 380px
-  paintDockToggle();
-  schedule('dock', renderDock);
-}
-function closeDock() {
-  S.dockOpen = false;
-  $('#rightdock').classList.remove('open');
-  Layout.apply(); // 关闭时宽度归 0，但记住的值保留
-  paintDockToggle();
-  syncTwPoll(); // 面板关了就别再接团队轮询（否则后台白拉）
-}
-// 按钮的按下态 / 无障碍属性跟随面板真实状态
-function paintDockToggle() {
-  const b = $('#navDock');
-  if (!b) return;
-  b.classList.toggle('on', S.dockOpen);
-  b.setAttribute('aria-pressed', S.dockOpen ? 'true' : 'false');
-  const name = S.dock === 'notices' ? '通知' : (S.dock === 'archives' ? '存档' : 'Teamwork');
-  b.title = S.dockOpen
-    ? '关闭 ' + name + ' 面板'
-    : '打开 ' + name + ' 面板';
-}
-
-function renderDock() {
-  const body = $('#dockBody');
-  if (!body) return;
-  syncTwPoll(); // 面板开合 / 切标签 / 任务起止都会走到这里，顺手复核轮询开关
-  $$('.docktab').forEach(b => b.classList.toggle('on', b.dataset.dock === S.dock));
-  const t = curTab();
-  // 存档/通知的计数不放在标签上（切会话、回合结束后容易过期）：各自面板的
-  // 头部就是权威计数（「N 个存档」/「N 条通知」）
-  if (!t) { body.replaceChildren(el('div', 'dim small', '没有打开的工作区')); return; }
-  if (S.dock === 'teamwork') renderDockTeamwork(body, t);
-  else if (S.dock === 'archives') renderDockArchives(body, t);
-  else renderDockNotices(body, t);
-}
-
-function renderDockTeamwork(body, t) {
-  const head = el('div', 'row gap8');
-  head.style.marginBottom = '10px';
-  head.appendChild(el('span', 'small mut', t.jobs.length + ' 个任务'));
+/* 面板骨架：标题 + 计数 + 右侧操作 —— 三个面板（团队/通知/存档）共用 */
+function pnlHead(title, sub, actions) {
+  const head = el('div', 'pnl-head');
+  head.appendChild(el('span', 'pnl-title', title));
+  if (sub) head.appendChild(el('span', 'pnl-sub', sub));
   head.appendChild(el('span', 'grow'));
-  const rf = el('button', 'btn ghost sm', '刷新');
-  rf.onclick = () => refreshTeamwork(S.active);
-  head.appendChild(rf);
-  const mk = el('button', 'btn ghost sm', '＋ 新建');
-  mk.onclick = () => { setComposerMode('team'); focusInput(); };
-  head.appendChild(mk);
+  const bar = el('div', 'pnl-acts');
+  for (const a of (actions || [])) {
+    const b = el('button', a.btnCls || 'icon-btn sm', a.label || '');
+    if (a.icon) b.appendChild(iconEl(a.icon, 'sm'));
+    if (a.text) b.appendChild(el('span', null, a.text));
+    b.title = a.title || '';
+    b.onclick = a.on;
+    bar.appendChild(b);
+  }
+  head.appendChild(bar);
+  return head;
+}
+function pnlEmpty(text, iconName, action) {
+  const box = el('div', 'pnl-empty');
+  if (iconName) {
+    const ic = el('span', 'pe-ico');
+    ic.appendChild(iconEl(iconName, 'xl'));
+    box.appendChild(ic);
+  }
+  box.appendChild(el('div', 'pe-text', text));
+  if (action) {
+    const b = el('button', 'btn sm', action.label);
+    b.onclick = action.on;
+    box.appendChild(b);
+  }
+  return box;
+}
+
+/* ---------- Teamwork 面板 ------------------------------------------ */
+function renderDockTeamwork(body, t) {
+  const n = (t.jobs || []).length;
+  const running = (t.jobs || []).filter(j => jobStatusClass(j.status) === 'run').length;
+  const head = pnlHead('Teamwork', running ? running + ' 个运行中 · 共 ' + n + ' 个任务' : n + ' 个任务', [
+    { icon: 'refresh', title: '刷新任务列表', on: () => refreshTeamwork(t.ws) },
+    {
+      icon: 'plus', title: '新建团队任务（切到输入栏 Teamwork 模式）',
+      on: () => { setComposerMode('team'); focusInput(); },
+    },
+  ]);
   body.replaceChildren(head);
-  // 面板内容以磁盘为准：LLM 通过 tw 工具建/跑的任务没有 SSE 事件，
-  // 回合结束时 jobsFor 会失效（同存档架的套路），这里按需静默重拉
+
+  // 面板内容以磁盘为准：没为当前会话拉过就先拉一次再渲染
   if (t.jobsFor !== t.session) {
-    const e = el('div', 'dim small');
-    e.style.padding = '14px 4px';
-    e.textContent = '正在加载团队任务…';
-    body.appendChild(e);
-    t.jobsFor = t.session; // 先占位，防止并发重复拉取（同存档架）
+    t.jobsFor = t.session; // 先占位，防止并发重复拉取
+    body.appendChild(pnlEmpty('正在加载团队任务…', 'users'));
     refreshTeamwork(t.ws, true);
     return;
   }
-  if (!t.jobs.length) {
-    const e = el('div', 'dim small');
-    e.style.padding = '14px 4px';
-    e.textContent = '还没有团队任务。用输入栏的 Teamwork 模式创建，或在聊天里让 LLM 规划。';
-    body.appendChild(e);
+  if (!n) {
+    body.appendChild(pnlEmpty('还没有团队任务。用输入栏的 Teamwork 模式创建，或在聊天里让 LLM 规划。', 'users', {
+      label: '新建任务', on: () => { setComposerMode('team'); focusInput(); },
+    }));
     return;
   }
-  for (const job of t.jobs) body.appendChild(renderJobCard(t, job));
+  const list = el('div', 'pnl-scroll');
+  for (const job of t.jobs) list.appendChild(renderJobCard(t, job));
+  body.appendChild(list);
 }
 
-/* ---------- Teamwork 面板的运行时自动刷新 ----------------------------
-   后台 job 的推进（worker 汇报、阶段切换、收尾）只写磁盘 store，没有
-   对应的 SSE 事件（teamwork_changed 只在 create/run/stop 命令边界发），
-   不轮询的话卡片会一直停在上次拉到的 status。规则：面板开着且在
-   teamwork 标签、并且有 run 状态任务时，每 2.5s 拉一次 teamwork.list
-   （与子代理浮窗的 1.5s 轮询同一套路）；面板关闭 / 没有运行中任务 /
-   页面隐藏时不动。任务收尾后最后一次轮询会把终态拉回来并停表。      */
+/* ---------- 运行时自动刷新 ------------------------------------------
+   后台 job 的推进只写磁盘 store，没有 SSE 事件：面板开着、在 teamwork
+   标签、且有运行中任务时每 2.5s 拉一次；关面板 / 无运行任务 / 页面隐藏
+   时停表。                                                            */
 const TW_POLL_MS = 2500;
 let twTimer = 0, twPollInFlight = false;
 function twHasRunningJob() {
@@ -91,7 +79,7 @@ function twHasRunningJob() {
   return !!(t && t.jobs && t.jobs.some(j => jobStatusClass(j.status) === 'run'));
 }
 function twPollTick() {
-  if (twPollInFlight || document.hidden) return; // 隐藏（最小化）时不强拉，与子代理浮窗一致
+  if (twPollInFlight || document.hidden) return;
   twPollInFlight = true;
   refreshTeamwork(S.active, true).finally(() => { twPollInFlight = false; });
 }
@@ -112,83 +100,98 @@ function workerStatus(w) {
   const s = w.report_status || w.status || '';
   return s ? jobStatusClass(s) : 'idle';
 }
+const STATUS_ZH = {
+  running: '运行中', run: '运行中', pending: '待运行', idle: '空闲',
+  done: '已完成', ok: '已完成', complete: '已完成', success: '已完成',
+  failed: '失败', error: '失败', denied: '已拒绝', stopped: '已停止', cancelled: '已取消',
+};
+function statusZh(s) {
+  const k = String(s || '').toLowerCase();
+  return STATUS_ZH[k] || s || '未知';
+}
 
+/* ---------- 任务卡 -------------------------------------------------- */
 function renderJobCard(t, job) {
-  const card = el('div', 'job open');
-  const head = el('div', 'jobhead');
   const ck = jobStatusClass(job.status);
-  const dot = el('span', 'dot ' + (ck === 'idle' ? '' : ck));
-  head.appendChild(dot);
-  head.appendChild(el('span', 'jid', job.id));
-  const st = el('span', 'pill ' + (ck === 'idle' ? '' : ck), job.status || 'pending');
-  st.classList.add('status');
-  head.appendChild(st);
+  const card = el('div', 'twcard ' + ck + ' open');
+  const head = el('button', 'twcard-head');
+  const orb = el('span', 'status-orb ' + (ck === 'idle' ? '' : ck));
+  head.appendChild(orb);
+  const title = el('span', 'tw-id mono', job.id || '');
+  title.title = job.id || '';
+  head.appendChild(title);
+  head.appendChild(el('span', 'pill ' + (ck === 'idle' ? '' : ck), statusZh(job.status)));
   head.appendChild(el('span', 'grow'));
-  const chev = el('span', 'chev', '›');
+  const stages = Array.isArray(job.stages) ? job.stages : [];
+  const workers = Array.isArray(job.workers) ? job.workers : [];
+  if (workers.length) head.appendChild(el('span', 'tw-count', workers.length + ' 子代理'));
+  const chev = el('span', 'tw-chev');
+  chev.appendChild(iconEl('chevronRight', 'sm'));
   head.appendChild(chev);
-  const bodyWrap = el('div', 'jobbody');
+  const bodyWrap = el('div', 'twcard-body');
   let open = true;
   head.onclick = () => {
     open = !open;
     bodyWrap.hidden = !open;
     card.classList.toggle('open', open);
+    head.setAttribute('aria-expanded', open ? 'true' : 'false');
   };
+  head.setAttribute('aria-expanded', 'true');
   card.appendChild(head); card.appendChild(bodyWrap);
-
-  const stages = Array.isArray(job.stages) ? job.stages : [];
-  const workers = Array.isArray(job.workers) ? job.workers : [];
 
   if (stages.length) {
     const fw = el('div', 'flowwrap');
     fw.appendChild(buildFlow(job, stages, workers));
-    // 点击子代理节点打开 worker 浮窗
     fw.addEventListener('click', ev => {
       const g = ev.target.closest && ev.target.closest('[data-worker]');
       if (g) { const name = g.getAttribute('data-worker'); openWorkerWindow(t, job, name); }
     });
     bodyWrap.appendChild(fw);
   }
-  const meta = el('div', 'jobmeta');
-  if (job.provider) meta.appendChild(el('span', null, job.provider));
-  if (job.model) meta.appendChild(el('span', 'mono', job.model));
-  if (job.work_type) meta.appendChild(el('span', null, job.work_type));
-  if (job.created_at) meta.appendChild(el('span', null, relTime(job.created_at)));
-  if (job.error) { const e = el('span', 'pill bad', job.error); meta.appendChild(e); }
-  bodyWrap.appendChild(meta);
+  const meta = el('div', 'tw-meta');
+  const bits = [];
+  if (job.work_type) bits.push(job.work_type);
+  if (job.model) bits.push(job.model);
+  if (job.created_at) bits.push(relTime(job.created_at));
+  if (bits.length) meta.appendChild(el('span', 'tw-meta-i mono', bits.join(' · ')));
+  if (job.error) meta.appendChild(el('span', 'pill bad', trunc(String(job.error), 60)));
+  if (meta.childElementCount) bodyWrap.appendChild(meta);
 
-  // worker 行（无头像：角色/状态靠状态点 + 等宽名称表达，与 /export 一致）
-  const list = el('div');
-  list.style.marginTop = '8px';
-  for (const w of workers) {
-    const row = el('div', 'wrow');
-    const s = workerStatus(w);
-    row.appendChild(el('span', 'run-dot ' + (s === 'idle' ? '' : s)));
-    row.appendChild(el('span', 'wname', w.name));
-    if (w.stage_name) row.appendChild(el('span', 'wmeta', w.stage_name));
-    const bits = [];
-    if (w.rounds != null) bits.push(w.rounds + ' 轮');
-    if (w.tool_calls != null) bits.push(w.tool_calls + ' 工具');
-    if (w.reviews_approved) bits.push('✓' + w.reviews_approved);
-    if (bits.length) row.appendChild(el('span', 'wmeta', bits.join(' · ')));
-    row.appendChild(el('span', 'grow'));
-    if (w.has_report) {
-      const rb = el('button', 'btn ghost sm', '报告');
-      rb.onclick = ev => { ev.stopPropagation(); showReport(t, job, w.name); };
-      row.appendChild(rb);
+  // 子代理行
+  if (workers.length) {
+    const list = el('div', 'wlist');
+    for (const w of workers) {
+      const row = el('button', 'wrow');
+      const s = workerStatus(w);
+      row.appendChild(el('span', 'run-dot ' + (s === 'idle' ? '' : s)));
+      row.appendChild(el('span', 'wname', w.name || 'worker'));
+      if (w.stage_name) row.appendChild(el('span', 'wstage', w.stage_name));
+      row.appendChild(el('span', 'grow'));
+      const metaBits = [];
+      if (w.rounds != null) metaBits.push(w.rounds + ' 轮');
+      if (w.tool_calls != null) metaBits.push(w.tool_calls + ' 工具');
+      if (w.reviews_approved) metaBits.push('✓' + w.reviews_approved);
+      if (metaBits.length) row.appendChild(el('span', 'wmeta', metaBits.join(' · ')));
+      if (w.has_report) {
+        const rb = el('button', 'btn ghost sm', '报告');
+        rb.onclick = ev => { ev.stopPropagation(); showReport(t, job, w.name); };
+        row.appendChild(rb);
+      }
+      row.title = '打开子代理对话';
+      row.onclick = () => openWorkerWindow(t, job, w.name);
+      list.appendChild(row);
     }
-    row.onclick = () => openWorkerWindow(t, job, w.name);
-    list.appendChild(row);
+    bodyWrap.appendChild(list);
   }
-  bodyWrap.appendChild(list);
 
-  const ctl = el('div', 'jobctl');
-  const running = jobStatusClass(job.status) === 'run';
-  if (running) {
-    const sb = el('button', 'btn sm danger', '停止');
+  // 操作
+  const ctl = el('div', 'tw-ctl');
+  if (ck === 'run') {
+    const sb = el('button', 'btn sm', '停止');
     sb.onclick = () => cmd('teamwork.stop', { ws: t.ws, id: job.id }).then(() => refreshTeamwork(t.ws));
     ctl.appendChild(sb);
   } else {
-    const rb = el('button', 'btn sm', '运行');
+    const rb = el('button', 'btn sm accent', '运行');
     rb.onclick = () => cmd('teamwork.run', { ws: t.ws, id: job.id }).then(() => setTimeout(() => refreshTeamwork(t.ws), 400));
     ctl.appendChild(rb);
     const rs = el('button', 'btn sm', '恢复');
@@ -202,12 +205,7 @@ function renderJobCard(t, job) {
   return card;
 }
 
-/* ---------------------------------------------------------------------
-   工作流图：与 cell.cpp /export 同款的 HTML/CSS 流程图（不再用 SVG）
-     竖轨（border 画的线）+ 每个阶段一个节点 + 并行阶段扇出的分支盒 +
-     关卡虚线框菱形点 + 首尾起点 / 状态终点。见 06-flow.css。
-   --------------------------------------------------------------------- */
-// 每个阶段的 agent 列表：优先用真实 worker（带状态），否则用阶段定义
+/* ---------- 工作流图（HTML/CSS 竖轨 + 扇出分支，不用 SVG） ----------- */
 function stageAgentsOf(stages, workers) {
   return stages.map((s, si) => {
     const sname = s.name || ('stage ' + (si + 1));
@@ -226,17 +224,14 @@ function stageAgentsOf(stages, workers) {
     }));
   });
 }
-
 function buildFlow(job, stages, workers) {
   const wrap = el('div', 'flow');
   const cur = Number(job.current_stage);
   const jc = jobStatusClass(job.status);
   const agents = stageAgentsOf(stages, workers);
 
-  // 起点
   const start = el('div', 'fnode cap');
-  const sRail = el('div', 'frail');
-  sRail.appendChild(el('span', 'fdot'));
+  const sRail = el('div', 'frail'); sRail.appendChild(el('span', 'fdot'));
   const sBox = el('div', 'fbox');
   sBox.appendChild(el('span', 'fname', 'start'));
   start.appendChild(sRail); start.appendChild(sBox);
@@ -251,16 +246,14 @@ function buildFlow(job, stages, workers) {
     const now = cur === si;
     const node = el('div', 'fnode' + (s.gate ? ' gate' : '') + (now ? ' now' : ''));
     const rail = el('div', 'frail');
-    const dot = el('span', 'fdot' + (sc !== 'idle' ? ' ' + sc : ''));
-    rail.appendChild(dot);
+    rail.appendChild(el('span', 'fdot' + (sc !== 'idle' ? ' ' + sc : '')));
     const box = el('div', 'fbox');
     const hd = el('div', 'fhd');
     hd.appendChild(el('span', 'fn', String(si + 1).padStart(2, '0')));
     hd.appendChild(el('span', 'fname', s.name || ('stage ' + (si + 1))));
     hd.appendChild(el('span', 'kbadge', s.mode || 'serial'));
-    if (s.gate) hd.appendChild(el('span', 'kbadge', 'gate'));
+    if (s.gate) hd.appendChild(el('span', 'kbadge warn', 'gate'));
     box.appendChild(hd);
-    box.appendChild(el('div', 'fmeta', list.length + ' agent' + (s.gate ? ' · 关卡' : '')));
     if (list.length) {
       const fan = list.length > 1 || (s.mode === 'parallel');
       const ul = el('ul', 'fbr' + (fan ? ' fan' : ''));
@@ -271,7 +264,7 @@ function buildFlow(job, stages, workers) {
         const row = el('div', 'frow');
         row.appendChild(el('span', 'wd ' + (a.status || 'idle')));
         row.appendChild(el('span', 'nm', a.name || '?'));
-        if (a.status && a.status !== 'idle') row.appendChild(el('span', 'st', a.status));
+        if (a.status && a.status !== 'idle') row.appendChild(el('span', 'st', statusZh(a.status)));
         li.appendChild(row);
         if (a.works) li.appendChild(el('span', 'ex', trunc(String(a.works), 90)));
         ul.appendChild(li);
@@ -283,15 +276,11 @@ function buildFlow(job, stages, workers) {
     wrap.appendChild(node);
   });
 
-  // 终点：任务当前状态
   const end = el('div', 'fnode cap');
   const eRail = el('div', 'frail');
   eRail.appendChild(el('span', 'fdot' + (jc !== 'idle' ? ' ' + jc : '')));
   const eBox = el('div', 'fbox');
-  const ehd = el('div', 'fhd');
-  ehd.appendChild(el('span', 'fname', job.status || 'pending'));
-  eBox.appendChild(ehd);
-  if (job.error) eBox.appendChild(el('div', 'fmeta', trunc(String(job.error), 80)));
+  eBox.appendChild(el('span', 'fname', statusZh(job.status || 'pending')));
   end.appendChild(eRail); end.appendChild(eBox);
   wrap.appendChild(end);
   return wrap;
@@ -305,41 +294,41 @@ function showReport(t, job, workerName) {
   });
 }
 
-/* ---------- 浮窗骨架（子代理对话 / 历史存档共用） --------------------
-   可拖拽 / 最小化 / 关闭，注册在 t.wins 里按 key 去重。同一 key 再次
-   打开只是还原窗口（返回 null，调用方据此跳过重复加载）。            */
+/* ---------- 浮窗骨架（子代理对话 / 历史存档共用） -------------------- */
 function makeFloatWin(t, key, roleLabel, title) {
   const old = t.wins.get(key);
   if (old) { old.node.style.display = ''; old.node.classList.remove('min'); return null; }
   const node = el('div', 'wwin');
-  const head = el('div', 'whead');
+  const head = el('div', 'wwin-head');
   head.appendChild(el('span', 'dot run'));
-  head.appendChild(el('span', 'role', roleLabel));
-  head.appendChild(el('span', 'wtitle', trunc(title, 20)));
-  const wctl = el('div', 'wctl');
-  const mn = el('button', 'btn ghost sm', '—');
-  const cx = el('button', 'btn ghost sm', '✕');
+  head.appendChild(el('span', 'wwin-role', roleLabel));
+  head.appendChild(el('span', 'wwin-title trunc', trunc(title, 24)));
+  head.appendChild(el('span', 'grow'));
+  const wctl = el('div', 'wwin-ctl');
+  const mn = el('button', 'icon-btn sm');
+  mn.appendChild(iconEl('chevronDown', 'sm'));
+  mn.title = '最小化';
+  const cx = el('button', 'icon-btn sm');
+  cx.appendChild(iconEl('x', 'sm'));
+  cx.title = '关闭';
   wctl.appendChild(mn); wctl.appendChild(cx);
   head.appendChild(wctl);
-  const body = el('div', 'wbody');
+  const body = el('div', 'wwin-body');
   node.appendChild(head); node.appendChild(body);
-  // 初始位置：右下错位排列
   const n = t.wins.size;
-  node.style.left = Math.max(20, window.innerWidth - 440 - (n % 4) * 30) + 'px';
-  node.style.top = Math.max(60, 120 + (n % 5) * 34) + 'px';
+  node.style.left = Math.max(20, window.innerWidth - 460 - (n % 4) * 32) + 'px';
+  node.style.top = Math.max(60, 96 + (n % 5) * 36) + 'px';
   $('#windows').appendChild(node);
 
   const w = { node, body, key, since: 0, timer: 0, alive: true, min: false, status: '', _stick: true };
   t.wins.set(key, w);
   makeDraggable(node, head);
-  // 贴底状态由滚动位置决定：用户上翻后，后续轮询不再把他弹回底部
   body.addEventListener('scroll', () => { w._stick = isNearBottom(body); });
-  mn.onclick = () => { w.min = !w.min; node.classList.toggle('min', w.min); mn.textContent = w.min ? '▢' : '—'; };
+  mn.onclick = () => { w.min = !w.min; node.classList.toggle('min', w.min); mn.title = w.min ? '还原' : '最小化'; };
   cx.onclick = () => closeFloatWin(t, key);
   head.ondblclick = () => { w.min = !w.min; node.classList.toggle('min', w.min); };
   return w;
 }
-
 function closeFloatWin(t, key) {
   const w = t.wins.get(key);
   if (!w) return;
@@ -352,23 +341,21 @@ function closeFloatWin(t, key) {
 /* ---------- Worker 浮窗 -------------------------------------------- */
 function openWorkerWindow(t, job, name) {
   if (!name) return;
-  const key = job.id + '\u0000' + name;
+  const key = job.id + '|' + name;
   const w = makeFloatWin(t, key, '子代理', name);
-  if (!w) return; // 已打开：仅还原
+  if (!w) return;
   renderWorkerHead(w, job, name, '');
   w.body.replaceChildren(el('div', 'dim small', '正在加载子代理对话…'));
   pollWorker(t, key, job.id, name);
   w.timer = setInterval(() => { if (document.hidden) return; pollWorker(t, key, job.id, name); }, 1500);
 }
-
 function renderWorkerHead(w, job, name, status) {
   const d = $('.dot', w.node);
   const s = jobStatusClass(status);
-  d.className = 'dot ' + (s === 'idle' ? '' : s);
-  d.style.animation = s === 'run' ? 'pulseRing 1.4s var(--ease) infinite' : '';
-  $('.wtitle', w.node).textContent = trunc(name, 20) + (status ? ' · ' + status : '');
+  if (d) { d.className = 'dot ' + (s === 'idle' ? '' : s); d.style.animation = s === 'run' ? 'pulseRing 1.4s var(--ease) infinite' : ''; }
+  const ttl = $('.wwin-title', w.node);
+  if (ttl) ttl.textContent = trunc(name, 24) + (status ? ' · ' + statusZh(status) : '');
 }
-
 async function pollWorker(t, key, jobId, name) {
   const w = t.wins.get(key);
   if (!w || !w.alive) return;
@@ -383,34 +370,27 @@ async function pollWorker(t, key, jobId, name) {
   w.status = out.status || w.status;
   renderWorkerHead(w, null, name, w.status);
   const msgs = Array.isArray(out.messages) ? out.messages : [];
-  const wasPinned = w.since === 0 || w._stick;   // 首屏，或本来就贴着底部
+  const wasPinned = w.since === 0 || w._stick;
   if (w.since === 0) { w.body.replaceChildren(); w._stick = true; }
   if (w.since === 0 && !msgs.length) w.body.appendChild(el('div', 'dim small', '（暂无对话）'));
   for (const m of msgs) w.body.appendChild(renderWorkerMsg(m, name));
   if (out.total != null) w.since = out.total;
-  // 只有原本贴着底部才跟着滚：用户上翻看历史时，每 1.5s 的轮询不再把他弹回底部
   if (wasPinned && !w.node.classList.contains('min')) w.body.scrollTop = w.body.scrollHeight;
 }
-
 function renderWorkerMsg(m, worker) {
   const role = (m && (m.role || (m.type === 'assistant' ? 'assistant' : m.type))) || '?';
   const box = el('div', 'wmsg');
-  // 与 /export 一致：无头像，头部是角色点 + 角色名 + 子代理名
   const head = el('div', 'wmsg-head');
   head.appendChild(el('span', 'dot ' + (ROLE_DOT[role] || 'other')));
   head.appendChild(el('span', 'role', ROLE_LABEL[role] || role));
   head.appendChild(el('span', 'grow'));
   if (worker) head.appendChild(el('span', 'wmeta', worker));
   box.appendChild(head);
-
-  // 正文与主会话共用 renderContentHtml：markdown 排版一致，思考 / 工具调用 /
-  // 工具结果一律收进 <details> 折叠卡（见 5.4b）
   const txt = el('div', 'wtext prose');
   txt.innerHTML = renderContentHtml(m ? m.content : '', role, (m && m.tool_call_id) || '');
   box.appendChild(txt);
   return box;
 }
-
 function makeDraggable(node, handle) {
   let sx = 0, sy = 0, ox = 0, oy = 0, on = false;
   handle.addEventListener('mousedown', ev => {
@@ -430,76 +410,59 @@ function makeDraggable(node, handle) {
   document.addEventListener('mouseup', up);
 }
 
-/* ---------------------------------------------------------------------
-   存档架（dock 第三个标签页）与存档浮窗
-
-   会话的压缩历史存档从聊天流移到这里收纳：一个存档一张卡，点击在
-   小窗里看全文。存档可能同时存在多个，因此每个存档一个独立浮窗
-   （与子代理浮窗共用 makeFloatWin 骨架），互不干扰。
-   列表用轻量命令 session.archives 拉（只列 saved/*.jsonl，不读
-   transcript），所以回合结束（可能刚落一个新存档）后也能廉价刷新。
-   --------------------------------------------------------------------- */
+/* ---------- 存档架（dock 第三个标签页）与存档浮窗 ------------------- */
 function renderDockArchives(body, t) {
-  const head = el('div', 'row gap8');
-  head.style.marginBottom = '10px';
-  head.appendChild(el('span', 'small mut', (t.archives.length || 0) + ' 个存档'));
-  head.appendChild(el('span', 'grow'));
-  const rf = el('button', 'btn ghost sm', '刷新');
-  rf.onclick = () => refreshArchives(t.ws, true);
-  head.appendChild(rf);
+  const head = pnlHead('存档', (t.archives.length || 0) + ' 个压缩存档', [
+    { icon: 'refresh', title: '刷新存档列表', on: () => refreshArchives(t.ws, true) },
+  ]);
   body.replaceChildren(head);
   if (t.archivesFor !== t.session) {
-    // 还没为当前会话拉过列表：先出占位，拉到后 refreshArchives 会重绘
-    const e = el('div', 'dim small');
-    e.style.padding = '14px 4px';
-    e.textContent = '正在加载存档列表…';
-    body.appendChild(e);
+    body.appendChild(pnlEmpty('正在加载存档列表…', 'archive'));
     refreshArchives(t.ws, false);
     return;
   }
   if (!t.archives.length) {
-    const e = el('div', 'dim small');
-    e.style.padding = '14px 4px';
-    e.textContent = '当前会话还没有历史存档。上下文装满自动压缩后，压缩前的对话会出现在这里。';
-    body.appendChild(e);
+    body.appendChild(pnlEmpty('当前会话还没有历史存档。上下文装满自动压缩后，压缩前的对话会出现在这里。', 'archive'));
     return;
   }
-  for (const a of t.archives) body.appendChild(renderArchiveCard(t, a));
+  const list = el('div', 'pnl-scroll');
+  for (const a of t.archives) list.appendChild(renderArchiveCard(t, a));
+  body.appendChild(list);
 }
-
 function renderArchiveCard(t, a) {
-  const card = el('div', 'job arch');
-  const head = el('div', 'jobhead');
-  head.appendChild(el('span', 'dot'));
-  const nm = el('span', 'jid trunc', a.name);
-  nm.title = a.name;
-  head.appendChild(nm);
-  head.appendChild(el('span', 'pill status', (a.msgs || 0) + ' 条'));
-  head.onclick = () => openArchiveWindow(t, a);
-  card.appendChild(head);
-  const meta = el('div', 'jobmeta');
-  if (a.mtime) meta.appendChild(el('span', null, relTime(a.mtime)));
-  meta.appendChild(el('span', null, '点击在小窗中查看'));
-  card.appendChild(meta);
+  const card = el('button', 'archcard');
+  const ic = el('span', 'arch-ico');
+  ic.appendChild(iconEl('archive', 'lg'));
+  card.appendChild(ic);
+  const main = el('span', 'arch-main');
+  main.appendChild(el('span', 'arch-name trunc', a.name || '存档'));
+  const bits = [];
+  if (a.mtime) bits.push(relTime(a.mtime));
+  if (a.msgs) bits.push(a.msgs + ' 条消息');
+  main.appendChild(el('span', 'arch-meta', bits.join(' · ')));
+  card.appendChild(main);
+  const chev = el('span', 'arch-chev');
+  chev.appendChild(iconEl('chevronRight', 'sm'));
+  card.appendChild(chev);
+  card.title = (a.name || '') + '  ·  点击在小窗中查看';
+  card.onclick = () => openArchiveWindow(t, a);
   return card;
 }
-
 // 存档浮窗：内容是静态的，一次拉全量，不需要轮询
 function openArchiveWindow(t, a) {
   if (!a || !a.name) return;
-  const key = 'arch\u0000' + a.name;
+  const key = 'arch|' + a.name;
   const w = makeFloatWin(t, key, '存档', a.name);
-  if (!w) return; // 已打开：仅还原
+  if (!w) return;
   w.body.replaceChildren(el('div', 'dim small', '正在加载存档…'));
   cmd('session.archive', { ws: t.ws, id: t.session, name: a.name }).then(out => {
-    if (!w.alive) return; // 加载期间被关掉
+    if (!w.alive) return;
     if (!out || out.ok === false) {
       w.body.replaceChildren(el('div', 'dim small', (out && out.error) || '加载失败'));
       return;
     }
     const stream = el('div', 'wstream');
-    // notice 归档（清空通知/清空上下文的产物）：按通知卡的形状渲染，
-    // 不是消息流——消息解析器读它会得到空集（曾显示「存档为空」）
+    // notice 归档（清空通知/清空上下文的产物）：按通知卡的形状渲染
     if (Array.isArray(out.notices)) {
       for (const n of out.notices) {
         const card = el('div', 'ncard');
@@ -508,8 +471,8 @@ function openArchiveWindow(t, a) {
         hd.appendChild(el('span', 'nfrom trunc', n.from || '?'));
         if (n.topic) hd.appendChild(el('span', 'ntopic ' + n.topic, TOPIC_ZH[n.topic] || n.topic));
         hd.appendChild(el('span', 'grow'));
-        if (n.state) hd.appendChild(el('span', 'tiny dim', n.state === 'dropped' ? '已丢弃' : '已投递'));
-        if (n.created_at) hd.appendChild(el('span', 'tiny dim', relTime(n.created_at)));
+        if (n.state) hd.appendChild(el('span', 'ntime', n.state === 'dropped' ? '已丢弃' : '已投递'));
+        if (n.created_at) hd.appendChild(el('span', 'ntime', relTime(n.created_at)));
         card.appendChild(hd);
         const bd = el('div', 'nbody');
         bd.innerHTML = highlightBody(n.body);
@@ -520,8 +483,6 @@ function openArchiveWindow(t, a) {
       w.body.replaceChildren(stream);
       return;
     }
-    // 与主会话同一套消息渲染（markdown / 工具卡 / 摘要折叠全保留），
-    // 间距与字号按浮窗尺度收紧（03-molecules.css 的 .wstream）
     const entries = out.entries || [];
     for (const e of entries)
       for (const m of detailEntries(e)) stream.appendChild(makeMsg(m));

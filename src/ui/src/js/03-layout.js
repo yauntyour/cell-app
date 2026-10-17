@@ -25,15 +25,15 @@ const LAYOUT_KEY = 'cell.layout';
 const Layout = {
   // 20% / 50% / 30%。main 不存——它是"剩下的"，由 sidebar 与 dock 决定，
   // 这样任意时刻三者之和恒为 1，拖动时不可能把主区挤没。
-  def: { sidebar: 0.20, dock: 0.30, composer: 148 },
+  def: { sidebar: 0.20, dock: 0.26, composer: 156 },
   // 比例区间：侧栏最多 45%（再宽就挤掉主区），dock 最多 90%
   min: { sidebar: 0.10, dock: 0.14, composer: 96 },
   max: { sidebar: 0.45, dock: 0.90, composer: 0 }, // composer 上限按视口算
   // 像素护栏（先按比例夹，再按像素夹——窄视口下比例不够用时兜底）
-  pxMin: { sidebar: 180, dock: 300 },
-  pxMax: { sidebar: 560, dock: 1200 },
+  pxMin: { sidebar: 264, dock: 330 },
+  pxMax: { sidebar: 440, dock: 900 },
   // 主区（= 侧栏与 dock 之外剩下的）至少要留这么宽，否则输入栏没法用
-  mainMin: 420,
+  mainMin: 460,
   vals: null,
 
   load() {
