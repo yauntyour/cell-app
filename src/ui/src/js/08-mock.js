@@ -182,10 +182,54 @@ const Mock = {
     return head + 'index 1a2b3c4..5d6e7f8 100644\n--- a/' + path + '\n+++ b/' + path + '\n@@ -8,7 +8,11 @@\n ## 界面\n \n-- 一条消息 = 角色点 + 正文\n-- 工具结果收进折叠卡\n+- 用户消息右对齐气泡，助手消息带 22px logo 头像\n+- 工具调用收成紧凑行卡（中文名 + 等宽名 + 状态点 + 耗时）\n+- 回合结束插入「已编辑 N 个文件」卡与用量行\n+- 流式光标为 1px accent 竖条\n \n ## 构建\n';
   },
 
+  /* ---- Teamwork 演示数据助手 ----------------------------------------
+     mock 的自动回合会用 LLM 的 tw 工具创建一个团队任务，消息流里应渲染
+     成结构化的「团队任务已创建」卡；这里按引擎的 job_display 文本格式
+     伪造一条工具结果，并把任务记录进 jobs 让 Teamwork 面板能查到。      */
+  _stamp() {
+    const d = new Date();
+    const p = n => String(n).padStart(2, '0');
+    return String(d.getUTCFullYear()) + p(d.getUTCMonth() + 1) + p(d.getUTCDate()) +
+      '-' + p(d.getUTCHours()) + p(d.getUTCMinutes()) + p(d.getUTCSeconds());
+  },
+  _twJobFromWorkflow(id, wf) {
+    const stages = (wf.stages || []).map((s, i) => ({
+      name: s.name || ('stage ' + (i + 1)), mode: s.mode || 'serial', gate: !!s.gate,
+      agents: (s.agents || []).map(a => ({ name: a.name || '' })),
+    }));
+    const workers = [];
+    (wf.stages || []).forEach((s, i) => (s.agents || []).forEach(a => {
+      workers.push({
+        name: a.name || ('worker_' + workers.length), works: a.works || '',
+        report_status: '', rounds: 0, tool_calls: 0,
+        stage: String(i), stage_name: stages[i] ? stages[i].name : '',
+      });
+    }));
+    return {
+      id: id, status: 'pending', work_type: wf.work_type || 'serial', created_at: this.now(),
+      stages: stages, workers: workers, current_stage: -1, next_stage: 0,
+      provider: 'openai', model: this.model,
+    };
+  },
+  // 与引擎 teamwork::job_display 的单行文本一致（前端从中正则提取 id/status）
+  _twDisplay(job) {
+    let out = job.id + ' status=' + (job.status || 'pending') + ' work_type=' + (job.work_type || 'serial') +
+      ' children=' + (job.workers || []).length + ' created=' + this._stamp();
+    if (job.provider) out += ' provider=' + job.provider;
+    if (job.model) out += ' model=' + job.model;
+    if (job.stages && job.stages.length) {
+      out += ' stages=' + job.stages.map(s => s.name + '(' +
+        (s.mode === 'parallel' ? 'parallel ' : '') + (s.gate ? 'gate ' : '') +
+        'x' + (s.agents || []).length + ')').join(' -> ');
+      out += ' next_stage=0';
+    }
+    return out;
+  },
+
   /* ---- 回合模拟 ----------------------------------------------------
-     一个回合的完整时序：思考 → 工具 → 轮次 → 流式回答 → 落盘 → 回合
-     结束。消息流前端（02-render2-chat.js）在 turn_end 后取 numstat 前后
-     快照生成「已编辑文件」卡，这里在回合结束前切换 numstat 数据。       */
+     一个回合的完整时序：思考 → 工具 → 团队任务 → 轮次 → 流式回答 → 落盘
+     → 回合结束。消息流前端（02-render2-chat.js）在 turn_end 后取 numstat
+     前后快照生成「已编辑文件」卡，这里在回合结束前切换 numstat 数据。    */
   _runTurn(ws, opts) {
     opts = opts || {};
     const start = Math.max(0, opts.startDelay || 0);
@@ -200,7 +244,26 @@ const Mock = {
       + '`?demo=empty` 与 `?demo=stream` 两个变体也加好了。');
     const reasonText = opts.reason || '用户要的是重做消息流与演示数据。先把渲染骨架拆成「用户 / 助手 / 思考 / 工具 / 回合产物」五类节点，再补 mock 数据；最后用一个真实回合把编辑卡和用量行跑出来。';
     const tool1 = { name: 'read_file', args: '{\n  "path": "src/ui/src/js/02-render2-chat.js"\n}', result: '… 已读取 695 行 / 28 KB', sec: 0.42 };
-    const tool2 = { name: 'write_file', args: '{\n  "path": "src/ui/src/js/08-mock.js",\n  "bytes": 128430\n}', result: '… 已写入 318 行 / 14 KB', sec: 1.26 };
+    // 第二个工具是 LLM 调 tw 创建团队任务：聊天里应渲染结构化卡片（旧版会
+    // 直接铺参数 JSON），同时把任务写进 Mock.jobs 让 Teamwork 面板查得到。
+    const twWorkflow = {
+      stages: [
+        { name: '调研', mode: 'parallel', gate: false, agents: [
+          { works: '调研现有事件总线的实现', name: 'worker_0', think: 'low' },
+          { works: '调研前端订阅与重连', name: 'worker_1', think: 'low' },
+        ] },
+        { name: '评审关卡', mode: 'serial', gate: true, agents: [
+          { works: '评审调研结论并给出裁决', name: 'worker_2' },
+        ] },
+        { name: '实现', mode: 'serial', gate: false, agents: [
+          { works: '按结论实现重构并补测试', name: 'worker_3', model: 'deepseek-v4-flash', think: 'med' },
+        ] },
+      ],
+    };
+    const twJobId = 'tw-' + this._stamp();
+    const twJob = this._twJobFromWorkflow(twJobId, twWorkflow);
+    const twArgs = JSON.stringify({ operation: 'new', workflow: twWorkflow, model: this.model, think: 'med' }, null, 2);
+    const twResult = this._twDisplay(twJob);
     const at = (ms, fn) => setTimeout(fn, start + ms);
     const emit = o => this.emit(o);
     const push = e => entries.push(e);
@@ -214,12 +277,33 @@ const Mock = {
     at(620, () => emit({ t: 'tool_begin', ws, seq: seqTool, name: tool1.name, args: tool1.args, policy: 'read' }));
     at(980, () => emit({ t: 'tool_end', ws, seq: seqTool, name: tool1.name, status: 'ok', display: tool1.result, marker: '', sec: tool1.sec, chars: 28000, multimodal: false }));
     push({ role: 'assistant', kind: 'tool', name: tool1.name, args: tool1.args, result: tool1.result, status: 'ok', sec: tool1.sec });
-    at(1040, () => emit({ t: 'reason', ws, d: '渲染骨架已经清楚，直接把 mock 数据补齐，再跑一轮截图验证。' }));
-    push({ role: 'assistant', kind: 'reasoning', text: '渲染骨架已经清楚，直接把 mock 数据补齐，再跑一轮截图验证。' });
+    if (streamOnly) {
+      // ?demo=stream：只演示「思考 → 工具 → 轮次 → 持续流式回答」，不排团队
+      // 任务/回合结束事件；回答尽早开始并持续输出，保证任意等待时刻都能看到
+      // 流式光标与「正在输出」状态。
+      at(900, () => emit({ t: 'reason', ws, d: '渲染骨架已经清楚，直接把 mock 数据补齐，再跑一轮截图验证。' }));
+      push({ role: 'assistant', kind: 'reasoning', text: '渲染骨架已经清楚，直接把 mock 数据补齐，再跑一轮截图验证。' });
+      at(980, () => emit({ t: 'round', ws, round: 1, tok_in: 1830, tok_out: 246, cache: 1024, sec: 2.1, ttft: 280 }));
+      push({ kind: 'round', round: 1, tok_in: 1830, tok_out: 246, cache: 1024, sec: 2.1, ttft: 280 });
+      at(1040, () => emit({ t: 'answer_begin', ws }));
+      Array.from(answer).forEach((ch, i) => {
+        at(1060 + i * 34, () => {
+          if (this._stopped) return;
+          emit({ t: 'answer', ws, d: ch });
+        });
+      });
+      this._streamA = { ws: ws, key: turnsKey, entries: entries, seq: seqTool };
+      return;
+    }
+    at(1040, () => emit({ t: 'reason', ws, d: '渲染骨架已经清楚，我开一个团队任务并行补齐 mock 数据与截图验证。' }));
+    push({ role: 'assistant', kind: 'reasoning', text: '渲染骨架已经清楚，我开一个团队任务并行补齐 mock 数据与截图验证。' });
     const seqTool2 = ++this._seq;
-    at(1120, () => emit({ t: 'tool_begin', ws, seq: seqTool2, name: tool2.name, args: tool2.args, policy: 'write' }));
-    at(1500, () => emit({ t: 'tool_end', ws, seq: seqTool2, name: tool2.name, status: 'ok', display: tool2.result, marker: '', sec: tool2.sec, chars: 14000, multimodal: false }));
-    push({ role: 'assistant', kind: 'tool', name: tool2.name, args: tool2.args, result: tool2.result, status: 'ok', sec: tool2.sec });
+    at(1100, () => {
+      this.jobs[twJobId] = twJob;
+      emit({ t: 'tool_begin', ws, seq: seqTool2, name: 'tw', args: twArgs, policy: 'teamwork' });
+    });
+    at(1250, () => emit({ t: 'tool_end', ws, seq: seqTool2, name: 'tw', status: 'ok', display: twResult, marker: '', sec: 0.28, chars: twResult.length, multimodal: false }));
+    push({ role: 'assistant', kind: 'tool', name: 'tw', args: twArgs, result: twResult, status: 'ok', sec: 0.28 });
     at(1560, () => emit({ t: 'round', ws, round: 1, tok_in: 1830, tok_out: 246, cache: 1024, sec: 2.1, ttft: 280 }));
     push({ kind: 'round', round: 1, tok_in: 1830, tok_out: 246, cache: 1024, sec: 2.1, ttft: 280 });
     // 回合中段的通知：也会作为聊天气泡出现
@@ -229,7 +313,7 @@ const Mock = {
       body: "新进展：已更新 'cell-app-core.hpp' 的注释与事件表。", created_at: this.now(),
     }));
     at(1700, () => emit({ t: 'answer_begin', ws }));
-    const charDelay = streamOnly ? 34 : 6;
+    const charDelay = 6;
     const chars = Array.from(answer);
     const answerStart = 1500;
     chars.forEach((ch, i) => {
@@ -239,10 +323,6 @@ const Mock = {
       });
     });
     const answerDone = answerStart + chars.length * charDelay;
-    if (streamOnly) {
-      this._streamA = { ws: ws, key: turnsKey, entries: entries, seq: seqTool };
-      return;
-    }
     at(answerDone + 60, () => emit({ t: 'round', ws, round: 2, tok_in: 3920, tok_out: chars.length, cache: 2816, sec: 3.6, ttft: 210 }));
     push({ kind: 'round', round: 2, tok_in: 3920, tok_out: chars.length, cache: 2816, sec: 3.6, ttft: 210 });
     push({ role: 'assistant', kind: 'assistant', text: answer });

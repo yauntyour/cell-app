@@ -91,14 +91,16 @@
 .tabmenu{position:fixed;z-index:130;min-width:240px;max-width:360px;padding:5px;
   background:var(--panel2);border:1px solid var(--line2);border-radius:12px;box-shadow:var(--shadow);
   animation:popIn 140ms var(--ease)}
-.tabmenu>button{display:flex;align-items:center;gap:9px;width:100%;padding:7px 9px;border-radius:8px;
+.tabmenu button{display:flex;align-items:center;gap:9px;width:100%;padding:7px 9px;border-radius:8px;
   color:var(--fg2);font-size:13px;text-align:left}
-.tabmenu>button:hover{background:var(--raise);color:var(--fg)}
+.tabmenu button:hover{background:var(--raise);color:var(--fg)}
+.tabmenu button>.uico{flex:none;color:var(--fg3)}
+.tabmenu button>.tiny{flex:none;margin-left:auto}
 .tabmenu .mhead{padding:6px 9px 4px;font-size:11px;color:var(--fg4);letter-spacing:.04em}
 .tabmenu .mlist{display:flex;flex-direction:column;gap:1px}
-.tabmenu .mrow{display:flex;flex-direction:column;gap:1px;min-width:0;flex:1}
-.tabmenu .mtitle{font-size:12.5px;color:var(--fg)}
-.tabmenu .mpath{font-size:10.5px;color:var(--fg4);font-family:var(--mono)}
+.tabmenu .mrow{display:flex;flex-direction:column;align-items:flex-start;gap:1px;min-width:0;flex:1;text-align:left}
+.tabmenu .mtitle{font-size:12.5px;color:var(--fg);text-align:left;max-width:100%}
+.tabmenu .mpath{font-size:10.5px;color:var(--fg4);font-family:var(--mono);text-align:left;max-width:100%}
 /* 3.3 侧栏底部 / 账户行 --------------------------------------------- */
 .sb-foot{flex:none;display:flex;flex-direction:column;gap:4px;padding-top:6px;border-top:1px solid var(--line)}
 .sb-tools{display:flex;align-items:center;gap:1px;padding:2px 2px}

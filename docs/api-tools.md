@@ -154,6 +154,52 @@
 - q 为路径子串（不区分大小写，空串 = 列出前 limit 个文件）；最多扫描 3000 个文件
 - limit 取值 1..500；path 为 cwd 相对 generic 路径
 
+### term.open {cwd?, cols?=80, rows?=24, shell?, force?, ws?}
+
+~~~
+-> {ok, id, ws, cwd, shell, cols, rows, pid, alive, reused, seq, backlog}
+~~~
+
+- 启动（或复用）一个**真实终端会话**：常驻 shell 跑在伪终端上（Windows ConPTY /
+  POSIX forkpty），Windows 缺省用 `%COMSPEC%`（cmd.exe），可用 `shell` 覆盖
+- 同一 ws（未传 ws 时以 cwd 为键）已有存活会话且 force!=true 时**复用**，返回
+  `reused:true` 与 `backlog`（最近 ≤512 KiB 原始输出字节的 base64，可为 ""）：
+  页面刷新后靠它重放画面、接到同一个 shell。并发 open 同一个 ws 时注册表只保留一个
+  shell，后到者拿到同一 id（被丢弃的候选进程会被关闭）
+- `force:true` 表示强制换新 shell：旧会话先从注册表移除并关闭，它的订阅者会收到一条
+  `term.exit (code 0)`；之后输入旧 id 返回 `unknown terminal session`
+- cols 取值 2..1000（缺省 80；数字字符串也接受），rows 2..500（缺省 24）
+- `ws` 与事件里的 `ws` 一致（cwd_key），前端据此路由
+
+### term.input {id, data | text, ws?}
+
+~~~
+-> {ok}
+~~~
+
+- `data` = base64(原始字节)；`text` = 原始 UTF-8 字符串（调试用，二者取一）
+- 一次调用可以是一整段按键序列：`"echo hi\r"`、`"\u0003"`(Ctrl+C)、
+  `"\u001b[A"`(↑)、`"\u0009"`(Tab，交给 shell 做补全)
+- 会话不存在返回 `{"ok":false,"error":"unknown terminal session"}`
+
+### term.resize {id, cols, rows, ws?} → {ok, cols, rows}
+### term.close {id?|ws?, ws?} → {ok, closed:true}
+- 关闭是显式结束会话：其它仍连着该会话的客户端会收到一条 `term.exit (code 0)`；
+  同一会话的 exit 事件最多一条（子进程自然退出与 close 竞争时不会重复）
+### term.list {ws?} → {ok, sessions:[{id, ws, cwd, shell, cols, rows, pid, alive}]}
+
+会话输出**不**通过命令响应返回，而是走既有事件流（`GET /api/events`，即
+core.bus）：前端 `handleEvent` 把 `term.*` 交给 `window.CellTerm.onEvent`。
+
+~~~
+{"t":"term.out",  "ws":"<cwd_key>","id":"<sid>","seq":N,"d":"<base64 字节>"}
+{"t":"term.exit", "ws":"<cwd_key>","id":"<sid>","code":N}
+{"t":"term.error","ws":"<cwd_key>","id":"<sid>","error":"..."}
+~~~
+
+`d` 是原始字节的 base64，**不保证 UTF-8 边界完整**：前端必须流式解码
+（`TextDecoder('utf-8',{stream:true})`），否则多字节字符/汉字会被截断。
+
 ### term.exec {cwd?, cmd, timeout_s?=120}
 
 ~~~
@@ -174,6 +220,8 @@
 - 所有子进程都有超时与进程树清理；输出有硬上限，事件流不会被超大输出拖死
 - 这些命令只读为主；git.worktree.add/remove、git.init、term.exec 会写文件系统（文件面板/终端
   是用户显式操作），命令总线本身仍受 loopback Host/Origin 校验保护（同其它命令）
+- term.open/input/resize/close 会启动并驱动一个**真实 shell 进程**（权限与用户终端相同）：
+  仍只对 loopback + 同源客户端开放；应用退出时所有会话被统一关闭（`app::term::shutdown_all`）
 
 ## 示例
 

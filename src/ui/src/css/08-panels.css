@@ -254,7 +254,11 @@
 .wt-err[hidden]{display:none}
 
 /* =====================================================================
-   3. 终端面板
+   3. 终端面板（真实终端：08c-term.js 的 .ct-* 组件 + 面板外壳）
+   ---------------------------------------------------------------------
+   终端不再有输入框 / 执行按钮：屏幕、光标、状态条都由 08c-term.js 渲染，
+   这里只给它布局、配色与光标动画（字体与格宽由 JS 实测并写成
+   --ct-cell-w / --ct-cell-h）。
    ===================================================================== */
 .pnl-term{background:transparent}
 .tp-head{gap:8px}
@@ -262,54 +266,69 @@
 .tp-head-ico .uico{width:15px;height:15px}
 .tp-title{font-size:12.5px;font-weight:650;color:var(--fg);flex:none}
 .tp-cwd{font-family:var(--mono);font-size:10.5px;color:var(--fg3);min-width:0}
-.tp-clear{flex:none}
-.tp-out{flex:1;min-height:0;overflow-y:auto;padding:8px 12px 12px}
-.tp-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px;
-  height:100%;min-height:150px;text-align:center;color:var(--fg3)}
-.tp-empty-ico{width:42px;height:42px;border-radius:12px;display:flex;align-items:center;
+.tp-head .icon-btn{flex:none}
+.tp-state{flex:none;font-size:10px;font-weight:700;letter-spacing:.02em;padding:0 6px;
+  border-radius:999px;border:1px solid var(--line);color:var(--fg3);
+  background:var(--raise);white-space:nowrap;line-height:16px}
+.tp-state:empty{display:none}
+.tp-state.ok{color:var(--ok,#3fb950);
+  border-color:color-mix(in srgb,var(--ok,#3fb950) 32%,var(--line));
+  background:color-mix(in srgb,var(--ok,#3fb950) 10%,transparent)}
+.tp-state.bad{color:var(--del,#f85149);
+  border-color:color-mix(in srgb,var(--del,#f85149) 38%,var(--line));
+  background:color-mix(in srgb,var(--del,#f85149) 10%,transparent)}
+
+.tp-host{flex:1;min-height:0;min-width:0;display:flex;position:relative;
+  background:var(--code-bg,#161618);overflow:hidden}
+.tp-foot{flex:none;display:flex;align-items:center;gap:8px;padding:5px 12px 6px;
+  border-top:1px solid var(--line);background:var(--panel);min-width:0}
+.tp-foot-txt{font-size:10px;color:var(--fg4,var(--fg3));white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis}
+
+.tp-notice{display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:7px;width:100%;height:100%;padding:30px 22px;text-align:center;color:var(--fg3)}
+.tp-notice-ico{width:42px;height:42px;border-radius:12px;display:flex;align-items:center;
   justify-content:center;background:var(--raise);color:var(--fg3)}
-.tp-empty-ico .uico{width:21px;height:21px;stroke-width:1.6}
-.tp-empty-title{font-size:13px;font-weight:600;color:var(--fg2)}
-.tp-empty-desc{font-size:11px;color:var(--fg3);line-height:1.6;max-width:300px}
+.tp-notice-ico .uico{width:21px;height:21px;stroke-width:1.6}
+.tp-notice-title{font-size:13px;font-weight:600;color:var(--fg2)}
+.tp-notice-desc{font-size:11px;color:var(--fg3);line-height:1.6;max-width:300px}
 
-.tp-entry{padding:5px 0 9px;border-bottom:1px solid var(--line-soft,var(--line))}
-.tp-entry:last-child{border-bottom:none}
-.tp-entry.bad{border-left:2px solid var(--del,#f85149);padding-left:9px;margin-left:-12px;
-  padding-right:12px;background:color-mix(in srgb,var(--del,#f85149) 6%,transparent)}
-.tp-cmdline{display:flex;align-items:center;gap:7px;min-width:0}
-.tp-prompt{color:var(--accent,#6c7cff);font-family:var(--mono);font-size:12.5px;font-weight:700;
-  flex:none}
-.tp-cmd{font-family:var(--mono);font-size:12.5px;color:var(--fg);min-width:0;
-  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.tp-meta{display:inline-flex;align-items:center;gap:8px;flex:none;font-size:10.5px;
-  color:var(--fg3);font-variant-numeric:tabular-nums}
-.tp-exit{font-family:var(--mono);font-size:10px;font-weight:700;padding:0 5px;line-height:15px;
-  border-radius:4px;border:1px solid var(--line)}
-.tp-exit.ok{color:var(--ok,#3fb950);border-color:color-mix(in srgb,var(--ok,#3fb950) 30%,var(--line))}
-.tp-exit.bad{color:var(--del,#f85149);border-color:color-mix(in srgb,var(--del,#f85149) 40%,var(--line))}
-.tp-dur{color:var(--fg4,var(--fg3))}
-.tp-stdout,.tp-stderr{margin:5px 0 0;padding:8px 10px;border-radius:var(--radius-s,9px);
-  background:var(--code-bg,#161618);border:1px solid var(--line-soft,var(--line));
-  font-family:var(--mono);font-size:11.5px;line-height:1.55;color:var(--fg2);
-  white-space:pre-wrap;word-break:break-word;overflow:auto;max-height:260px}
-.tp-stderr{color:var(--del,#f85149);background:color-mix(in srgb,var(--del,#f85149) 7%,var(--code-bg,#161618));
-  border-color:color-mix(in srgb,var(--del,#f85149) 30%,var(--line))}
-.tp-trunc-note{font-size:10.5px;color:var(--fg4,var(--fg3));margin-top:4px}
-.tp-running{display:flex;align-items:center;gap:7px;font-size:11px;color:var(--fg3);margin-top:6px}
+/* ---- 终端本体（08c-term.js 渲染；类名前缀 ct-） --------------------- */
+.ct-root{position:relative;flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;
+  font-family:var(--mono);font-size:12px;line-height:1.45;color:var(--fg);
+  background:var(--code-bg,#161618);cursor:text;outline:none}
+.ct-screen{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;padding:6px 8px 8px;
+  /* 滚动条常驻槽位：否则 scrollback 变长时 clientWidth 跳变，cols 会在
+     "有/无滚动条" 之间振荡（Chromium 会报 ResizeObserver loop 错误） */
+  scrollbar-gutter:stable;scrollbar-width:thin;scrollbar-color:var(--line2) transparent}
+.ct-screen::-webkit-scrollbar{width:10px;height:10px}
+.ct-screen::-webkit-scrollbar-thumb{background:var(--line2);border-radius:999px;
+  border:2px solid transparent;background-clip:content-box}
+.ct-screen::-webkit-scrollbar-thumb:hover{background:var(--fg4,var(--fg3));
+  background-clip:content-box}
+.ct-rows{position:relative;min-height:100%;white-space:pre;tab-size:8;
+  font-variant-ligatures:none;font-kerning:none}
+.ct-row{height:var(--ct-cell-h,18px);line-height:var(--ct-cell-h,18px);white-space:pre;
+  contain:content}
+.ct-row span{white-space:pre}
+.ct-cursor{position:absolute;left:0;top:0;width:var(--ct-cell-w,7px);height:var(--ct-cell-h,18px);
+  background:var(--fg);color:var(--bg);pointer-events:none;z-index:2;
+  display:flex;align-items:center;justify-content:flex-start;overflow:hidden}
+.ct-cursor.blink{animation:ctBlink 1.06s steps(1,end) infinite}
+.ct-cursor.off{display:none}
+@keyframes ctBlink{0%,49%{opacity:1}50%,100%{opacity:0}}
+.ct-ime{position:absolute;left:-9999px;top:0;width:1px;height:1px;opacity:0;border:0;
+  padding:0;margin:0;resize:none;outline:none;background:transparent;color:transparent}
+.ct-status{flex:none;display:none;align-items:center;gap:8px;padding:5px 10px;
+  border-top:1px solid var(--line);background:var(--panel);
+  font-family:var(--sans);font-size:11px;color:var(--fg3);line-height:1.5}
+.ct-status.show{display:flex}
+.ct-status.bad{color:var(--del,#f85149)}
+.ct-retry{flex:none;height:22px;padding:0 9px;font-size:11px}
 
-.tp-form{flex:none;border-top:1px solid var(--line);padding:9px 12px 11px;
-  background:var(--panel)}
-.tp-inputrow{display:flex;align-items:center;gap:7px}
-.tp-inputrow .tp-prompt{font-size:12px}
-.tp-input{flex:1;min-width:0;height:32px;padding:0 10px;border-radius:var(--radius-s,9px);
-  background:var(--bg3,var(--bg2));border:1px solid var(--line2);color:var(--fg);
-  font-family:var(--mono);font-size:12px;outline:none;
-  transition:border-color var(--dur) var(--ease),box-shadow var(--dur) var(--ease)}
-.tp-input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
-.tp-input:disabled{opacity:.6}
-.tp-run{flex:none;height:32px;padding:0 13px}
-.tp-hint{font-size:10.5px;color:var(--fg4,var(--fg3));margin-top:6px;
-  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@media (prefers-reduced-motion:reduce){
+  .ct-cursor.blink{animation:none}
+}
 
 /* =====================================================================
    4. 浮层：文件预览 / diff

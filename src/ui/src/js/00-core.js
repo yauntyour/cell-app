@@ -419,6 +419,12 @@ async function resync() {
 /* ---------- 事件分发 ----------------------------------------------- */
 function handleEvent(e) {
   if (!e || !e.t) return;
+  // 终端事件（term.out / term.exit / term.error）由 08c-term.js 消费：
+  // PTY 输出是 base64 字节流，必须走终端自己的流式解码器
+  if (e.t === 'term.out' || e.t === 'term.exit' || e.t === 'term.error') {
+    try { if (window.CellTerm && window.CellTerm.onEvent) window.CellTerm.onEvent(e); } catch (err) {}
+    return;
+  }
   switch (e.t) {
     case 'hello': applyHello(e, true, { keepActive: true }); break;
     case 'turn_begin': onTurnBegin(e.ws); break;
@@ -695,6 +701,20 @@ function onToolEnd(e) {
   tool.status = e.status; tool.display = e.display; tool.marker = e.marker;
   tool.sec = e.sec; tool.chars = e.chars; tool.multimodal = e.multimodal;
   markChat(e.ws);
+  // LLM 通过 tw 工具建/跑团队任务时没有 SSE 事件：工具一结束就重拉一次，
+  // 新任务出现且右栏关着就自动展开 Teamwork——用户提交后能立刻看到卡片
+  if (tool.name === 'tw' || tool.name === 'teamwork') {
+    const beforeIds = new Set(((S.tabs.get(e.ws) || {}).jobs || []).map(j => j.id));
+    const t2 = S.tabs.get(e.ws);
+    if (t2) t2.jobsFor = '';
+    refreshTeamwork(e.ws, true).then(jobs => {
+      if (e.ws !== S.active || !jobs) return;
+      const fresh = jobs.filter(j => !beforeIds.has(j.id));
+      if (!fresh.length) return;
+      if (!S.dockOpen) openDock('teamwork');
+      else if (S.dock === 'teamwork') schedule('dock', renderDock);
+    });
+  }
 }
 function onNotice(e) {
   const t = ensureTab(e.ws);
@@ -705,6 +725,10 @@ function onNotice(e) {
   t.notices.push(n);
   rebuildNoticeGroups(t);
   if (e.ws !== S.active) t.unread++;
+  // 团队任务的进度只以 notice 形式广播（gate/job/stage/worker/review/compact）：
+  // 防抖后重拉一次 job 列表，面板与失败详情无需等轮询/手动刷新
+  if (n.topic === 'gate' || n.topic === 'job' || n.topic === 'stage' || n.topic === 'worker' || n.topic === 'review' || n.topic === 'compact')
+    scheduleTeamworkRefresh(e.ws);
   schedule('dock', renderDock);
   schedule('tabbar', renderTabbar);
   schedule('sidebar', renderSidebar);
@@ -778,6 +802,16 @@ async function refreshTeamwork(ws, quiet) {
     return out.jobs;
   }
   return null;
+}
+const _twNoticeTimers = new Map();
+// 进度通知可能连续到达（一轮多个工具/子代理）：合并成一次拉取
+function scheduleTeamworkRefresh(ws) {
+  if (!ws) return;
+  clearTimeout(_twNoticeTimers.get(ws));
+  _twNoticeTimers.set(ws, setTimeout(() => {
+    _twNoticeTimers.delete(ws);
+    if (S.tabs.get(ws)) refreshTeamwork(ws, true);
+  }, 600));
 }
 async function refreshNotices(ws) {
   if (!ws) return;

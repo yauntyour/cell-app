@@ -102,10 +102,84 @@ function ensurePane(ws) {
   $('#tabview').appendChild(pane);
   const t = tab(ws); t._pane = pane; t._chat = chat; t._wrap = wrap;
   renderChatHead(ws);
-  chat.addEventListener('scroll', () => { t._stick = isNearBottom(chat); });
+  bindChatScroll(ws);
   return pane;
 }
-function isNearBottom(node) { return node.scrollHeight - node.scrollTop - node.clientHeight < 140; }
+
+/* 自动跟底（stick）与「回到底部」按钮：
+   流式输出时每次渲染都会尝试滚到底部，但只应在用户本来就贴着底部时发生。
+   旧实现用 140px 阈值——用户往上滚一小段（<140px）仍被判定为「在底部」，
+   下一次流式渲染就把视图拉回去，表现成「输出时无法上下滚动」。这里：
+     · 阈值收到 28px，几乎只有真正在底部才算贴着；
+     · 滚轮向上时立刻脱离跟底（不等 scroll 事件，避免同一帧被拉回）；
+     · 离开底部且内容可滚动时，在输入卡上方显示「回到底部」悬浮按钮。 */
+const CHAT_STICK_PX = 28;
+function isNearBottom(node) { return node.scrollHeight - node.scrollTop - node.clientHeight < CHAT_STICK_PX; }
+function maxScrollOf(node) { return Math.max(0, node.scrollHeight - node.clientHeight); }
+function scrollChatBottom(chat, smooth) {
+  if (!chat) return;
+  if (smooth) {
+    try { chat.scrollTo({ top: chat.scrollHeight, behavior: 'smooth' }); return; } catch (e) {}
+  }
+  try { chat.scrollTo({ top: chat.scrollHeight, behavior: 'instant' }); }
+  catch (e) { chat.scrollTop = chat.scrollHeight; }
+}
+function bindChatScroll(ws) {
+  const t = tab(ws);
+  const chat = t._chat;
+  if (!chat || chat.__bound) return;
+  chat.__bound = true;
+  chat.addEventListener('scroll', () => {
+    t._stick = isNearBottom(chat);
+    paintJump(ws);
+  }, { passive: true });
+  chat.addEventListener('wheel', ev => {
+    if (ev.deltaY < 0) {
+      // 目标位置已经在阈值之外 → 立即脱离跟底
+      if (chat.scrollTop + ev.deltaY < maxScrollOf(chat) - CHAT_STICK_PX) t._stick = false;
+    } else if (ev.deltaY > 0 && isNearBottom(chat)) {
+      t._stick = true;
+    }
+    paintJump(ws);
+  }, { passive: true });
+  ensureJumpButton(ws);
+}
+function ensureJumpButton(ws) {
+  const t = tab(ws);
+  const pane = t._pane;
+  if (!pane) return null;
+  let btn = pane.querySelector('.jump-bottom');
+  if (!btn) {
+    btn = el('button', 'jump-bottom');
+    btn.type = 'button';
+    btn.title = '回到底部（恢复自动跟底）';
+    btn.appendChild(iconEl('chevronDown', 'sm'));
+    btn.appendChild(el('span', null, '回到底部'));
+    btn.onclick = ev => {
+      ev.stopPropagation();
+      t._stick = true;
+      scrollChatBottom(t._chat, true);
+      paintJump(ws);
+    };
+    pane.appendChild(btn);
+  }
+  paintJump(ws);
+  return btn;
+}
+function paintJump(ws) {
+  const t = tab(ws);
+  if (!t || !t._chat || !t._pane) return;
+  const btn = t._pane.querySelector('.jump-bottom');
+  if (!btn) return;
+  const chat = t._chat;
+  const scrollable = chat.scrollHeight > chat.clientHeight + 8;
+  const show = !!scrollable && !t._stick && !chat.classList.contains('hero-mode');
+  btn.classList.toggle('show', show);
+}
+// 窗口尺寸变化时重新判断是否显示（内容高度随之变化）
+window.addEventListener('resize', () => {
+  for (const ws of S.tabOrder) { try { paintJump(ws); } catch (e) {} }
+});
 
 // 会话面板顶栏：当前会话标题
 function renderChatHead(ws) {
@@ -243,9 +317,8 @@ function renderChat(ws) {
   else if (!t.busy && t._turnSnap) { try { ChatTurns.end({ ws: ws }); } catch (e) {} }
 
   let items = t.msgs.slice();
-  const liveAsst = t._live && t._live.assistant;
-  const liveReason = t._live && t._live.reason;
   const isEmpty = !items.length && !t.busy;
+  restickOnNewUser(t);
 
   if (ws === S.active) paintCentreMode(isEmpty, false);
   chat.classList.toggle('hero-mode', isEmpty);
@@ -253,6 +326,7 @@ function renderChat(ws) {
   if (pane) pane.classList.toggle('hero', isEmpty);
 
   if (isEmpty) {
+    t._stick = true;
     if (wrap.__mode !== 'hero') { wrap.__mode = 'hero'; wrap.replaceChildren(); t._md.clear(); }
     if (!wrap.firstChild) wrap.appendChild(emptyState());
     else {
@@ -261,23 +335,37 @@ function renderChat(ws) {
       const chips = wrap.querySelector('.hero-box .hero-chips');
       if (chips) chips.replaceChildren(heroWsChip(t), heroModeChip());
     }
+    paintJump(ws);
     return;
   }
   if (wrap.__mode === 'hero') { wrap.__mode = 'stream'; wrap.replaceChildren(); }
   wrap.__mode = 'stream';
 
-  // 思考中指示器：只在没有流式内容时出现
-  if (t.busy && !liveAsst && !liveReason) items.push({ id: '__think__', role: '__thinking__' });
+  // 等待/思考指示器：回合进行中一直有（标题+副标题按真实阶段变化），
+  // 流式正文也会出现在它上面——用户始终能看到「现在卡在哪一步」。
+  if (t.busy) items.push({ id: '__think__', role: '__thinking__' });
   items = groupFlow(items);
   items = withTurnMeta(items, t);
   if (ws === S.active && t.approval) items.push({ id: '__approval__' + t.approval.id, role: '__approval__' });
 
   wrap.classList.toggle('busy', !!t.busy);
   reconcile(wrap, items, m => m.id, makeMsg, (node, m) => updateMsg(node, m, t));
-  if (t._stick) {
-    try { chat.scrollTo({ top: chat.scrollHeight, behavior: 'instant' }); }
-    catch (e) { chat.scrollTop = chat.scrollHeight; }
-  }
+  // 流式期间只在用户仍贴着底部时跟底；用户滚上去后保持当前位置
+  if (t._stick) scrollChatBottom(chat, false);
+  paintJump(ws);
+}
+
+/* 用户发了新消息（或切到另一条会话）时重新贴底；转录重载/回合结束不打断
+   用户正在阅读的位置（靠「最后一条用户消息的签名」区分）。 */
+function userSigOf(t) {
+  let n = 0, txt = '';
+  for (const m of t.msgs) if (m.role === 'user') { n++; txt = String(m.text == null ? '' : m.text); }
+  return n + '|' + txt.slice(0, 80);
+}
+function restickOnNewUser(t) {
+  const sig = userSigOf(t);
+  if (t._userSig != null && t._userSig !== sig && sig.charAt(0) !== '0') t._stick = true;
+  t._userSig = sig;
 }
 
 /* 回合产物（编辑卡 + 用量行）插在「回合状态行」之前；没有状态行则追加到末尾 */
@@ -308,6 +396,14 @@ function groupFlow(items) {
       if (!think) { think = { id: 'gfp-think-' + it.id, role: '__grpthink__', items: [] }; out.push(think); }
       think.items.push(it);
     } else if (it.role === 'tool') {
+      // Teamwork 工具渲染成独立的结构化大卡（团队任务已创建），不塞进
+      // 「工具调用」折叠组——否则展开就是一坨原始 JSON。
+      if (isTwTool(it)) {
+        if (rounds) { out.push(...rounds); rounds = null; }
+        think = null; tools = null;
+        out.push(it);
+        continue;
+      }
       if (!tools) {
         tools = { id: 'gfp-tools-' + it.id, role: '__grptools__', items: [] };
         out.push(tools);
@@ -702,20 +798,127 @@ function makeNotice(m) {
   return w;
 }
 
-/* ---- 思考中指示器 -------------------------------------------------- */
+/* ---- 等待 / 思考指示器：阶段标题 + 副标题 + 秒表 --------------------
+   一个回合会经过多个阶段（准备上下文 → 等模型 → 推理 → 工具 → 审批 →
+   下一轮…）。只显示「正在思考中」看不出卡在哪，这里按实时状态生成阶段
+   文案，并由 250ms 定时器更新副标题（字符数）与秒表。                 */
+function fmtWaitSec(sec) {
+  sec = Math.max(0, Number(sec) || 0);
+  if (sec < 60) return sec.toFixed(1) + 's';
+  const m = Math.floor(sec / 60), s = Math.floor(sec % 60);
+  if (m < 60) return m + ':' + (s < 10 ? '0' : '') + s;
+  const h = Math.floor(m / 60), mm = m % 60;
+  return h + ':' + (mm < 10 ? '0' : '') + mm + ':' + (s < 10 ? '0' : '') + s;
+}
+function lastRunningTool(t) {
+  for (let i = t.msgs.length - 1; i >= 0; i--) {
+    const m = t.msgs[i];
+    if (m.role === 'tool' && toolKind(m.status) === 'run') return m;
+  }
+  return null;
+}
+// 当前回合里最近一条 role=status 文本（遇到上一条用户消息就停，避免旧回合的）
+function lastTurnStatus(t) {
+  for (let i = t.msgs.length - 1; i >= 0; i--) {
+    const m = t.msgs[i];
+    if (m.role === 'user') return '';
+    if (m.role === 'status' && m.text) return String(m.text);
+  }
+  return '';
+}
+// 当前回合里是否已经开始干活（有思考/工具/轮次/状态）——用于区分「刚开始
+// 准备上下文」和「工具跑完等下一轮」
+function turnHasWork(t) {
+  for (let i = t.msgs.length - 1; i >= 0; i--) {
+    const r = t.msgs[i].role;
+    if (r === 'user') return false;
+    if (r === 'tool' || r === 'round' || r === 'status' || r === 'reason') return true;
+  }
+  return false;
+}
+function thinkingPhase(t) {
+  const done = Number(t.turnRounds || t.roundSeq || 0);
+  // 回合进行中 = 第 done+1 轮（round 事件在该轮结束后才到）
+  const roundTxt = '第 ' + (done + 1) + ' 轮';
+  const live = t._live || {};
+  const last = t.msgs.length ? t.msgs[t.msgs.length - 1] : null;
+  if (t.approval) {
+    return { tone: 'warn', title: '等待审批', sub: '「' + toolZh(t.approval.tool) + '」需要你的确认' };
+  }
+  if (live.reason && last === live.reason) {
+    const n = String(live.reason.text || '').length;
+    return { tone: 'run', title: '正在推理',
+      sub: (n ? '已思考 ' + fmtTok(n) + ' 字符' : '模型正在推理') + (roundTxt ? ' · ' + roundTxt : '') };
+  }
+  if (live.assistant && last === live.assistant) {
+    const n = String(live.assistant.text || '').length;
+    return { tone: 'run', title: '正在输出',
+      sub: '已输出 ' + fmtTok(n) + ' 字符' + (roundTxt ? ' · ' + roundTxt : '') };
+  }
+  const tool = lastRunningTool(t);
+  if (tool) {
+    if (isTwTool(tool)) {
+      const op = String((twArgsOf(tool) || {}).operation || '').toLowerCase();
+      const twTitle = (op === 'run' || op === 'resume') ? '正在运行团队任务' : '正在创建团队任务';
+      return { tone: 'run', title: twTitle, sub: roundTxt + ' · tw' };
+    }
+    const bits = [];
+    if (tool.name && tool.name !== toolZh(tool.name)) bits.push(tool.name);
+    if (roundTxt) bits.push(roundTxt);
+    return { tone: 'run', title: '正在执行 ' + toolZh(tool.name), sub: bits.join(' · ') || '工具调用进行中' };
+  }
+  const status = lastTurnStatus(t);
+  if (status) return { tone: 'run', title: status.slice(0, 60), sub: roundTxt };
+  if (done > 0 || turnHasWork(t)) return { tone: 'run', title: '等待模型响应', sub: roundTxt + ' · 模型正在处理工具结果' };
+  return { tone: 'run', title: '正在准备上下文', sub: '整理历史消息与提示词' };
+}
 function makeThinking() {
   const w = el('div', 'msg assistant thinking');
   w.appendChild(avatarEl('msg-ava'));
   const body = el('div', 'body');
-  const row = el('div', 'thinkdots');
-  row.appendChild(el('span', 'tdot'));
-  row.appendChild(el('span', 'tdot'));
-  row.appendChild(el('span', 'tdot'));
-  const txt = el('span', 'thinking', '正在思考…');
-  row.appendChild(txt);
+  const row = el('div', 'thinkrow');
+  const dots = el('span', 'thinkdots');
+  dots.appendChild(el('span', 'tdot'));
+  dots.appendChild(el('span', 'tdot'));
+  dots.appendChild(el('span', 'tdot'));
+  const main = el('span', 'think-main');
+  const title = el('span', 'think-title', '正在准备上下文');
+  const sub = el('span', 'think-sub', '');
+  main.appendChild(title); main.appendChild(sub);
+  const sec = el('span', 'think-sec mono', '');
+  row.appendChild(dots); row.appendChild(main); row.appendChild(sec);
   body.appendChild(row);
   w.appendChild(body);
+  w._think = { title: title, sub: sub, sec: sec, dots: dots };
+  w.__since = Date.now();
+  ensureThinkTicker();
   return w;
+}
+/* 按 250ms 刷新所有可见的等待指示器（标题可能随阶段变化，副标题/秒表持续走） */
+let _thinkTicker = 0;
+function ensureThinkTicker() {
+  if (_thinkTicker) return;
+  _thinkTicker = setInterval(() => {
+    const nodes = $$('.msg.thinking');
+    if (!nodes.length) { clearInterval(_thinkTicker); _thinkTicker = 0; return; }
+    for (const node of nodes) {
+      const t = node.__tab || curTab();
+      if (!t || !t.busy) continue;
+      try { paintThinking(node, t); } catch (e) {}
+    }
+  }, 250);
+}
+function paintThinking(node, t) {
+  if (!node || !node._think || !t) return;
+  const ph = thinkingPhase(t);
+  const ti = node._think.title, sub = node._think.sub, sec = node._think.sec;
+  if (ti.textContent !== ph.title) ti.textContent = ph.title;
+  if (sub.textContent !== ph.sub) sub.textContent = ph.sub;
+  const start = Number(t.thinkingSince) || node.__since || Date.now();
+  const elapsed = fmtWaitSec((Date.now() - start) / 1000);
+  if (sec.textContent !== elapsed) sec.textContent = elapsed;
+  node.dataset.phase = ph.tone || 'run';
+  node.setAttribute('aria-label', ph.title + (ph.sub ? '：' + ph.sub : '') + ' · ' + elapsed);
 }
 
 /* ---- 系统提示 / 上下文摘要（卡片） --------------------------------- */
@@ -895,8 +1098,326 @@ function turnFoot(meta) {
   return foot;
 }
 
+/* ---- Teamwork（tw）工具卡：结构化「团队任务」卡 --------------------
+   LLM 调 tw 创建/配置团队任务时，工具卡原本只能看到一坨参数 JSON。
+   这里把创建类调用渲染成结构化卡片：阶段（串/并行、gate）+ 每个子代理的
+   works + 模型/思考；在折叠摘要里也能看到「N 阶段 M 子代理」。其余 tw 动作
+   （run/report/list…）给紧凑摘要 + 可展开的结果。                         */
+const TW_OP_ZH = {
+  new: '创建', workflow: '创建工作流', edit: '更新配置', run: '运行', resume: '继续运行',
+  remove: '删除', reuse: '复用子代理', list: '列出任务', jobs: '列出任务',
+  history: '历史任务', report: '子代理报告', reports: '子代理报告',
+};
+const TW_JOB_STATUS_ZH = {
+  pending: '待运行', queued: '排队中', running: '运行中', waiting: '等待关卡',
+  done: '已完成', completed: '已完成', failed: '失败', error: '失败',
+  stopped: '已停止', cancelled: '已取消', skipped: '已跳过',
+  created: '已创建', updated: '已更新', removed: '已删除',
+};
+const TW_THINK_ZH = { off: '关闭', low: '低', med: '中', high: '高', max: '最大' };
+function twThinkZh(v) {
+  if (v == null || v === '') return '';
+  const s = String(v).toLowerCase().trim();
+  if (TW_THINK_ZH[s]) return TW_THINK_ZH[s];
+  const n = Number(s);
+  if (Number.isFinite(n)) return TW_THINK_ZH[['off', 'low', 'med', 'high', 'max'][n]] || '';
+  return String(v);
+}
+function isTwTool(m) {
+  const n = String((m && m.name) || '').toLowerCase();
+  return n === 'tw' || n === 'teamwork';
+}
+function twArgsOf(m) {
+  const a = m && m.args;
+  if (a && typeof a === 'object') return a;
+  const s = String(a == null ? '' : a).trim();
+  if (!s || s[0] !== '{') return null;
+  try { const o = JSON.parse(s); return o && typeof o === 'object' ? o : null; } catch (e) { return null; }
+}
+function twAgentsOf(raw) {
+  let arr = raw;
+  if (typeof raw === 'string') { try { arr = JSON.parse(raw); } catch (e) { arr = []; } }
+  if (!Array.isArray(arr)) arr = arr && typeof arr === 'object' ? [arr] : [];
+  return arr.map((a, i) => {
+    if (typeof a === 'string') return { name: 'worker_' + i, works: a, model: '', think: '' };
+    a = a || {};
+    return {
+      name: String(a.name || a.worker || ('worker_' + i)),
+      works: String(a.works || a.task || ''),
+      model: String(a.model || ''),
+      think: twThinkZh(a.think),
+    };
+  });
+}
+// 可解析为「创建/配置」的 tw 调用 → 归一化的阶段计划；否则 null（走紧凑卡）
+function twPlanOf(m) {
+  const a = twArgsOf(m);
+  if (!a) return null;
+  let wf = a.workflow;
+  if (typeof wf === 'string') { try { wf = JSON.parse(wf); } catch (e) { wf = null; } }
+  const op = String(a.operation || '').toLowerCase() || (wf ? 'workflow' : (Array.isArray(a.list) ? 'new' : ''));
+  if (op !== 'new' && op !== 'workflow' && op !== 'edit') return null;
+  const stages = [];
+  if (wf && Array.isArray(wf.stages)) {
+    wf.stages.forEach((st, si) => {
+      st = st || {};
+      const agents = twAgentsOf(st.agents || st.workers || st.list);
+      if (!agents.length) return;
+      stages.push({
+        name: String(st.name || ('阶段 ' + (si + 1))),
+        mode: String(st.mode || '').toLowerCase() === 'parallel' ? 'parallel' : 'serial',
+        gate: !!st.gate,
+        agents: agents,
+      });
+    });
+  } else if (Array.isArray(a.list)) {
+    const agents = twAgentsOf(a.list);
+    if (agents.length) stages.push({
+      name: '子代理',
+      mode: String(a['work-type'] || a.work_type || 'serial').toLowerCase() === 'parallel' ? 'parallel' : 'serial',
+      gate: false, agents: agents,
+    });
+  }
+  if (!stages.length) return null;
+  const count = stages.reduce((n, s) => n + s.agents.length, 0);
+  return {
+    op: op, stages: stages, count: count,
+    workType: String(a['work-type'] || a.work_type || (wf && (wf.work_type || wf['work-type'])) || '').toLowerCase(),
+    model: String(a.model || (wf && wf.model) || ''),
+    think: twThinkZh(a.think != null ? a.think : (wf && wf.think)),
+    provider: String(a.provider || (wf && wf.provider) || ''),
+  };
+}
+function twResultOf(m) {
+  const raw = String(m && m.display != null ? m.display : '');
+  const flat = raw.replace(/\s+/g, ' ').trim();
+  const idm = flat.match(/\btw-[0-9A-Za-z][0-9A-Za-z._-]*/);
+  const st = flat.match(/status=([a-z_]+)/i);
+  const child = flat.match(/children=(\d+)/);
+  const model = flat.match(/model=([^\s]+)/);
+  return {
+    raw: raw, flat: flat,
+    id: idm ? idm[0] : '',
+    status: st ? st[1].toLowerCase() : '',
+    children: child ? Number(child[1]) : 0,
+    model: model ? model[1] : '',
+  };
+}
+function twWorkTypeText(plan) {
+  const uniq = Array.from(new Set(plan.stages.map(s => s.mode)));
+  if (plan.workType === 'parallel' || (uniq.length === 1 && uniq[0] === 'parallel')) return '并行';
+  if (plan.workType === 'serial' || (uniq.length === 1 && uniq[0] === 'serial')) return '串行';
+  return '串行/并行混排';
+}
+function twClip(s, n) {
+  s = String(s == null ? '' : s);
+  return s.length > n ? s.slice(0, n - 1) + '…' : s;
+}
+function twStatusKind(st) {
+  st = String(st || '').toLowerCase();
+  if (/run|active|progress|working|waiting|queue/.test(st)) return st === 'waiting' ? 'warn' : 'run';
+  if (/(^|_)(ok|done|complete|success|approved)/.test(st)) return 'ok';
+  if (/fail|error|denied|abort|cancel|stop|skip/.test(st)) return 'bad';
+  return '';
+}
+function makeTwTool(m) {
+  const wrap = el('div', 'trowwrap twtool');
+  const head = el('div', 'twt-head');
+  head.setAttribute('role', 'button');
+  head.tabIndex = 0;
+  const tile = el('span', 'twt-tile');
+  tile.appendChild(iconEl('users', 'sm'));
+  head.appendChild(tile);
+  const main = el('div', 'twt-main');
+  const titleRow = el('div', 'twt-title');
+  const title = el('span', 'twt-title-t', '团队任务');
+  const idEl = el('span', 'twt-id mono', '');
+  titleRow.appendChild(title); titleRow.appendChild(idEl);
+  main.appendChild(titleRow);
+  const sub = el('div', 'twt-sub trunc', '');
+  main.appendChild(sub);
+  head.appendChild(main);
+  const badge = el('span', 'twt-badge pill', '');
+  head.appendChild(badge);
+  const sec = el('span', 'twt-sec mono', '');
+  head.appendChild(sec);
+  const openBtn = el('button', 'btn ghost sm twt-open', '在 Teamwork 面板查看');
+  openBtn.type = 'button';
+  openBtn.addEventListener('click', ev => {
+    ev.stopPropagation();
+    if (typeof openDock === 'function') openDock('teamwork');
+  });
+  head.appendChild(openBtn);
+  const chev = el('span', 'twt-chev');
+  chev.appendChild(iconEl('chevronRight', 'sm'));
+  head.appendChild(chev);
+  const body = el('div', 'twt-body');
+  wrap.appendChild(head); wrap.appendChild(body);
+  wrap.__tw = { head: head, title: title, id: idEl, sub: sub, badge: badge, sec: sec, body: body, tile: tile, chev: chev };
+  // 创建类卡片默认展开（阶段/子代理任务是这张卡的主体）；其它动作紧凑折叠
+  wrap.__open = !!twPlanOf(m);
+  head.addEventListener('click', () => toggleTwCard(wrap, m));
+  head.addEventListener('keydown', ev => {
+    if (ev.key === 'Enter' || ev.key === ' ' || ev.key === 'Spacebar') { ev.preventDefault(); toggleTwCard(wrap, m); }
+  });
+  paintTwOpen(wrap);
+  updateTwTool(wrap, m);
+  return wrap;
+}
+function toggleTwCard(node, m) {
+  node.__open = !node.__open;
+  if (m) m.expanded = node.__open;
+  paintTwOpen(node);
+}
+function paintTwOpen(node) {
+  if (!node || !node.__tw) return;
+  node.classList.toggle('open', !!node.__open);
+  node.classList.toggle('expanded', !!node.__open);
+  node.__tw.body.hidden = !node.__open;
+  node.__tw.head.setAttribute('aria-expanded', node.__open ? 'true' : 'false');
+}
+function updateTwTool(node, m) {
+  if (!node || !node.__tw) return;
+  const kind = toolKind(m.status);
+  node.dataset.status = kind;
+  node.classList.toggle('running', kind === 'run');
+  node.classList.toggle('ok', kind === 'ok');
+  node.classList.toggle('bad', kind === 'bad');
+  const plan = twPlanOf(m);
+  const info = twResultOf(m);
+  const a = twArgsOf(m);
+  const op = String((a && a.operation) || (plan && plan.op) || '').toLowerCase();
+  const jobId = info.id || String((a && a.id) || '');
+  node.classList.toggle('twtool-create', !!plan);
+  node.classList.toggle('twtool-compact', !plan);
+  let title = '', sub = '';
+  if (plan) {
+    const creating = kind === 'run';
+    title = creating ? (plan.op === 'edit' ? '正在更新团队任务' : '正在创建团队任务')
+                     : (plan.op === 'edit' ? '团队任务配置已更新' : '团队任务已创建');
+    const bits = [plan.stages.length + ' 阶段', plan.count + ' 子代理', twWorkTypeText(plan)];
+    const gates = plan.stages.filter(s => s.gate).length;
+    if (gates) bits.push(gates + ' 个关卡');
+    if (plan.model) bits.push('模型 ' + plan.model);
+    if (plan.think) bits.push('思考 ' + plan.think);
+    sub = bits.join(' · ');
+  } else {
+    const opZh = TW_OP_ZH[op];
+    title = '团队任务' + (opZh ? ' · ' + opZh : '');
+    sub = info.flat ? twClip(info.flat, 110) : '正在执行团队工具调用…';
+  }
+  setTextEl(node.__tw.title, title);
+  setTextEl(node.__tw.id, jobId);
+  node.__tw.id.hidden = !jobId;
+  setTextEl(node.__tw.sub, sub);
+  node.__tw.sub.title = sub;
+  // 状态徽标：工具状态优先，其次结果里的 job status（后台运行/更新/删除
+  // 这类动作没有 status= 字段，从结果文本里推断）
+  let inferred = info.status;
+  if (!inferred && !plan) {
+    if (/in background|started in background/i.test(info.flat)) inferred = 'running';
+    else if (/\bupdated\b/i.test(info.flat)) inferred = 'updated';
+    else if (/\bremoved\b/i.test(info.flat)) inferred = 'removed';
+    else if (/\bcreated\b/i.test(info.flat)) inferred = 'created';
+  }
+  let label = '', cls = '';
+  const jobCls = twStatusKind(inferred);
+  if (kind === 'bad') { label = '失败'; cls = 'bad'; }
+  else if (kind === 'run') { label = plan ? '创建中…' : '执行中…'; cls = 'run'; }
+  else if (inferred) { label = TW_JOB_STATUS_ZH[inferred] || inferred; cls = jobCls; }
+  else { label = plan ? '已创建' : '已完成'; cls = 'ok'; }
+  node.__tw.badge.textContent = label;
+  node.__tw.badge.className = 'twt-badge pill' + (cls ? ' ' + cls : '');
+  const secTxt = m.sec ? fmtDur(m.sec) : (kind === 'run' && m.started ? ((Date.now() - m.started) / 1000).toFixed(1) + 's' : '');
+  setTextEl(node.__tw.sec, secTxt);
+  // 主体只在参数/结果/状态变化时重建（流式期间每次渲染都会调用本函数）
+  const sig = kind + '|' + (m.status || '') + '|' + String(m.args == null ? '' : m.args) + '|'
+    + String(m.display == null ? '' : m.display) + '|' + (plan ? plan.count : 0);
+  if (node.__twSig !== sig) {
+    node.__twSig = sig;
+    fillTwBody(node, m, plan, info, op, jobId);
+  }
+}
+function setTextEl(node, txt) {
+  if (node && node.textContent !== txt) node.textContent = txt;
+}
+function twFact(box, k, v) {
+  if (v == null || v === '') return;
+  const f = el('span', 'twt-fact');
+  f.appendChild(el('span', 'twt-fact-k', k));
+  f.appendChild(el('span', 'twt-fact-v', String(v)));
+  box.appendChild(f);
+}
+function twStageNode(st, si) {
+  const li = el('li', 'twt-stage');
+  const head = el('div', 'twt-stage-h');
+  head.appendChild(el('span', 'twt-num', String(si + 1)));
+  head.appendChild(el('span', 'twt-sname', st.name));
+  head.appendChild(el('span', 'pill twt-pill' + (st.mode === 'parallel' ? ' accent' : ''), st.mode === 'parallel' ? '并行' : '串行'));
+  if (st.gate) head.appendChild(el('span', 'pill twt-pill warn', '关卡 gate'));
+  head.appendChild(el('span', 'grow'));
+  head.appendChild(el('span', 'twt-smeta mono', st.agents.length + ' 个子代理'));
+  li.appendChild(head);
+  const ul = el('ul', 'twt-agents');
+  for (const ag of st.agents) {
+    const row = el('li', 'twt-agent');
+    row.appendChild(el('span', 'twt-wname mono', ag.name));
+    row.appendChild(el('span', 'twt-works', ag.works || '（未填写任务描述）'));
+    const meta = [];
+    if (ag.model) meta.push(ag.model);
+    if (ag.think) meta.push('思考 ' + ag.think);
+    if (meta.length) row.appendChild(el('span', 'twt-wmeta mono', meta.join(' · ')));
+    ul.appendChild(row);
+  }
+  li.appendChild(ul);
+  return li;
+}
+function fillTwBody(node, m, plan, info, op, jobId) {
+  const body = node.__tw.body;
+  const nodes = [];
+  if (plan) {
+    const facts = el('div', 'twt-facts');
+    twFact(facts, '模式', twWorkTypeText(plan));
+    const gates = plan.stages.filter(s => s.gate).length;
+    if (gates) twFact(facts, '关卡', gates + ' 个（等待你确认）');
+    if (plan.model) twFact(facts, '模型', plan.model);
+    if (plan.think) twFact(facts, '思考', plan.think);
+    if (plan.provider) twFact(facts, '供应商', plan.provider);
+    if (facts.childElementCount) nodes.push(facts);
+    const list = el('ol', 'twt-stages');
+    plan.stages.forEach((st, si) => list.appendChild(twStageNode(st, si)));
+    nodes.push(list);
+    if (info.flat) {
+      const line = el('div', 'twt-resline');
+      const tag = el('span', 'twt-resline-tag', '工具输出');
+      line.appendChild(tag);
+      line.appendChild(el('span', 'twt-resline-txt mono', twClip(info.flat, 220)));
+      line.title = info.flat;
+      nodes.push(line);
+    }
+  } else {
+    if (op && TW_OP_ZH[op]) {
+      const line = el('div', 'twt-cmd');
+      line.appendChild(el('span', 'twt-cmd-k', '动作'));
+      line.appendChild(el('span', 'twt-cmd-v', TW_OP_ZH[op]));
+      if (jobId) line.appendChild(el('span', 'twt-cmd-k', '任务'));
+      if (jobId) line.appendChild(el('span', 'twt-cmd-v mono', jobId));
+      nodes.push(line);
+    }
+    if (info.raw) {
+      const pre = el('pre', 'twt-pre');
+      pre.textContent = info.raw.length > 4000 ? info.raw.slice(0, 4000) + '\n…' : info.raw;
+      nodes.push(pre);
+    }
+  }
+  if (!nodes.length) nodes.push(el('div', 'twt-empty', '（等待工具结果…）'));
+  body.replaceChildren.apply(body, nodes);
+}
+
 /* ---- 工具调用：紧凑行卡 ------------------------------------------- */
 function makeTool(m) {
+  // Teamwork 工具走结构化卡片（见上节）
+  if (isTwTool(m)) return makeTwTool(m);
   const wrap = el('div', 'trowwrap');
   const btn = el('button', 'trow');
   btn.setAttribute('aria-expanded', m.expanded ? 'true' : 'false');
@@ -930,6 +1451,7 @@ function makeTool(m) {
 /* 工具行更新：状态点 / 中文名 / 耗时 / 参数与结果（懒填充） */
 function updateTool(node, m) {
   if (!node || m.role === 'round') return;
+  if (node.__tw) { updateTwTool(node, m); return; }
   const kind = toolKind(m.status);
   node.dataset.status = kind;
   if (node._btn) node._btn.dataset.status = kind;
@@ -1059,8 +1581,8 @@ function syncGroupChildren(w, m, makeChild) {
 function updateMsg(node, m, t) {
   if (!node) return;
   if (m.role === '__thinking__') {
-    const th = $('.thinking', node);
-    if (th && t.thinkingSince) th.textContent = '正在思考… ' + ((Date.now() - t.thinkingSince) / 1000).toFixed(1) + 's';
+    node.__tab = t;
+    paintThinking(node, t);
     return;
   }
   if (m.role === '__grpthink__') return updateThinkGroup(node, m, t);
@@ -1097,11 +1619,12 @@ function updateMsg(node, m, t) {
 function updateThinkGroup(node, m, t) {
   syncGroupChildren(node, m, makeThinkBlock);
   const live = t._live && t._live.reason;
+  const liveLast = !!(live && t.msgs.length && t.msgs[t.msgs.length - 1] === live);
   let streaming = false, chars = 0;
   for (const it of m.items) {
     const blk = node._blocks.get(it.id);
     if (!blk) continue;
-    const isStreaming = !!(live && live.id === it.id && it.streaming);
+    const isStreaming = !!(liveLast && live.id === it.id && it.streaming);
     fillThinkBlock(blk._prose, it, isStreaming, t);
     if (isStreaming) streaming = true;
     chars += String(it.text || '').length;
@@ -1220,7 +1743,8 @@ function detailEntries(e) {
 function detailMsg(e) { return detailEntries(e)[0]; }
 
 // 拉取一个会话的完整详情（transcript + 存档列表），替换预览消息
-function loadSessionDetail(ws, id, done) {
+// opts.keepStick：回合结束后重载时保留用户当前的滚动位置（用户可能正在往上看）
+function loadSessionDetail(ws, id, done, opts) {
   const t = S.tabs.get(ws);
   if (!t || !id) { if (done) done(); return; }
   if (t.busy || t.detailSession === id || t.detailLoading === id) return;
@@ -1238,6 +1762,8 @@ function loadSessionDetail(ws, id, done) {
       for (const m of detailEntries(e)) t.msgs.push(m);
     t.archives = out.archives || [];
     t.archivesFor = id;
+    // 换了会话（或首次加载）→ 贴底；回合结束的原地重载不打扰阅读位置
+    if (!(opts && opts.keepStick)) { t._stick = true; t._userSig = null; }
     schedule('dock', renderDock);
     markChat(ws);
     if (done) done();
@@ -1248,7 +1774,7 @@ function reloadSessionDetail(ws, done) {
   const t = S.tabs.get(ws);
   if (!t || !t.session) { if (done) done(); return; }
   t.detailSession = '';
-  loadSessionDetail(ws, t.session, done);
+  loadSessionDetail(ws, t.session, done, { keepStick: true });
 }
 
 /* ---------- 回合快照：git.numstat 前后差 → 已编辑文件卡 --------------

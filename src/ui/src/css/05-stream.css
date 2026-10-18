@@ -331,14 +331,98 @@
 .msg.reason-card{margin:16px 0 0}
 .reason-body{min-width:0}
 
-/* ---- 5.13 思考中指示器 -------------------------------------------- */
+/* ---- 5.13 等待 / 思考指示器：阶段标题 + 副标题 + 秒表 ------------- */
 .msg.thinking{margin:22px 0 0}
-.thinkdots{display:flex;align-items:center;gap:5px;padding:3px 0;color:var(--fg3);font-size:12.5px}
+.msg.thinking .body{min-width:0}
+.thinkrow{display:flex;align-items:center;gap:10px;min-height:26px;min-width:0}
+.thinkdots{display:inline-flex;align-items:center;gap:4px;flex:none;padding:3px 0}
 .thinkdots .tdot{width:5px;height:5px;border-radius:50%;background:var(--fg3);flex:none;
   animation:breathe 1.4s var(--ease) infinite}
 .thinkdots .tdot:nth-child(2){animation-delay:.16s}
 .thinkdots .tdot:nth-child(3){animation-delay:.32s}
-.thinkdots .thinking{margin-left:5px;color:var(--fg3);font-size:12.5px}
+.think-main{display:flex;flex-direction:column;gap:1px;min-width:0;flex:1}
+.think-title{font-size:13px;font-weight:600;color:var(--fg2);line-height:1.45;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.think-sub{font-size:11.5px;color:var(--fg4);line-height:1.4;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.think-sec{flex:none;padding-left:12px;font-family:var(--mono);font-size:11.5px;color:var(--fg4);
+  font-variant-numeric:tabular-nums}
+.msg.thinking[data-phase="warn"] .think-title{color:var(--warn)}
+.msg.thinking[data-phase="warn"] .thinkdots .tdot{background:var(--warn)}
+
+/* ---- 5.13b 「回到底部」悬浮按钮（离开底部时出现，点击恢复跟底） --- */
+.jump-bottom{position:absolute;right:26px;bottom:calc(var(--composer-h) + 6px);z-index:15;
+  display:none;align-items:center;gap:6px;height:30px;padding:0 13px 0 11px;
+  border-radius:var(--radius-full);background:var(--panel2);border:1px solid var(--line2);
+  color:var(--fg2);font-size:12px;font-weight:500;box-shadow:var(--shadow-sm);cursor:pointer;
+  transition:background var(--dur) var(--ease),color var(--dur) var(--ease),border-color var(--dur) var(--ease)}
+.jump-bottom.show{display:inline-flex;animation:fadeUp 160ms var(--ease)}
+.jump-bottom:hover{background:var(--raise2);border-color:color-mix(in srgb,var(--accent) 45%,var(--line2));color:var(--fg)}
+.jump-bottom .uico{color:var(--accent)}
+
+/* ---- 5.13c Teamwork（tw）工具卡：结构化「团队任务」卡 -------------- */
+.chatwrap > .twtool{margin:18px 0 0;border:1px solid var(--line);border-radius:var(--radius);
+  background:var(--bg2);overflow:hidden;animation:msgIn 180ms var(--ease)}
+.chatwrap > .twtool:first-child{margin-top:0}
+.twtool.running{border-color:color-mix(in srgb,var(--accent) 32%,var(--line))}
+.twtool.bad{border-color:color-mix(in srgb,var(--bad) 40%,var(--line))}
+.twt-head{display:flex;align-items:center;gap:10px;width:100%;padding:10px 14px;text-align:left;cursor:pointer;
+  transition:background var(--dur) var(--ease)}
+.twt-head:hover{background:var(--bg3)}
+.twt-tile{width:30px;height:30px;flex:none;border-radius:9px;display:flex;align-items:center;justify-content:center;
+  background:color-mix(in srgb,var(--accent) 14%,transparent);color:var(--accent)}
+.twt-tile .uico{width:16px;height:16px}
+.twtool[data-status="run"] .twt-tile{background:color-mix(in srgb,var(--accent) 20%,transparent)}
+.twtool[data-status="ok"] .twt-tile{color:var(--ok);background:color-mix(in srgb,var(--ok) 14%,transparent)}
+.twtool[data-status="bad"] .twt-tile{color:var(--bad);background:color-mix(in srgb,var(--bad) 14%,transparent)}
+.twt-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.twt-title{display:flex;align-items:baseline;gap:8px;min-width:0}
+.twt-title-t{font-size:13.5px;font-weight:600;color:var(--fg);line-height:1.4;white-space:nowrap}
+.twt-id{font-size:11px;color:var(--fg4);font-family:var(--mono);white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis;min-width:0}
+.twt-sub{font-size:11.5px;color:var(--fg3);line-height:1.4;min-width:0}
+.twt-badge{flex:none}
+.twt-badge.run{color:var(--accent)}
+.twt-badge.ok{color:var(--ok)}
+.twt-badge.bad{color:var(--bad)}
+.twt-badge.warn{color:var(--warn)}
+.twt-sec{flex:none;font-family:var(--mono);font-size:11px;color:var(--fg4);font-variant-numeric:tabular-nums}
+.twt-open{flex:none;white-space:nowrap;color:var(--fg3)}
+.twt-open:hover{color:var(--fg)}
+.twt-chev{display:flex;color:var(--fg4);flex:none;transition:transform var(--dur) var(--ease)}
+.twtool.open .twt-chev{transform:rotate(90deg)}
+.twt-body{border-top:1px solid var(--line);padding:12px 14px 13px}
+.twt-body[hidden]{display:none}
+.twt-facts{display:flex;flex-wrap:wrap;gap:6px 8px;margin:0 0 10px}
+.twt-fact{display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 8px;border-radius:var(--radius-full);
+  background:var(--bg3);border:1px solid var(--line);font-size:11px;color:var(--fg3)}
+.twt-fact-k{color:var(--fg4)}
+.twt-fact-v{color:var(--fg2)}
+.twt-stages{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+.twt-stage{border:1px solid var(--line);border-radius:var(--radius-s);background:var(--bg);overflow:hidden}
+.twt-stage-h{display:flex;align-items:center;gap:8px;padding:7px 10px;background:var(--bg2)}
+.twt-num{width:18px;height:18px;flex:none;border-radius:5px;display:inline-flex;align-items:center;justify-content:center;
+  background:var(--raise);color:var(--fg3);font-family:var(--mono);font-size:10.5px}
+.twt-sname{font-size:12.5px;font-weight:600;color:var(--fg2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.twt-pill{height:18px;padding:0 6px;font-size:10.5px;border-radius:5px}
+.twt-smeta{font-size:10.5px;color:var(--fg4);font-family:var(--mono);flex:none}
+.twt-agents{list-style:none;margin:0;padding:2px 0 4px}
+.twt-agent{display:flex;align-items:baseline;gap:8px;padding:4px 10px;min-width:0}
+.twt-wname{flex:none;font-size:11px;color:var(--fg3);font-family:var(--mono)}
+.twt-works{flex:1;min-width:0;font-size:12px;line-height:1.55;color:var(--fg2);overflow-wrap:anywhere}
+.twt-wmeta{flex:none;font-size:10.5px;color:var(--fg4);font-family:var(--mono);white-space:nowrap}
+.twt-resline{display:flex;align-items:center;gap:8px;margin-top:10px;padding-top:9px;
+  border-top:1px dashed var(--line);min-width:0;font-size:11px;color:var(--fg4)}
+.twt-resline-tag{flex:none;font-weight:600;letter-spacing:.04em;color:var(--fg4)}
+.twt-resline-txt{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  font-size:11px;color:var(--fg3);font-family:var(--mono)}
+.twt-cmd{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:0 0 8px;font-size:11.5px}
+.twt-cmd-k{color:var(--fg4)}
+.twt-cmd-v{color:var(--fg2)}
+.twt-pre{margin:0;max-height:260px;overflow:auto;padding:10px 12px;background:var(--code-bg);
+  border:1px solid var(--line);border-radius:var(--radius-s);font-family:var(--mono);font-size:11.5px;
+  line-height:1.6;color:var(--fg2);white-space:pre-wrap;word-break:break-word}
+.twt-empty{font-size:11.5px;color:var(--fg4)}
 
 /* ---- 5.14 窄流降级 ------------------------------------------------- */
 @container stream (max-width:620px){
@@ -346,4 +430,8 @@
   .msg.user .ububble{max-width:88%}
   .msg.assistant{gap:10px}
   .trow .tmono{display:none}
+  .twt-id{display:none}
+  .twt-sec{display:none}
+  .twt-open{font-size:11px;height:24px;padding:0 8px}
+  .think-sub{max-width:44ch}
 }

@@ -297,7 +297,10 @@ function bindComposer() {
   /* 宽度自适应：主区变窄（分栏/窗口）时把 chip 收成图标，避免文字挤成「文…」 */
   applyComposerWidthClass();
   if (typeof ResizeObserver !== 'undefined') {
-    const ro = new ResizeObserver(() => applyComposerWidthClass());
+    // 回调里同步改类名会再次改变被观察元素的大小，Chromium 因此报
+    // "ResizeObserver loop completed with undelivered notifications"；
+    // 延到下一帧处理即可（终端面板改变宽度时会命中这条路）
+    const ro = new ResizeObserver(() => window.requestAnimationFrame(applyComposerWidthClass));
     ro.observe(host);
     host.__cmpRO = ro;
   }
@@ -666,10 +669,12 @@ async function stopAllActivity(t) {
   let jobs = t.jobs || [];
   try { const out = await api('teamwork.list', { ws: t.ws }); if (out && out.jobs) jobs = out.jobs; } catch (e) {}
   const running = jobs.filter(j => jobStatusClass(j.status) === 'run');
-  if (!running.length) { refreshTeamwork(t.ws, true); return; }
+  if (!running.length) { await refreshTeamworkNow(t.ws, true); return; }
   for (const j of running) await cmd('teamwork.stop', { ws: t.ws, id: j.id });
   toast('已停止 ' + running.length + ' 个团队任务', 'ok');
-  setTimeout(() => refreshTeamwork(t.ws), 400);
+  // 停止是异步的（runner 下一轮才翻状态）：先立即刷一次，+600ms 再对一次
+  await refreshTeamworkNow(t.ws, false, true);
+  setTimeout(() => { if (S.tabs.get(t.ws) === t) refreshTeamworkNow(t.ws, true); }, 600);
 }
 
 /* ---------- I6. 状态行右侧：token / round -------------------------- */
@@ -1330,8 +1335,8 @@ async function execSlash(t, name, arg) {
       openWsDialog(); break;
     case '/teamwork': {
       const m = arg.split(/\s+/);
-      if (m[0] === 'run' || m[0] === 'resume' || m[0] === 'stop') return cmd('teamwork.' + m[0], { ws: t.ws, id: m[1] || '' }).then(() => refreshTeamwork(t.ws));
-      if (arg) return cmd('teamwork.run', { ws: t.ws, id: arg }).then(() => refreshTeamwork(t.ws));
+      if (m[0] === 'run' || m[0] === 'resume' || m[0] === 'stop') return cmd('teamwork.' + m[0], { ws: t.ws, id: m[1] || '' }).then(() => refreshTeamworkNow(t.ws, false, true));
+      if (arg) return cmd('teamwork.run', { ws: t.ws, id: arg }).then(() => refreshTeamworkNow(t.ws, false, true));
       openDock('teamwork'); break;
     }
     case '/notice': openDock('notices'); refreshNotices(t.ws); break;
@@ -1526,6 +1531,13 @@ function renderStageEditor(t, wf, st, si, parent) {
   return card;
 }
 
+/* Teamwork 面板刷新：03-teamwork.js 的 twRefresh 会打 jobsAt 时间戳并重算
+   轮询表；保留 refreshTeamwork fallback，避免文件合并顺序变化时提交路径失效。 */
+function refreshTeamworkNow(ws, quiet, force) {
+  if (typeof twRefresh === 'function') return twRefresh(ws, quiet, force);
+  return refreshTeamwork(ws, quiet);
+}
+
 async function submitWorkflow(t, mode) {
   const wf = t.composer.workflow || defaultWorkflow();
   const stages = [];
@@ -1555,7 +1567,12 @@ async function submitWorkflow(t, mode) {
     if (r && r.ok !== false) toast('任务已运行', 'ok');
   }
   openDock('teamwork');
-  setTimeout(() => refreshTeamwork(t.ws), 500);
+  // 提交后立刻按磁盘重拉：create/run 的落盘与面板首帧存在竞态，
+  // 旧实现只 setTimeout(500) 猜一次，慢盘/大工作区时会看不到新卡片。
+  await refreshTeamworkNow(t.ws, false, true);
+  // 再补两次：后端 store 写入/状态翻转有延迟，保证卡片状态最终正确
+  setTimeout(() => { if (S.tabs.get(t.ws) === t) refreshTeamworkNow(t.ws, true); }, 500);
+  setTimeout(() => { if (S.tabs.get(t.ws) === t) refreshTeamworkNow(t.ws, true); }, 1500);
 }
 
 /* ---------- I10. 对外接口（boot 优先调用 ComposerUI.init） ---------- */

@@ -85,7 +85,7 @@
 ```
 
 - 右栏页签：`start 开始 / files 文件 / git Git / terminal 终端 / teamwork 团队 / notices 通知 / archives 存档`，用 `<button class="docktab" data-dock="…">` 静态写在 skeleton 里（图标 + 文字，窄宽降级为纯图标）；`#dockBody` 由 `renderDock()` 按 `S.dock` 分发。
-- 右栏默认打开 `start`（首次/无记忆时），开合与页签记在 localStorage `cell.dock`；`?dock=<name>` 可覆盖。
+- 侧栏收起后，顶栏左上角常驻「展开侧栏」按钮（也可 Ctrl+B）；右栏默认打开 `start`（首次/无记忆时），开合与页签记在 localStorage `cell.dock`；`?dock=<name>` 可覆盖。
 - 输入卡：宽度 `min(calc(100% - 56px), var(--composer-max))`，底部 22px，圆角 `--radius-xl`，表面 `--elev-2` + 1px `--line2` 描边；聚焦时描边 `--accent` + 外环 `--accent-soft`。
 - 消息流列宽 `min(100% - 48px, var(--chat-max))` 居中；底部留白 `var(--composer-h) + 28px`。
 - 响应式：<1100px 侧栏可降到 240px；<980px 右栏改为覆盖式且首次启动默认收起（宽->窄跨档时自动收起）；侧栏容器查询的阈值按 **content-box** 计（侧栏有 10px 内边距，264px 最小宽度对应 content 244px，阈值 224px），避免未最大化窗口被误判成窄态而隐藏全部文字标签。
@@ -139,10 +139,26 @@
 - 最近提交：5 条（短 hash + subject + 相对时间）。
 - 验收：mock 数据下能列出 worktrees、创建流程对话框可打开、点「打开」调用 workspace.open 并切到新工作区。
 
-### 5.4 终端面板（terminal）
-- 头部：「终端」+ 当前工作区路径（trunc）+ 清空按钮；正文：逐条命令记录（$ cmd、输出 pre、退出码/耗时）；
-- 底部命令输入（Ctrl+Enter 执行）；忙时禁用；输出限高滚动；错误（exit≠0）标红左侧条。
-- 验收：mock 下可执行示例命令并显示输出；真实后端 term.exec 可用。
+### 5.4 终端面板（terminal）—— 真实终端（2026-10 重做）
+- 头部：「终端」+ 当前工作区路径（trunc）+ 会话状态徽标（连接中/就绪/已退出(exit N)/不可用）
+  + 复制选中 / 清屏 / 重启三个图标按钮；底部一行快捷键提示。
+- 正文不再是「命令表单 + 执行按钮」，而是**真终端**：后端在伪终端（Windows ConPTY /
+  POSIX forkpty）上跑常驻 shell，输出以 `term.out`（base64 字节）流式送到页面，
+  由 `src/ui/src/js/08c-term.js` 的 VT 模拟器渲染（VT100/xterm 子集：CSI 光标/擦除/
+  SGR 16+256+truecolor/滚动区/备用屏/DECSTCEM 等）。
+- 交互：块状闪烁光标（DECTCEM 可隐藏、DECSCUSR 形状）、UTF-8 流式解码 + CJK 宽字符、
+  ≥2000 行回看（Shift+PgUp/PgDn、滚轮）、Tab 发 0x09 交由 shell 补全、方向键 CSI/SS3、
+  Home/End/PgUp/PgDn/Ins/Del/F1-F12、Ctrl+字母、Alt 前缀、Ctrl+Shift+C/V 复制粘贴
+  （bracketed paste）、中文 IME（隐藏 textarea 承接 composition）。
+- 生命周期：一个工作区一个会话，切页签/切工作区不重启 shell；面板重绘（包括流式事件
+  触发的 renderDock）就地更新头部、复用同一 DOM 根，不重建终端本体，键盘焦点与选区
+  不丢；页面刷新重新 `term.open`（reused + backlog 重放，seq 去重）；面板宽度变化同步
+  `term.resize` 到 pty。首次挂载时右栏可能还没布局（宽度 0），终端等尺寸就绪后再
+  测量格宽 / 启动 shell，第一帧就按真实 cols 渲染，不会出现 20 列硬折行。
+- 演示模式（`?mock=1` / file://）：08c-term.js 自带本地假 shell（echo/ls/dir/cd/pwd/
+  date/clear/color + Tab 补全 + ↑↓ 历史 + Ctrl+C），不依赖后端；与真实终端共用完全
+  相同的键盘/渲染路径（Enter 执行、Tab 补全、焦点稳定）。
+- 验收：见 `_scratch/term/CONTRACT.md` §6（15 项后端 + 12 项真浏览器断言）。
 
 ### 5.5 回合产物与用量（消息流）
 - 每轮结束后：若本回合有文件改动，在消息流末尾（回合状态行之前）插入「已编辑 N 个文件」卡：头部 </> 图标砖 + 标题 + 汇总 +A -D；分隔线；每行文件名 + 右侧 +A -D（绿/红）；点击行打开 diff 预览（有 git.diff 时）。样式对齐 `_scratch/ref/edited-files.png`。
@@ -154,6 +170,14 @@
 
 ### 5.7 键盘
 Ctrl+N 新会话、Ctrl+, 设置、Ctrl+Shift+F 会话搜索、Ctrl+P 快速打开文件、Ctrl+G Git 面板、Ctrl+反引号 终端面板、Ctrl+B 收起/展开侧栏、Esc 关闭浮层（优先级：搜索 > 通用弹窗 > 审批 > 斜杠 > 设置 > 预览 > 面板）。
+
+### 5.8 交互反馈（2026-10 增补）
+
+- **滚动跟底**：贴底阈值 28px；流式期间向上滚动/滚轮立即脱离自动跟底，显示「回到底部」悬浮按钮；新用户消息或点击按钮恢复贴底；回合结束的转录重载保留用户阅读位置。
+- **等待阶段**：等待指示器改为「标题 + 副标题 + 秒表」，按 等待审批 → 正在推理 → 正在输出 → 正在执行 <工具中文名> → 最近 status → 等待模型响应（第 N 轮）→ 准备上下文 排序，busy 期间常驻。
+- **Teamwork 刷新**：create/run/resume/stop 后立即刷新；tw 工具结束与 gate/job/stage/worker 进度 notice 都会防抖触发刷新；面板打开即拉取；刷新保持滚动位置与卡片展开状态。
+- **子代理浮窗**：显示任务 works、状态/阶段/轮次/工具数、notice 进度时间线；首轮 transcript 未落盘时显示带秒表的等待卡；transcript 到达无缝替换；失败显示完整 job.error+最后进度并停止轮询。
+- **tw 工具结果**：create/config 渲染为结构化「团队任务已创建」卡（阶段/子代理 works/模型/思考/gate/跳转面板），其他动作给紧凑摘要卡。
 
 ## 6. 后端命令契约（src/cell-app-tools.hpp，T-core 实现）
 
@@ -174,6 +198,12 @@ fs.list       {cwd?, path?=""} -> {ok, path, entries:[{name,path,dir,size,mtime}
 fs.read       {cwd?, path} -> {ok, path, size, text, binary, truncated, lines}
 fs.find       {cwd?, q, limit?=80} -> {ok, files:[{name,path}]}
 term.exec     {cwd?, cmd, timeout_s?=120} -> {ok, exit_code, output, stderr, duration_ms, truncated}
+term.open     {cwd?, cols?=80, rows?=24, shell?, force?} -> {ok, id, ws, cwd, shell, cols, rows, pid, alive, reused, seq, backlog}
+term.input    {id, data|text}         -> {ok}          # data = base64 字节
+term.resize   {id, cols, rows}        -> {ok, cols, rows}
+term.close    {id?|ws?}               -> {ok, closed}
+term.list     {ws?}                   -> {ok, sessions:[…]}
+# 事件（SSE /api/events）：term.out {ws,id,seq,d:base64} / term.exit {ws,id,code} / term.error {ws,id,error}
 ```
 
 安全/实现约束：

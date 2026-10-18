@@ -18,7 +18,12 @@
 //      fs.list             one directory of the workspace
 //      fs.read             a text file (bounded, binary-aware)
 //      fs.find             file search under the workspace
-//      term.exec           run a shell command in the workspace
+//      term.exec           run a shell command in the workspace (one shot)
+//      term.open           start/reattach a real terminal (pty shell) for a ws
+//      term.input          write bytes to a terminal session
+//      term.resize         resize the pty
+//      term.close          end a terminal session
+//      term.list           live terminal sessions
 //
 //  Every command takes an optional "ws" (workspace key, default: the active
 //  workspace) and an optional "cwd" (absolute directory, default: that
@@ -66,6 +71,9 @@
 #include <vector>
 
 #include <nlohmann/json.hpp>
+
+// real interactive terminal sessions (term.open/input/resize/close/list)
+#include "cell-app-term.hpp"
 
 namespace app::tools
 {
@@ -1845,16 +1853,44 @@ namespace app::tools
     {
         if (!is_tool_command(name))
             return std::nullopt;
-        std::string default_cwd;
+        std::string default_cwd, ws_key;
         if (core)
         {
             std::string ws = jstr(args, "ws");
             std::lock_guard<std::mutex> lk(core->ctx_mx);
             auto it = ws.empty() ? core->ctxs.find(core->active_ws) : core->ctxs.find(ws);
             if (it != core->ctxs.end())
+            {
                 default_cwd = it->second->cwd;
+                ws_key = it->second->cwd_key; // events are tagged with this
+            }
             else if (!ws.empty())
                 return jerr("unknown workspace: " + ws);
+        }
+
+        // real terminal sessions live in their own module: open resolves the
+        // directory here (args.cwd / the workspace cwd), every other verb
+        // addresses an existing session by id. term.exec keeps its one-shot
+        // path through dispatch() below.
+        if (starts_with(name, "term.") && name != "term.exec")
+        {
+            std::string cwd = default_cwd;
+            if (name == "term.open")
+            {
+                fs::path base;
+                std::string err;
+                if (!resolve_base(args, default_cwd, base, err))
+                    return jerr(err);
+                cwd = base.string();
+            }
+            // the reader thread publishes on the same event bus as everything
+            // else, so one SSE stream feeds every tab
+            term::post_fn post = [core](const nlohmann::json &e)
+            {
+                if (core)
+                    core->bus.post(e);
+            };
+            return term::handle(name, args, cwd, ws_key, post);
         }
         return dispatch(name, args, default_cwd);
     }

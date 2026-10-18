@@ -137,6 +137,14 @@ endif()
 
 if(NOT WIN32)
     find_package(Threads REQUIRED)
+    # forkpty/openpty live in libutil where it is still a separate library
+    # (glibc before 2.34); macOS folds them into libSystem, so the library is
+    # optional there and only linked when the SDK provides it.
+    find_library(CELL_UTIL_LIBRARY util)
+    set(_cell_util_libs "")
+    if(CELL_UTIL_LIBRARY)
+        list(APPEND _cell_util_libs ${CELL_UTIL_LIBRARY})
+    endif()
 endif()
 
 if(WIN32)   # MSYS2 UCRT64 — WebView2 window
@@ -219,7 +227,7 @@ elseif(APPLE)   # Cocoa + WKWebView; libsodium is the one Homebrew dependency
 
     target_link_libraries(cell-app PRIVATE
         "-framework Cocoa" "-framework WebKit"
-        curl ${SODIUM_LIBRARY} Threads::Threads)
+        curl ${SODIUM_LIBRARY} Threads::Threads ${_cell_util_libs})
 
 else()          # Linux — GTK3 + WebKitGTK
 
@@ -241,9 +249,10 @@ else()          # Linux — GTK3 + WebKitGTK
     find_package(CURL REQUIRED)
     find_library(SODIUM_LIBRARY NAMES sodium REQUIRED)
 
+    # util: forkpty for the terminal panel's pty sessions (glibc)
     target_link_libraries(cell-app PRIVATE
         PkgConfig::GTK PkgConfig::WEBKIT
-        CURL::libcurl ${SODIUM_LIBRARY} Threads::Threads)
+        CURL::libcurl ${SODIUM_LIBRARY} Threads::Threads ${_cell_util_libs})
 endif()
 
 # ---- embedded UI ------------------------------------------------------------

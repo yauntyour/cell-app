@@ -130,3 +130,110 @@
 .wstream .thinkline{min-height:26px}
 .wstream .turnmeta{display:none}
 .wstream > .dim{padding:12px 0}
+
+/* =====================================================================
+   6b.5 Teamwork 状态补充：失败 / 等待关卡 / 失败子代理
+   （沿用 06-flow.css 的 .twcard/.wrow/.fdot 语言，只补状态色与新增块）
+   ===================================================================== */
+/* 任务卡是 .pnl-scroll（flex column）的子项：必须禁止压缩。.twcard 自己
+   overflow:hidden，作为 flex item 的 min-height 会退化成 0——任务一多，每张
+   卡都会被裁成容器里的一小条（旧版只有 2 个任务时看不出来）。 */
+.pnl-scroll > .twcard{flex:0 0 auto}
+
+/* waiting / stopped 走 warn（需要用户处理），skipped/queued 保持中性 */
+.twcard.warn{border-color:color-mix(in srgb,var(--warn) 32%,var(--line))}
+.status-orb.warn{background:var(--warn)}
+.run-dot.warn,.frow .wd.warn{background:var(--warn)}
+.fdot.warn{background:var(--warn);animation:breathe 1.8s var(--ease) infinite}
+.fnode.holding .fbox{border-color:color-mix(in srgb,var(--warn) 45%,var(--line));
+  background:color-mix(in srgb,var(--warn) 5%,var(--bg2))}
+
+/* 等待横幅：关卡确认 / 停止后等待恢复 */
+.tw-wait{display:flex;align-items:flex-start;gap:9px;margin:0 0 10px;padding:9px 11px;
+  border:1px solid color-mix(in srgb,var(--warn) 30%,var(--line));border-radius:var(--radius-s);
+  background:color-mix(in srgb,var(--warn) 7%,var(--bg2))}
+.tw-wait-ico{display:flex;flex:none;color:var(--warn);margin-top:1px}
+.tw-wait-main{flex:1;min-width:0}
+.tw-wait-title{font-size:12.5px;font-weight:600;color:var(--fg)}
+.tw-wait-hint{margin-top:2px;font-size:11.5px;line-height:1.55;color:var(--fg3)}
+.tw-wait-acts{display:flex;align-items:center;gap:6px;flex:none}
+.tw-wait-acts .btn{height:26px}
+
+/* 失败原因：完整 error（旧实现只有截断 60 字的 pill），长文可折叠滚动 */
+.tw-err{margin:0 0 10px;border:1px solid color-mix(in srgb,var(--bad) 34%,var(--line));
+  border-radius:var(--radius-s);background:color-mix(in srgb,var(--bad) 6%,var(--bg2));overflow:hidden}
+.tw-err-hd{display:flex;align-items:center;gap:6px;padding:7px 10px;cursor:pointer;
+  list-style:none;font-size:12px;font-weight:600;color:var(--bad)}
+.tw-err-hd::-webkit-details-marker{display:none}
+.tw-err-hd .uico{flex:none;width:14px;height:14px}
+.tw-err-hd .grow{flex:1;min-width:0}
+.tw-err-n{font-family:var(--mono);font-size:10px;font-weight:400;color:var(--fg4)}
+.tw-err-text{margin:0;padding:0 10px 9px;font-family:var(--mono);font-size:11.5px;line-height:1.65;
+  color:var(--fg2);white-space:pre-wrap;word-break:break-word;overflow:auto;max-height:220px}
+
+/* 失败子代理 */
+.tw-subh{margin:2px 0 4px;font-family:var(--mono);font-size:10.5px;font-weight:600;
+  letter-spacing:.04em;color:var(--bad)}
+.wrow.bad{background:color-mix(in srgb,var(--bad) 7%,transparent)}
+.wrow.bad:hover{background:color-mix(in srgb,var(--bad) 13%,transparent)}
+.wrow .wpill{display:inline-flex;align-items:center;flex:none;height:16px;padding:0 7px;
+  border-radius:var(--radius-full);font-size:10px;font-weight:600;line-height:16px}
+.wrow .wpill.bad{color:var(--bad);background:color-mix(in srgb,var(--bad) 13%,transparent)}
+.wrow .wpill.warn{color:var(--warn);background:color-mix(in srgb,var(--warn) 13%,transparent)}
+.wrow .wpill.idle{color:var(--fg3);background:var(--raise)}
+
+/* =====================================================================
+   6b.6 Worker 浮窗新增块：任务说明 / 进度时间线 / 等待 / 失败 / 结束
+   ===================================================================== */
+.ww-info{margin:0 0 10px}
+.ww-works{display:flex;align-items:flex-start;gap:8px}
+.ww-works-lab{flex:none;padding-top:2px;font-family:var(--mono);font-size:9.5px;letter-spacing:.09em;
+  text-transform:uppercase;color:var(--fg4)}
+.ww-works-txt{min-width:0;font-size:12.5px;line-height:1.6;color:var(--fg);word-break:break-word}
+.ww-chips{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:7px}
+.ww-chip{padding:1px 7px;border-radius:var(--radius-full);background:var(--raise);
+  font-family:var(--mono);font-size:10px;line-height:16px;color:var(--fg3);white-space:nowrap}
+.ww-chips .btn{height:22px;padding:0 7px;font-size:11px}
+
+.ww-prog{margin:0 0 10px;padding-top:8px;border-top:1px solid var(--line)}
+.ww-prog-hd{display:flex;align-items:center;gap:6px;margin-bottom:5px;
+  font-family:var(--mono);font-size:10px;letter-spacing:.07em;text-transform:uppercase;color:var(--fg4)}
+.ww-prog-hd .grow{flex:1}
+.ww-prog-count{font-family:var(--mono);font-size:9.5px;color:var(--fg4)}
+.ww-timeline{display:flex;flex-direction:column;gap:4px}
+.ww-note{display:flex;align-items:flex-start;gap:7px;font-size:11.5px;line-height:1.55;color:var(--fg2)}
+.ww-note-t{flex:none;min-width:32px;padding-top:1px;font-family:var(--mono);font-size:10px;color:var(--fg4)}
+.ww-note .ntopic{flex:none;padding:0 6px;font-size:9.5px;line-height:15px}
+.ww-note-b{min-width:0;word-break:break-word;overflow-wrap:anywhere}
+
+.ww-wait{display:flex;align-items:flex-start;gap:10px;margin:0 0 8px;padding:11px 12px;
+  border:1px dashed var(--line2);border-radius:var(--radius-s);background:var(--bg2)}
+.ww-wait-dot{flex:none;width:7px;height:7px;margin-top:5px;border-radius:50%;background:var(--accent);
+  animation:breathe 1.4s var(--ease) infinite}
+.ww-wait-main{flex:1;min-width:0}
+.ww-wait-hd{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--fg)}
+.ww-wait-clock{margin-left:auto;font-size:11px;color:var(--accent)}
+.ww-wait-hint{margin-top:3px;font-size:11.5px;line-height:1.55;color:var(--fg4)}
+
+.ww-ended{display:flex;align-items:center;gap:9px;margin:0 0 8px;padding:10px 11px;
+  border:1px solid var(--line);border-radius:var(--radius-s);background:var(--bg2)}
+.ww-ended-ico{display:flex;flex:none;color:var(--fg3)}
+.ww-ended-main{flex:1;min-width:0;font-size:12px;line-height:1.55;color:var(--fg2)}
+.ww-ended-hint{margin-top:1px;font-size:11px;color:var(--fg4)}
+.ww-ended .ww-acts{margin-top:0}
+
+.ww-fail{margin:0 0 10px;padding:10px 11px;
+  border:1px solid color-mix(in srgb,var(--bad) 36%,var(--line));border-radius:var(--radius-s);
+  background:color-mix(in srgb,var(--bad) 7%,var(--bg2))}
+.ww-fail-hd{display:flex;align-items:center;gap:7px;margin-bottom:6px}
+.ww-fail-ico{display:flex;flex:none;color:var(--bad)}
+.ww-fail-title{font-size:12.5px;font-weight:650;color:var(--fg)}
+.ww-fail-hd .pill{height:18px;padding:0 7px;font-size:10px}
+.ww-fail-sub{margin:8px 0 3px;font-family:var(--mono);font-size:9.5px;letter-spacing:.08em;
+  text-transform:uppercase;color:var(--fg4)}
+.ww-err{margin:0;font-family:var(--mono);font-size:11px;line-height:1.65;color:var(--fg2);
+  white-space:pre-wrap;word-break:break-word;overflow:auto;max-height:132px}
+.ww-acts{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:8px}
+.ww-acts .btn{height:24px;padding:0 8px;font-size:11px}
+.ww-stream > .wmsg:first-child{margin-top:0;border-top:0;padding-top:0}
+

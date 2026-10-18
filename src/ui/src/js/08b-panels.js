@@ -201,20 +201,13 @@ var PNL = {
   inited: false,
   files: { path: '', stack: [], data: null, err: '', loading: false, loadedCwd: '' },
   git: { status: null, worktrees: [], commits: [], err: '', loading: false, nonRepo: false, loadedCwd: '', root: '', repoName: '' },
-  term: { entries: new Map(), busy: false, histIdx: -1, draft: '', focusPending: false }
+  term: { views: new Map() } // 终端：每个工作区一个 CellTerm view（会话由 08c-term.js 持有）
 };
 
 function pnlResetCwd(cwd) {
   PNL.cwd = cwd;
   PNL.files = { path: '', stack: [], data: null, err: '', loading: false, loadedCwd: '' };
   PNL.git = { status: null, worktrees: [], commits: [], err: '', loading: false, nonRepo: false, loadedCwd: '', root: '', repoName: '' };
-}
-
-function pnlTermEntries() {
-  var key = PNL.cwd || '';
-  var arr = PNL.term.entries.get(key);
-  if (!arr) { arr = []; PNL.term.entries.set(key, arr); }
-  return arr;
 }
 
 // 让面板铺满 #dockBody：dockBody 自带内边距时用负边距抵消（新旧外壳 CSS 都成立）
@@ -1973,169 +1966,212 @@ function pnlPaintGit(wrap, ctx) {
 }
 
 /* =====================================================================
-   6. 终端面板（terminal）：命令输入 + 历史输出 + 退出码 / 耗时
+   6. 终端面板（terminal）：真实终端（PTY shell + VT 模拟器）
+   ---------------------------------------------------------------------
+   终端不再是"命令表单 + 执行按钮"：08c-term.js 提供 window.CellTerm
+   （VT 解析/渲染 + 会话控制器 + 演示模式假 shell），这一节只负责面板外壳
+   与会话生命周期：
+     · 每个工作区一个真实 shell 会话（view 按 ws 缓存），切页签不重启；
+     · 面板重绘时把 view.root 重新挂到新容器，不重放 backlog、不闪屏；
+     · 后端由 08c-term.js 通过 term.open / term.input / term.resize /
+       term.close 驱动，输出走 SSE 的 term.out / term.exit 事件。
    ===================================================================== */
 
-function pnlRenderTerm(body, ctx) {
-  var wrap = pnlEl('div', 'pnl pnl-term');
-  pnlFit(wrap, body);
+// 从容器里找回对应的 CellTerm view（按钮闭包用，不依赖渲染顺序）
+function pnlTermViewOf(host) {
+  var node = host && host.querySelector ? host.querySelector('.ct-root') : null;
+  if (!node) return null;
+  var it = PNL.term.views.values();
+  for (var r = it.next(); !r.done; r = it.next()) {
+    if (r.value && r.value.root === node) return r.value;
+  }
+  return null;
+}
+
+function pnlTermStateText(st) {
+  if (!st) return '';
+  if (st.kind === 'connecting') return '连接中…';
+  if (st.kind === 'ready') return '就绪';
+  if (st.kind === 'demo') return '演示模式';
+  if (st.kind === 'exited') return '已退出' + (st.code == null ? '' : ' (exit ' + st.code + ')');
+  if (st.kind === 'error') return '不可用';
+  return st.text || '';
+}
+
+function pnlTermApplyState(el, st) {
+  if (!el) return;
+  var txt = pnlTermStateText(st);
+  var cls = 'tp-state';
+  if (st && st.kind === 'ready') cls += ' ok';
+  else if (st && (st.kind === 'exited' || st.kind === 'error')) cls += ' bad';
+  else if (st && st.kind === 'connecting') cls += ' wait';
+  el.className = cls;
+  el.textContent = txt;
+  if (txt) el.title = (st && st.text) || txt;
+  else el.removeAttribute('title');
+}
+
+function pnlTermNotice(icon, title, desc) {
+  var box = pnlEl('div', 'tp-notice');
+  var ic = pnlEl('div', 'tp-notice-ico');
+  ic.innerHTML = pnlIcon(icon);
+  box.appendChild(ic);
+  box.appendChild(pnlEl('div', 'tp-notice-title', title));
+  if (desc) box.appendChild(pnlEl('div', 'tp-notice-desc', desc));
+  return box;
+}
+
+// 终端面板外壳（head / host / foot + 工具按钮）。构建与更新分开：
+// dock 的重复重绘走 pnlTermUpdateInPlace，绝不摘掉 .ct-root——摘掉会让
+// .ct-ime 失焦，用户后续按键全部丢失。
+function pnlTermChrome(wrap, ctx) {
   var head = pnlEl('div', 'pnl-head tp-head');
   var ic = pnlEl('span', 'tp-head-ico');
   ic.innerHTML = pnlIcon('squareTerminal');
   var title = pnlEl('span', 'tp-title', '终端');
-  var cwdEl = pnlEl('span', 'tp-cwd mono trunc', ctx.cwd || '没有工作区');
+  var cwdEl = pnlEl('span', 'tp-cwd mono trunc grow', ctx.cwd || '没有工作区');
   cwdEl.title = ctx.cwd || '';
-  cwdEl.classList.add('grow');
-  var clearBtn = pnlIconBtn('trash', '清空终端输出', pnlTermClear);
-  clearBtn.classList.add('tp-clear');
-  clearBtn.disabled = !pnlTermEntries().length;
-  head.append(ic, title, cwdEl, clearBtn);
-  var out = pnlEl('div', 'tp-out');
-  out.setAttribute('role', 'log');
-  var form = pnlEl('div', 'tp-form');
-  var row = pnlEl('div', 'tp-inputrow');
-  var prompt = pnlEl('span', 'tp-prompt mono', '$');
-  var input = pnlEl('input', 'tp-input mono');
-  input.type = 'text';
-  input.setAttribute('spellcheck', 'false');
-  input.setAttribute('autocomplete', 'off');
-  input.placeholder = ctx.cwd ? '输入命令，Ctrl+Enter 执行' : '先打开一个工作区';
-  input.disabled = !ctx.cwd || PNL.term.busy;
-  var runBtn = pnlEl('button', 'btn sm primary tp-run', PNL.term.busy ? '执行中…' : '执行');
-  runBtn.type = 'button';
-  runBtn.disabled = input.disabled;
-  runBtn.onclick = function () { pnlTermRun(input.value); };
-  input.onkeydown = pnlTermKeys;
-  row.append(prompt, input, runBtn);
-  var hint = pnlEl('div', 'tp-hint', PNL.term.busy
-    ? '命令执行中…'
-    : (ctx.cwd ? 'Ctrl+Enter 执行 · ↑↓ 历史 · 输出限高滚动' : '打开一个工作区后即可执行命令'));
-  form.append(row, hint);
-  wrap.append(head, out, form);
+  var stateEl = pnlEl('span', 'tp-state', '');
+  var host = pnlEl('div', 'tp-host');
+
+  var copyBtn = pnlIconBtn('copy', '复制选中内容（Ctrl+Shift+C）', function () {
+    var v = pnlTermViewOf(host);
+    if (!v || !window.CellTerm || !CellTerm.copySelection) return;
+    Promise.resolve(CellTerm.copySelection(v)).then(function (ok) {
+      pnlToast(ok ? '已复制选中内容' : '没有选中内容', ok ? 'ok' : 'warn');
+    }).catch(function () {});
+  });
+  var clearBtn = pnlIconBtn('trash', '清屏（保留回看历史）', function () {
+    var v = pnlTermViewOf(host);
+    if (v && window.CellTerm && CellTerm.clearBuffer) CellTerm.clearBuffer(v);
+  });
+  var restartBtn = pnlIconBtn('rotate', '重启终端会话', function () {
+    var v = pnlTermViewOf(host);
+    if (!v || !window.CellTerm || !CellTerm.restart) return;
+    pnlTermApplyState(stateEl, { kind: 'connecting', text: '正在重启…' });
+    Promise.resolve(CellTerm.restart(v)).catch(function () {});
+  });
+  head.append(ic, title, cwdEl, stateEl, copyBtn, clearBtn, restartBtn);
+
+  var foot = pnlEl('div', 'tp-foot');
+  foot.appendChild(pnlEl('span', 'tp-foot-txt',
+    'Tab 补全 · ↑↓ 历史 · Ctrl+Shift+C/V 复制粘贴 · Shift+PgUp/PgDn 回看'));
+  wrap.append(head, host, foot);
+  return { wrap: wrap, head: head, host: host, cwdEl: cwdEl, stateEl: stateEl, foot: foot };
+}
+
+function pnlTermBuild(body, ctx) {
+  var wrap = pnlEl('div', 'pnl pnl-term');
+  pnlFit(wrap, body);
+  var ui = pnlTermChrome(wrap, ctx);
   body.appendChild(wrap);
-  pnlPaintTermEntries(out);
-  if (PNL.term.focusPending) {
-    PNL.term.focusPending = false;
-    try { input.focus(); } catch (e) {}
-  }
+  return ui;
 }
 
-function pnlPaintTermEntries(out) {
-  var arr = pnlTermEntries();
-  out.replaceChildren();
-  if (!arr.length) {
-    var empty = pnlEl('div', 'tp-empty');
-    var ic = pnlEl('div', 'tp-empty-ico');
-    ic.innerHTML = pnlIcon('terminal');
-    empty.appendChild(ic);
-    empty.appendChild(pnlEl('div', 'tp-empty-title', '终端就绪'));
-    empty.appendChild(pnlEl('div', 'tp-empty-desc', '试试 git status / ls / python build_ui.py --html（演示模式有示例输出）'));
-    out.appendChild(empty);
+// 只改外壳里的可变内容（cwd / 状态徽标 / onStatus 闭包），不动 DOM 结构。
+function pnlTermUpdate(ui, ctx) {
+  if (!ui) return null;
+  var cwd = ctx.cwd || '没有工作区';
+  if (ui.cwdEl) {
+    if (ui.cwdEl.textContent !== cwd) ui.cwdEl.textContent = cwd;
+    if (ui.cwdEl.title !== (ctx.cwd || '')) ui.cwdEl.title = ctx.cwd || '';
+  }
+  var view = pnlTermViewOf(ui.host);
+  if (view) {
+    view.onStatus = function (st) { view.status = st; pnlTermApplyState(ui.stateEl, st); };
+    pnlTermApplyState(ui.stateEl, view.status || null);
+  }
+  return view;
+}
+
+function pnlRenderTerm(body, ctx) {
+  var ui = pnlTermBuild(body, ctx);
+  var host = ui.host, stateEl = ui.stateEl;
+
+  if (!ctx.cwd) {
+    host.appendChild(pnlTermNotice('squareTerminal', '先打开一个工作区',
+      '终端需要一个工作目录：用左侧「打开工作区」选一个目录后即可使用真实 shell。'));
     return;
   }
-  for (var i = 0; i < arr.length; i++) out.appendChild(pnlTermEntry(arr[i]));
-  out.scrollTop = out.scrollHeight;
-}
-
-function pnlTermEntry(rec) {
-  var bad = rec.error || (rec.code != null && rec.code !== 0);
-  var wrap = pnlEl('div', 'tp-entry' + (rec.running ? ' running' : '') + (bad ? ' bad' : ''));
-  var line = pnlEl('div', 'tp-cmdline');
-  line.appendChild(pnlEl('span', 'tp-prompt mono', '$'));
-  var cmd = pnlEl('span', 'tp-cmd mono', rec.cmd);
-  cmd.title = rec.cmd;
-  line.appendChild(cmd);
-  line.appendChild(pnlEl('span', 'grow'));
-  var meta = pnlEl('span', 'tp-meta num');
-  if (rec.running) {
-    meta.textContent = '执行中…';
-  } else {
-    if (rec.code != null) meta.appendChild(pnlEl('span', 'tp-exit ' + (rec.code === 0 ? 'ok' : 'bad'), 'exit ' + rec.code));
-    if (rec.ms) meta.appendChild(pnlEl('span', 'tp-dur', pnlDur(rec.ms)));
-  }
-  line.appendChild(meta);
-  wrap.appendChild(line);
-  if (rec.error) wrap.appendChild(pnlEl('pre', 'tp-stderr', rec.error));
-  var stdout = pnlStripAnsi(rec.stdout || '').replace(/\s+$/, '');
-  if (stdout) wrap.appendChild(pnlEl('pre', 'tp-stdout', stdout));
-  var stderr = pnlStripAnsi(rec.stderr || '').replace(/\s+$/, '');
-  if (stderr) wrap.appendChild(pnlEl('pre', 'tp-stderr', stderr));
-  if (rec.truncated) wrap.appendChild(pnlEl('div', 'tp-trunc-note', '输出过长，已截断'));
-  if (rec.running) {
-    var run = pnlEl('div', 'tp-running');
-    run.appendChild(pnlEl('span', 'pnl-spin'));
-    run.appendChild(pnlEl('span', null, '执行中…'));
-    wrap.appendChild(run);
-  }
-  return wrap;
-}
-
-async function pnlTermRun(cmd) {
-  cmd = String(cmd == null ? '' : cmd).trim();
-  if (!cmd || PNL.term.busy) return;
-  var ctx = pnlCtx();
-  if (!ctx.cwd) { pnlToast('先打开一个工作区，再执行命令', 'bad'); return; }
-  PNL.term.busy = true;
-  PNL.term.histIdx = -1;
-  PNL.term.draft = '';
-  var arr = pnlTermEntries();
-  var rec = { cmd: cmd, stdout: '', stderr: '', code: null, ms: 0, running: true, error: '', truncated: false };
-  arr.push(rec);
-  if (arr.length > 60) arr.splice(0, arr.length - 60);
-  pnlRepaint('terminal');
-  var t0 = Date.now();
-  var out = await pnlApi('term.exec', pnlArgs({ cmd: cmd, timeout_s: 120 }));
-  rec.running = false;
-  rec.ms = Date.now() - t0;
-  if (!out || out.ok === false) {
-    rec.error = (out && out.error) || '命令执行失败';
-  } else {
-    rec.stdout = out.output || '';
-    rec.stderr = out.stderr || '';
-    rec.code = (out.exit_code == null) ? 0 : Number(out.exit_code);
-    rec.truncated = !!out.truncated;
-    if (out.duration_ms != null) rec.ms = Number(out.duration_ms);
-  }
-  PNL.term.busy = false;
-  PNL.term.focusPending = true;
-  pnlRepaint('terminal');
-}
-
-function pnlTermKeys(ev) {
-  if (ev.isComposing) return;
-  if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey || !ev.shiftKey)) {
-    ev.preventDefault();
-    pnlTermRun(ev.currentTarget.value);
+  if (!window.CellTerm || typeof CellTerm.mount !== 'function') {
+    host.appendChild(pnlTermNotice('alert', '终端组件未加载',
+      '缺少 src/ui/src/js/08c-term.js：运行 python build_ui.py 重新生成页面后刷新。'));
+    pnlTermApplyState(stateEl, { kind: 'error', text: '终端组件缺失' });
     return;
   }
-  if (ev.key === 'ArrowUp') { ev.preventDefault(); pnlTermHist(-1); return; }
-  if (ev.key === 'ArrowDown') { ev.preventDefault(); pnlTermHist(1); return; }
-}
 
-function pnlTermHist(dir) {
-  var arr = pnlTermEntries();
-  var cmds = [];
-  for (var i = arr.length - 1; i >= 0; i--) if (arr[i].cmd && !arr[i].running) cmds.push(arr[i].cmd);
-  if (!cmds.length) return;
-  var inp = document.querySelector('.pnl-term .tp-input');
-  if (!inp) return;
-  if (dir < 0) {
-    if (PNL.term.histIdx < 0) PNL.term.draft = inp.value;
-    PNL.term.histIdx = Math.min(PNL.term.histIdx + 1, cmds.length - 1);
-    inp.value = cmds[PNL.term.histIdx] || '';
+  var key = ctx.ws || ctx.cwd;
+  ui.wrap.dataset.pnlKey = key;
+  var view = PNL.term.views.get(key);
+  if (view && view.root) {
+    // 复用：把终端根节点重新挂进新容器（不重启 shell、不重放 backlog），
+    // 并把状态回调重新绑到本次渲染的徽标上（旧闭包指向已丢弃的节点）
+    host.appendChild(view.root);
+    view.onStatus = function (st) { view.status = st; pnlTermApplyState(stateEl, st); };
+    if (CellTerm.refit) { try { CellTerm.refit(view); } catch (e) {} }
+    pnlTermApplyState(stateEl, view.status || null);
   } else {
-    PNL.term.histIdx = Math.max(PNL.term.histIdx - 1, -1);
-    inp.value = PNL.term.histIdx < 0 ? (PNL.term.draft || '') : (cmds[PNL.term.histIdx] || '');
+    if (view) { try { CellTerm.unmount(view); } catch (e) {} }
+    view = CellTerm.mount(host, {
+      ws: ctx.ws,
+      cwd: ctx.cwd,
+      onStatus: function (st) {
+        view.status = st;
+        pnlTermApplyState(stateEl, st);
+      },
+    });
+    if (view) {
+      view.__pnlKey = key;
+      PNL.term.views.set(key, view);
+    }
   }
-  try { inp.setSelectionRange(inp.value.length, inp.value.length); } catch (e) {}
+  pnlTermApplyState(stateEl, (view && view.status) || null);
 }
 
-function pnlTermClear() {
-  var arr = pnlTermEntries();
-  if (!arr.length) return;
-  arr.length = 0;
-  PNL.term.histIdx = -1;
-  pnlRepaint('terminal');
+// dock 原地重绘（SSE / 状态变化触发的 Panels.render('terminal')）：容器与
+// .ct-root 都不动，只刷新 cwd / 状态徽标并 refit，键盘焦点不会被打断。
+function pnlTermUpdateInPlace(body, ctx) {
+  if (!body || body.dataset.pnl !== 'terminal') return false;
+  if (!ctx.cwd) return false;
+  var wrap = body.firstElementChild;
+  if (!wrap || !wrap.classList || !wrap.classList.contains('pnl-term')) return false;
+  if (wrap.dataset.pnlKey !== (ctx.ws || ctx.cwd)) return false;
+  var ui = {
+    wrap: wrap,
+    host: wrap.querySelector('.tp-host'),
+    cwdEl: wrap.querySelector('.tp-cwd'),
+    stateEl: wrap.querySelector('.tp-state'),
+  };
+  if (!ui.host) return false;
+  var view = pnlTermUpdate(ui, ctx);
+  if (!view || !view.root) return false;
+  if (window.CellTerm && CellTerm.refit) { try { CellTerm.refit(view); } catch (e) {} }
+  return true;
+}
+
+// 面板重建（switch workspace / dock 页签 / 强制重绘）会 replaceChildren，
+// .ct-root 在"同一帧内"被摘掉再挂回：Chromium 在摘除完成的瞬间就派发 blur
+// 且此时 isConnected 仍是 true，单靠 blur 事件判断不可靠。所以重建前先
+// 记下"焦点在终端里"，重建后由这里在下一帧把焦点还回去（不抢普通点击）。
+function pnlTermFocusInBody(body) {
+  try {
+    var a = document.activeElement;
+    return !!(body && a && a.classList && a.classList.contains('ct-ime') && body.contains(a));
+  } catch (e) { return false; }
+}
+
+function pnlTermFocusRestore(body) {
+  var host = body && body.querySelector ? body.querySelector('.tp-host') : null;
+  if (!host) return false;
+  var view = pnlTermViewOf(host);
+  if (!view || !view.imeEl) return false;
+  // 等一帧：让 CellTerm.refit 的 measure/applyResize 先跑完再接管焦点
+  window.requestAnimationFrame(function () {
+    if (!view.root || !view.root.isConnected || !view.imeEl) return;
+    if (document.activeElement === view.imeEl) return;
+    try { view.imeEl.focus({ preventScroll: true }); } catch (e) {}
+  });
+  return true;
 }
 
 /* =====================================================================
@@ -2157,11 +2193,18 @@ var Panels = {
       if (!this.has(name)) return;
       var ctx = pnlCtx(tab);
       if (ctx.cwd !== PNL.cwd) pnlResetCwd(ctx.cwd);
+      // 终端面板支持原地更新：dock 的重复重绘（SSE / 状态变化）不再
+      // replaceChildren，.ct-root 不被摘出文档，.ct-ime 焦点与输入不中断。
+      // 重建前记下"焦点在终端里"：replaceChildren 摘掉 .ct-root 后 Chromium
+      // 只把 activeElement 移回 BODY，blur 时机不可靠，重建后由这里还焦点
+      var termHadFocus = name === 'terminal' && pnlTermFocusInBody(body);
+      if (name === 'terminal' && pnlTermUpdateInPlace(body, ctx)) return;
       body.replaceChildren();
       body.dataset.pnl = name;
       if (name === 'files') pnlRenderFiles(body, ctx);
       else if (name === 'git') pnlRenderGit(body, ctx);
       else pnlRenderTerm(body, ctx);
+      if (termHadFocus) pnlTermFocusRestore(body);
     } catch (e) {
       if (window.console) console.error('[panels] render ' + name, e);
       try {

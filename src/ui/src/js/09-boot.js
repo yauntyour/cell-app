@@ -14,6 +14,7 @@ function wireEvents() {
   $('#btnTerminal').onclick = () => openDock('terminal');
   $('#btnWsFilter').onclick = () => toggleSidebarFilter();
   $('#btnSidebarToggle').onclick = () => toggleSidebar();
+  $('#btnSidebarTop').onclick = () => toggleSidebar();
   $('#navBack').onclick = () => Nav.back();
   $('#navFwd').onclick = () => Nav.fwd();
   $('#navRefresh').onclick = () => Nav.refresh();

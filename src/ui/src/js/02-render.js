@@ -211,7 +211,7 @@ function tabAddMenu(ev) {
       const row = el('div', 'mrow');
       row.appendChild(el('span', 'mtitle trunc', baseName(c.cwd)));
       row.appendChild(el('span', 'mpath trunc', c.cwd));
-      b.appendChild(iconEl('archive', 'sm'));
+      b.appendChild(iconEl('folder', 'sm'));
       b.appendChild(row);
       b.appendChild(el('span', 'tiny dim', relTime(c.ts)));
       b.title = c.cwd;
@@ -456,6 +456,8 @@ function openDock(name) {
   dockSave();
   schedule('dock', renderDock);
   if (window.Panels && Panels.has(S.dock) && S.active) schedule('dockRefresh', () => Panels.refresh(S.dock));
+  // 打开 Teamwork 时永远拉一次最新列表：任务可能是在面板关着的时候建的
+  if (S.dock === 'teamwork' && S.active) schedule('dockRefresh', () => refreshTeamwork(S.active, true));
 }
 function closeDock() {
   S.dockOpen = false;
@@ -533,12 +535,23 @@ function renderStartPanel(body, t) {
 
 /* ---- 侧栏：收起 / 筛选 ------------------------------------------- */
 const SIDEBAR_KEY = 'cell.sidebarCollapsed';
+function paintSidebarToggle() {
+  const col = !!S.sidebarCollapsed;
+  // 顶栏按钮在侧栏收起后仍然可见——它是重新打开侧栏的入口
+  const top = $('#btnSidebarTop');
+  if (top) {
+    top.setAttribute('aria-pressed', col ? 'false' : 'true');
+    top.title = (col ? '展开侧栏' : '收起侧栏') + ' (Ctrl+B)';
+    top.classList.toggle('on', col);
+  }
+}
 function restoreSidebarState() {
   let col = false;
   try { col = localStorage.getItem(SIDEBAR_KEY) === '1'; } catch (e) {}
   S.sidebarCollapsed = col;
   const sb = $('#sidebar');
   if (sb) sb.classList.toggle('collapsed', col);
+  paintSidebarToggle();
 }
 function toggleSidebar() {
   const sb = $('#sidebar');
@@ -546,6 +559,7 @@ function toggleSidebar() {
   const col = sb.classList.toggle('collapsed');
   S.sidebarCollapsed = col;
   try { localStorage.setItem(SIDEBAR_KEY, col ? '1' : '0'); } catch (e) {}
+  paintSidebarToggle();
   setTimeout(() => Layout.apply(), 180);
 }
 function toggleSidebarFilter() {

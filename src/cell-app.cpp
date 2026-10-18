@@ -324,6 +324,8 @@ namespace app
                 core.begin_shutdown();
                 http.stop();
                 core.wait_idle(std::chrono::seconds(30));
+                // every pty shell and its reader thread goes down with the app
+                app::term::shutdown_all();
                 core.shutdown();
             }
             else
@@ -490,6 +492,8 @@ namespace app
                 core.begin_shutdown();
                 http.stop();
                 core.wait_idle(std::chrono::seconds(30));
+                // every pty shell and its reader thread goes down with the app
+                app::term::shutdown_all();
                 core.shutdown();
                 long long reqs = 0, tools = 0;
                 for (auto *c : core.all_ctxs())

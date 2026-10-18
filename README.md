@@ -47,7 +47,7 @@ All shots are from the self-contained demo mode
 | `src/cell-app.cpp` | entry point: args, window, navigation, JS-bridge fallback, exit guard |
 | `src/cell-app-core.hpp` | `app_core`: the **workspace registry** (`workspace_ctx` per directory: history + runner + turn worker + approvals + box state), config/vault, the **command bus** (`exec_command`) and the **event bus** (multi-sink fan-out; every event carries its `ws`) |
 | `src/cell-app-http.hpp` | web service: `GET /` (UI), `POST /api/cmd/<name>`, `GET /api/state`, `GET /api/events` (SSE), `GET /api/themes` + `GET /api/theme/<name>` (theme system) |
-| `src/cell-app-tools.hpp` | new desktop-tool commands on the same command bus: `git.*` (status/worktrees/branches/log/numstat/diff/init), `fs.*` (list/read/find) and `term.exec` — see *Git worktrees, files and terminal* below |
+| `src/cell-app-tools.hpp` | new desktop-tool commands on the same command bus: `git.*` (status/worktrees/branches/log/numstat/diff/init), `fs.*` (list/read/find) and `term.*` (real terminal sessions + `term.exec`) — see *Git worktrees, files and terminal* below |
 | `src/ui/src/` | the UI sources: an `index.html` skeleton + `css/*.css` and `js/*.js` layers (vanilla JS + inline CSS, no CDN, no assets). CSS layers run `00-tokens` → `07-motion`; JS layers `00-core` … `09-boot`. Feature panels live in `08b-panels.js` / `08-panels.css`, the composer in `05-composer.js` / `05b-composer.css`, overlays/settings in `06*/07*` |
 | `docs/` | `ui-redesign.md` (design tokens, component rules, panel/API contracts) and `api-tools.md` (git/fs/term command reference) |
 | `src/ui/index.html` | **generated** — the assembled page, the `--ui` dev-loop artifact |
@@ -193,7 +193,9 @@ git.branches {cwd?}                 git.log {cwd?, limit?}
 git.numstat {cwd?}                  git.diff {cwd?, path?, staged?}
 git.init {cwd?}                     fs.list {cwd?, path?}
 fs.read {cwd?, path}                fs.find {cwd?, q, limit?}
-term.exec {cwd?, cmd, timeout_s?}
+term.open {cwd?, cols?, rows?, shell?}   term.input {id, data}
+term.resize {id, cols, rows}            term.close {id}
+term.list                               term.exec {cwd?, cmd, timeout_s?}
 ```
 
 Full request/response shapes and examples for these are in
@@ -242,12 +244,30 @@ generous whitespace. All tokens live in `src/ui/src/css/00-tokens.css`.
 - **Chat** — right-aligned user bubbles, avatar-less assistant prose with a
   22px logo avatar, collapsible reasoning, compact tool rows (policy,
   duration, expandable args/output), per-round token/timing stats, inline
-  approvals, block notices, a streaming caret and an auto-scroll lock. Each
-  finished turn ends with an **edited-files card** (`已编辑 N 个文件` with
-  `+A/-D` per file, click for the diff) and a usage/action footer
-  (`用量 X tok`, copy, retry).
+  approvals, block notices and a streaming caret. Auto-follow yields to the
+  reader: scrolling up during a stream detaches it and shows a *回到底部*
+  button (a new user message or clicking the button re-pins the view). The
+  wait indicator shows the real phase — *等待审批 / 正在推理 / 正在输出 /
+  正在执行 <tool> / 等待模型响应（第 N 轮）* — with an elapsed timer, instead
+  of a single static "thinking" line. When the model creates a Teamwork job
+  via the `tw` tool, the call renders as a structured **团队任务已创建**
+  card (stages, per-child tasks, model/thinking, gate badges and a jump to
+  the panel) instead of raw JSON. Each finished turn ends with an
+  **edited-files card** (`已编辑 N 个文件` with `+A/-D` per file, click
+  for the diff) and a usage/action footer (`用量 X tok`, copy, retry).
 - **Right panel** — a *开始* start page with quick-action cards, plus docked
   tabs for files, Git/Worktree, terminal, Teamwork, notices and archives.
+- **Teamwork** — a live flow chart per job (serial/parallel stages, gates,
+  active-stage glow); jobs refresh on create/run and whenever gate/job/
+  stage/worker progress notices arrive, keeping scroll position and card
+  expansion. Failed jobs show the full failure reason in an error block
+  (not a truncated pill) plus the failed children; a gate pause renders as
+  *等待关卡确认* with run/resume. Clicking a child opens a draggable worker
+  window with its assignment, live status/rounds/tool counts, a progress
+  timeline from notices and its transcript — a timestamped waiting card is
+  shown until the child's first round is persisted, and failures show the
+  error and stop polling.
+- **Notices** — folded notice cards grouped by sender+topic+path; gate/job
 - **Files** — breadcrumb file browser with per-extension icons, a file
   preview overlay (line numbers, markdown rendering, JSON pretty-print,
   binary detection, 5000-line cap) and `Ctrl+P` quick-open across the
@@ -257,14 +277,16 @@ generous whitespace. All tokens live in `src/ui/src/css/00-tokens.css`.
   remove), a *new worktree* dialog (branch, base, path, create-branch and
   open-after-create toggles; defaults to `<repo>/.worktrees/<branch>` and
   excludes that directory via `.git/info/exclude`) and recent commits.
-- **Terminal** — run commands in the workspace (`term.exec`), with command
-  history, stdout/stderr, exit code/ duration and a clear action.
+- **Terminal** — a **real terminal** in the workspace: a persistent shell on a
+  pseudoconsole (ConPTY / pty) rendered by an in-page VT emulator, with a block
+  cursor, colour, scrollback, Tab completion, arrows/history, Ctrl+C, resize
+  (the pty is resized with the panel), copy/paste and IME. One shell per
+  workspace survives tab/panel switches, and a page refresh reattaches to the
+  same shell and replays its recent output. Dock repaints caused by streaming
+  events update the panel in place, so they never take keyboard focus away
+  mid-typing. `term.exec` (one-shot commands) remains available on the command
+  bus.
 
-See [`docs/ui-redesign.md`](docs/ui-redesign.md) for the full design system,
-component recipes and the panel integration contract.
-- **Teamwork** — a live SVG flow chart per job (serial/parallel stages, gate
-  diamonds, active-stage glow, animated edges), draggable worker windows
-  streaming a child's transcript, run/stop/resume controls, and reports.
 - **Notices** — folded notice cards grouped by sender+topic+path; gate/job
   notices are pinned with a one-click *resume*; new notices animate in. The
   panel sends cross-session notices (target handle + body) and every card
@@ -306,6 +328,9 @@ answered in one client closes the dialog in the others. Every request (SSE
 streams included) runs on its own worker thread, so a long command or several
 open tabs can no longer starve the service's accept/read side.
 
+See [`docs/ui-redesign.md`](docs/ui-redesign.md) for the full design system,
+component recipes and the panel integration contract.
+
 ## Git worktrees, files and terminal
 
 The right panel and the composer's quick cards expose three desktop tools that
@@ -324,9 +349,14 @@ share the same command bus as everything else (`src/cell-app-tools.hpp`):
 - **Files** — `fs.list`, `fs.read` and `fs.find` stay inside the workspace
   directory (path traversal is refused), cap previews at 512 KB / 5000 lines
   and serve the quick-open index (Git-ignored build directories are skipped).
-- **Terminal** — `term.exec` runs a command in the workspace directory with a
-  timeout (default 120 s, `exit_code: 124` on timeout), captures stdout and
-  stderr (256 KB cap) and returns duration; the UI renders a small history.
+- **Terminal** — `term.open` / `term.input` / `term.resize` / `term.close` /
+  `term.list` drive a **persistent shell session** on a real pseudoconsole
+  (Windows ConPTY, POSIX `forkpty`): output streams over the event bus as
+  `term.out` (base64 bytes, rendered by `src/ui/src/js/08c-term.js`), the pty is
+  resized with the panel, and a refreshed page reattaches to the same shell and
+  replays its recent output. `term.exec` runs a one-shot command in the
+  workspace directory with a timeout (default 120 s, `exit_code: 124` on
+  timeout), captures stdout and stderr (256 KB cap) and returns duration.
 
 These commands are local-only like the rest of the API: loopback + Host/Origin
 checks, no CORS, so they cannot be reached from another website.
