@@ -31,6 +31,7 @@
 #include <csignal>
 #include <cstdlib> // std::strtol for the --serve/--headless port parser
 #ifdef _WIN32
+#include <shellapi.h> // NOTIFYICONDATAW / Shell_NotifyIconW — the tray icon
 #include <shobjidl.h> // IFileOpenDialog — the native picker behind host_pick_folder
 #endif
 
@@ -75,6 +76,219 @@ namespace app
         dlg->Release();
         return out;
     }
+
+    // =====================================================================
+    //  tray — closing the window parks the app in the notification area
+    //  instead of quitting. webview.h destroys the window on WM_CLOSE (and
+    //  that tears the process down), so the window proc is replaced with one
+    //  that only hides it: agent turns, the HTTP service and the notice
+    //  watcher keep running. The icon is owned by a hidden window of our own,
+    //  so the shell callbacks never depend on the WebView2 window.
+    // =====================================================================
+    namespace tray
+    {
+        constexpr UINT kMsg = WM_APP + 17;  // shell callback message
+        constexpr UINT kShow = 1;           // menu ids
+        constexpr UINT kQuit = 2;
+        constexpr UINT kIconId = 1;
+
+        static HWND g_main = nullptr;         // the webview window
+        static WNDPROC g_main_proc = nullptr; // its original window proc
+        static HWND g_msg = nullptr;          // hidden helper window owning the icon
+        static HICON g_icon = nullptr;
+        static UINT g_taskbar_created = 0;    // broadcast when Explorer restarts
+        static bool g_quitting = false;       // a real close is in flight
+        static bool g_balloon = false;        // "still running" hint, shown once
+
+        static NOTIFYICONDATAW icon_data()
+        {
+            NOTIFYICONDATAW nid{};
+            nid.cbSize = sizeof(nid);
+            nid.hWnd = g_msg;
+            nid.uID = kIconId;
+            return nid;
+        }
+
+        static bool add_icon()
+        {
+            if (!g_msg)
+                return false;
+            NOTIFYICONDATAW nid = icon_data();
+            nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
+            nid.uCallbackMessage = kMsg;
+            nid.hIcon = g_icon;
+            wcsncpy(nid.szTip, L"cell", sizeof(nid.szTip) / sizeof(nid.szTip[0]) - 1);
+            return Shell_NotifyIconW(NIM_ADD, &nid) != FALSE;
+        }
+
+        static void remove_icon()
+        {
+            if (!g_msg)
+                return;
+            NOTIFYICONDATAW nid = icon_data();
+            Shell_NotifyIconW(NIM_DELETE, &nid);
+        }
+
+        static void restore()
+        {
+            if (!g_main || !IsWindow(g_main))
+                return;
+            ShowWindow(g_main, IsIconic(g_main) ? SW_RESTORE : SW_SHOW);
+            SetForegroundWindow(g_main);
+            SwitchToThisWindow(g_main, TRUE); // foreground lock fallback
+        }
+
+        static void quit()
+        {
+            g_quitting = true;
+            remove_icon();
+            // WM_DESTROY (not WM_CLOSE — that one now hides) ends webview's loop
+            if (g_main && IsWindow(g_main))
+                DestroyWindow(g_main);
+        }
+
+        static void balloon_once()
+        {
+            if (g_balloon || !g_msg)
+                return;
+            g_balloon = true;
+            NOTIFYICONDATAW nid = icon_data();
+            nid.uFlags = NIF_INFO;
+            nid.dwInfoFlags = NIIF_INFO;
+            wcsncpy(nid.szInfoTitle, L"cell", sizeof(nid.szInfoTitle) / sizeof(nid.szInfoTitle[0]) - 1);
+            wcsncpy(nid.szInfo, L"窗口已关闭，程序仍在后台运行；单击托盘图标可恢复。",
+                    sizeof(nid.szInfo) / sizeof(nid.szInfo[0]) - 1);
+            Shell_NotifyIconW(NIM_MODIFY, &nid);
+        }
+
+        static void show_menu(HWND owner)
+        {
+            HMENU m = CreatePopupMenu();
+            if (!m)
+                return;
+            AppendMenuW(m, MF_STRING, kShow, L"显示主窗口");
+            AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
+            AppendMenuW(m, MF_STRING, kQuit, L"退出");
+            SetMenuDefaultItem(m, kShow, FALSE);
+            POINT pt{};
+            GetCursorPos(&pt);
+            // the owner must be foreground or the menu ignores outside clicks
+            SetForegroundWindow(owner);
+            TrackPopupMenuEx(m, TPM_LEFTALIGN | TPM_BOTTOMALIGN | TPM_RIGHTBUTTON,
+                             pt.x, pt.y, owner, nullptr);
+            PostMessageW(owner, WM_NULL, 0, 0);
+            DestroyMenu(m);
+        }
+
+        static LRESULT CALLBACK msg_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
+        {
+            if (msg == kMsg)
+            {
+                // no NIM_SETVERSION: lParam carries the plain mouse message
+                switch (LOWORD(lp))
+                {
+                case WM_LBUTTONUP:
+                case WM_LBUTTONDBLCLK:
+                    restore();
+                    break;
+                case WM_RBUTTONUP:
+                case WM_CONTEXTMENU:
+                    show_menu(hwnd);
+                    break;
+                }
+                return 0;
+            }
+            if (g_taskbar_created && msg == g_taskbar_created)
+            {
+                add_icon(); // Explorer restarted and took the icon with it
+                return 0;
+            }
+            if (msg == WM_COMMAND)
+            {
+                switch (LOWORD(wp))
+                {
+                case kShow:
+                    restore();
+                    return 0;
+                case kQuit:
+                    quit();
+                    return 0;
+                }
+            }
+            return DefWindowProcW(hwnd, msg, wp, lp);
+        }
+
+        static LRESULT CALLBACK main_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
+        {
+            if (msg == WM_CLOSE && !g_quitting)
+            {
+                ShowWindow(hwnd, SW_HIDE);
+                balloon_once();
+                return 0;
+            }
+            return CallWindowProcW(g_main_proc, hwnd, msg, wp, lp);
+        }
+
+        // Hook a live webview window: icon + close interception. Must run on
+        // the UI thread (the one run() pumps messages on) before run().
+        static bool attach(HWND main)
+        {
+            if (!main || g_main)
+                return false;
+            HINSTANCE inst = GetModuleHandleW(nullptr);
+            g_icon = reinterpret_cast<HICON>(
+                LoadImageW(inst, MAKEINTRESOURCEW(1), IMAGE_ICON,
+                           GetSystemMetrics(SM_CXSMICON),
+                           GetSystemMetrics(SM_CYSMICON), LR_DEFAULTCOLOR));
+            if (!g_icon)
+                // the build is not UNICODE, so IDI_APPLICATION is an A-flavoured
+                // MAKEINTRESOURCE — cast it for the explicit W entry point
+                g_icon = LoadIconW(nullptr, reinterpret_cast<LPCWSTR>(IDI_APPLICATION));
+
+            WNDCLASSEXW wc{};
+            wc.cbSize = sizeof(wc);
+            wc.hInstance = inst;
+            wc.lpszClassName = L"cell_tray";
+            wc.lpfnWndProc = msg_proc;
+            RegisterClassExW(&wc);
+            // a plain hidden window, not HWND_MESSAGE: the tray menu calls
+            // SetForegroundWindow(owner) so an outside click dismisses it, and
+            // a message-only window can never be foreground
+            g_msg = CreateWindowExW(WS_EX_TOOLWINDOW, L"cell_tray", L"", WS_POPUP,
+                                    0, 0, 0, 0, nullptr, nullptr, inst, nullptr);
+            if (!g_msg)
+                return false;
+            g_taskbar_created = RegisterWindowMessageW(L"TaskbarCreated");
+            if (!add_icon())
+            {
+                DestroyWindow(g_msg);
+                g_msg = nullptr;
+                return false;
+            }
+
+            g_main_proc = reinterpret_cast<WNDPROC>(
+                SetWindowLongPtrW(main, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(main_proc)));
+            if (!g_main_proc)
+            {
+                DestroyWindow(g_msg);
+                g_msg = nullptr;
+                return false;
+            }
+            g_main = main;
+            return true;
+        }
+
+        static void detach()
+        {
+            g_quitting = true;
+            remove_icon();
+            if (g_msg)
+            {
+                DestroyWindow(g_msg);
+                g_msg = nullptr;
+            }
+        }
+    } // namespace tray
 #endif
 
     static void print_usage()
@@ -177,7 +391,9 @@ namespace app
             {
                 if (HWND h = FindWindowW(L"webview", nullptr))
                 {
-                    if (IsIconic(h))
+                    // a window parked in the tray is hidden, not iconic — it
+                    // needs an explicit show or the relaunch looks like a no-op
+                    if (!IsWindowVisible(h) || IsIconic(h))
                         ShowWindow(h, SW_RESTORE);
                     SetForegroundWindow(h);
                     SwitchToThisWindow(h, TRUE); // 前台锁失效时的兜底
@@ -481,7 +697,24 @@ namespace app
                 log.info("app", std::format("window up: workspaces={} active={} model={} providers={} sandbox={} serve={}",
                                             core.ctxs.size(), core.active_ws, core.cfg.model_label(), core.cfg.providers.size(),
                                             cell::box::mode_name(cell::box::sandbox_mode()), serve_port));
-                w.run(); // blocks until the window closes
+#ifdef _WIN32
+                // desktop shell only: smoke runs terminate themselves and must
+                // not leave an icon (or a close that hides) behind
+                if (!smoke)
+                {
+                    HWND hwnd = nullptr;
+                    if (auto win = w.window(); win.ok())
+                        hwnd = reinterpret_cast<HWND>(win.value());
+                    if (tray::attach(hwnd))
+                        log.info("app", "tray: closing the window parks the app in the notification area");
+                    else
+                        log.warn("app", "tray: icon install failed - closing the window will quit");
+                }
+#endif
+                w.run(); // blocks until the window is destroyed (tray → 退出)
+#ifdef _WIN32
+                tray::detach();
+#endif
 
                 // window closed: refuse new commands, stop the service (no
                 // command can arrive afterwards), drain in-flight commands,

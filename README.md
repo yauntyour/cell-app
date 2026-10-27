@@ -3,7 +3,12 @@
 One agent runtime, one web UI, several ways to open it:
 
 - **Desktop**: a native window (WebView2 / WebKitGTK / WKWebView) that loads
-  the same page a browser gets, served by the built-in HTTP service.
+  the same page a browser gets, served by the built-in HTTP service. On
+  Windows, closing the window parks the app in the notification area instead of
+  ending it — the tray icon restores it (单击) or offers 显示主窗口 / 退出 (右键),
+  so running turns, the HTTP service and notice delivery survive; launching the
+  exe again restores the hidden window through the single-instance check.
+  `--headless` and the smoke runs are unaffected.
 - **Web service**: the UI and API exposed over HTTP on `127.0.0.1` only, so a
   browser, a script or another tool on the same machine can drive the same
   workspaces. Requests must be loopback and same-origin (Host + Origin checks,
