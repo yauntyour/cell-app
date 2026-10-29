@@ -180,6 +180,8 @@ model.set {model}
 
 sessions.list {}                    session.select {ws?, id}
 session.new {ws?}
+session.history {ws?, id}           session.archives {ws?, id}
+session.digest {ws?, id}            sessions.search {q}
 
 teamwork.list {ws?}                 teamwork.report {ws?, job, worker}
 teamwork.worker {ws?, job, worker, since?}

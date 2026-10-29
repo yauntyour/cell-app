@@ -8,7 +8,7 @@
        #teamEditor    Teamwork 工作流编辑器
        .cmp-bar       工具条：+ 附件 · 模式 chip · 沙箱 chip · 模型 chip · 发送钮
      .cmp-stat        卡片下状态行（连接点 / 左状态 / 右 token·round）
-     #slashPanel      斜杠命令面板（定位在 .composer-stack 之上）
+     #slashPanel      提示面板（定位在 .composer-stack 之上）：/ 指令 + @ 引用共用
      .cmp-menu        模式/沙箱/模型弹出菜单（fixed，不被卡片 overflow 裁切）
    只引用 00-tokens.css 的令牌；旧 03-molecules 里的 .composer-inner/.inputbox
    规则由本文件的高优先级选择器覆盖（Lead 正在移除旧样式）。
@@ -245,6 +245,16 @@
 .sx-ico .uico{width:13px;height:13px;stroke-width:1.7}
 .sx-main{display:flex;align-items:baseline;gap:7px;min-width:0;flex:none;max-width:58%}
 .sx-name{font-family:var(--mono);font-size:12.5px;font-weight:650;color:var(--accent);white-space:nowrap}
+/* @ 面板：会话名用正文字体（不是路径），右侧挂一个「会话」小标签 */
+.sx-name.sx-sess{
+  font-family:var(--sans);font-size:12.5px;font-weight:600;color:var(--fg);
+  overflow:hidden;text-overflow:ellipsis;max-width:100%;
+}
+.sx-tag{
+  flex:none;font-size:10px;line-height:1;padding:2px 5px;border-radius:var(--radius-full);
+  background:var(--raise2);color:var(--fg3);white-space:nowrap;
+}
+.sx-row.sel .sx-tag{background:var(--accent-soft);color:var(--accent)}
 .sx-usage{
   font-family:var(--mono);font-size:11px;color:var(--fg3);
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:190px;

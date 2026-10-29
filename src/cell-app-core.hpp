@@ -1175,6 +1175,151 @@ namespace app
             }
             read_session_archives(id, archives);
         }
+
+        // -----------------------------------------------------------------
+        //  输入栏 @ 补全：把一个会话「压缩」成上下文摘要
+        //  （前端以 session:```…``` 内容块的形式插进输入框）
+        // -----------------------------------------------------------------
+        // 平铺成一行（连续空白折成一个空格），超长按 UTF-8 边界截断
+        static std::string one_line(std::string s, size_t cap = 260)
+        {
+            std::string out;
+            out.reserve(s.size());
+            bool pending_space = false;
+            for (char ch : s)
+            {
+                if (ch == '\n' || ch == '\r' || ch == '\t' || ch == ' ')
+                {
+                    pending_space = !out.empty();
+                    continue;
+                }
+                if (pending_space)
+                {
+                    out += ' ';
+                    pending_space = false;
+                }
+                out += ch;
+            }
+            while (!out.empty() && out.back() == ' ')
+                out.pop_back();
+            if (out.size() > cap)
+            {
+                size_t cut = cap;
+                while (cut > 0 && ((unsigned char)out[cut] & 0xC0) == 0x80)
+                    cut--;
+                out = out.substr(0, cut) + "…";
+            }
+            return out;
+        }
+        // 会话里已有的压缩摘要（compact 落盘的 assistant 摘要消息；老会话可能
+        // 把它折叠进 system 块）。取最新的一条，没有就返回空串。
+        static std::string summary_of_transcript(const nlohmann::json &messages)
+        {
+            std::string best;
+            for (const auto &m : messages)
+            {
+                if (!m.is_object())
+                    continue;
+                std::string text = content_text(m);
+                size_t at = summary_mark_at(text);
+                if (at == std::string::npos)
+                    continue;
+                std::string body = text.substr(at);
+                while (!body.empty() && (body.back() == '\n' || body.back() == ' '))
+                    body.pop_back();
+                if (!body.empty())
+                    best = std::move(body); // 后出现的更新
+            }
+            return best;
+        }
+        // 没有现成摘要时现场压一份：最近 10 轮的首段 + 会话开头的第一条用户
+        // 目标（任务意图），总长受 budget 约束。不调模型、不改动被引用的会话。
+        static std::string digest_of_transcript(const nlohmann::json &messages, size_t budget = 2400)
+        {
+            struct row
+            {
+                std::string role, text;
+            };
+            std::vector<row> rows;
+            for (const auto &m : messages)
+            {
+                if (!m.is_object())
+                    continue;
+                std::string role = m.value("role", "");
+                if (role != "user" && role != "assistant")
+                    continue;
+                std::string text = cell::chat::message_display_text(m);
+                if (text.empty())
+                    text = content_text(m);
+                text = one_line(std::move(text));
+                if (text.empty())
+                    continue;
+                rows.push_back({role, std::move(text)});
+            }
+            if (rows.empty())
+                return "";
+            const size_t kRecent = 10;
+            size_t from = rows.size() > kRecent ? rows.size() - kRecent : 0;
+            std::vector<size_t> pick;
+            size_t first_user = rows.size();
+            for (size_t i = 0; i < rows.size(); i++)
+                if (rows[i].role == "user")
+                {
+                    first_user = i;
+                    break;
+                }
+            if (first_user < from)
+                pick.push_back(first_user); // 会话目标通常最早，别被窗口切掉
+            for (size_t i = from; i < rows.size(); i++)
+                pick.push_back(i);
+            std::string body;
+            size_t used = 0;
+            for (size_t idx : pick)
+            {
+                std::string line = (rows[idx].role == "user" ? "- 用户：" : "- 助手：") + rows[idx].text;
+                if (used > 0 && used + line.size() + 1 > budget)
+                    break;
+                used += line.size() + 1;
+                body += line;
+                body += '\n';
+            }
+            return body;
+        }
+        // @ 引用一个会话：优先已压缩摘要，否则现场摘录（source 标明来源）
+        nlohmann::json session_digest(const std::string &id)
+        {
+            nlohmann::json messages = nlohmann::json::array(), archives = nlohmann::json::array();
+            read_session_files(id, messages, archives);
+            auto file = cell::session_dir(id) / "messages.jsonl";
+            size_t turns = 0;
+            for (const auto &m : messages)
+            {
+                if (!m.is_object())
+                    continue;
+                std::string role = m.value("role", "");
+                if (role == "user" || role == "assistant")
+                    ++turns;
+            }
+            std::string summary = summary_of_transcript(messages);
+            std::string source = "summary";
+            if (summary.empty())
+            {
+                summary = digest_of_transcript(messages);
+                source = "digest";
+            }
+            summary = cap_text(std::move(summary), 3200);
+            nlohmann::json r = ok();
+            r["id"] = id;
+            r["ws"] = cell::session_prefix(id);
+            r["title"] = cached_title(file);
+            r["msgs"] = (long long)messages.size();
+            r["turns"] = (long long)turns;
+            r["archives"] = (long long)archives.size();
+            r["source"] = source;
+            r["summary"] = std::move(summary);
+            return r;
+        }
+
         nlohmann::json build_state_for(workspace_ctx *c, bool with_history, bool with_teamwork = true)
         {
             nlohmann::json st;
@@ -2043,6 +2188,26 @@ namespace app
                     r["entries"] = history_entries(messages);
                     r["archives"] = std::move(archives);
                     return r;
+                }
+                // 输入栏 @ 补全：一个会话可以被引用成「上下文摘要」内容块。
+                // 只读：优先用会话自己压缩出的摘要，没有就现场摘录最近若干轮
+                // （不调模型、不改动被引用的会话，见 session_digest）。
+                if (name == "session.digest")
+                {
+                    std::lock_guard<std::mutex> lk(cmd_mx);
+                    std::string id = args.value("id", "");
+                    std::string ws = args.value("ws", "");
+                    if (!cell::is_valid_session_id(id))
+                        return ok_error("invalid session id");
+                    if (ws.empty())
+                        ws = cell::session_prefix(id);
+                    if (cell::session_prefix(id) != ws)
+                        return ok_error("session does not belong to this workspace");
+                    std::error_code ec;
+                    if (!std::filesystem::is_directory(cell::session_dir(id), ec))
+                        return ok_error("session not found");
+                    cell::async_io::flush(); // 排队中的写入必须先落盘，否则读到半截
+                    return session_digest(id);
                 }
                 // one compaction archive (saved/<name>.jsonl) of a session
                 if (name == "session.archive")

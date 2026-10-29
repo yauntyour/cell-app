@@ -395,6 +395,20 @@ const Mock = {
         }
         return Promise.resolve({ ok: true, results: out, total: total });
       }
+      case 'session.digest': {
+        const id = args.id || sid;
+        const row = this.sessions().find(x => x.id === id) || { title: '演示会话', msgs: 0 };
+        return Promise.resolve({
+          ok: true, id: id, ws: args.ws || ws, title: row.title, msgs: row.msgs || 0,
+          turns: 12, archives: 1, source: 'summary',
+          summary: '# Here is a summary that captures the previous conversation:\n'
+            + '目标：把 WebUI 的会话体验重做一遍（消息流 / 工具调用 / 回合产物 / 输入栏）。\n'
+            + '- 已确认设计令牌与三区外壳结构，输入栏按悬浮卡片实现。\n'
+            + '- 消息流：用户右对齐气泡，助手消息带 22px logo 头像。\n'
+            + '- 工具调用收成紧凑行卡；回合结束插入「已编辑 N 个文件」卡与用量行。\n'
+            + '- 未完成：输入栏的 @ 引用（文件 / 会话）补全。',
+        });
+      }
       case 'session.history': {
         const id = args.id || sid;
         const entries = this.historyEntries(ws, id);

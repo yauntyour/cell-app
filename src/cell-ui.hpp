@@ -991,7 +991,7 @@ body.locked{overflow:hidden}
        #teamEditor    Teamwork 工作流编辑器
        .cmp-bar       工具条：+ 附件 · 模式 chip · 沙箱 chip · 模型 chip · 发送钮
      .cmp-stat        卡片下状态行（连接点 / 左状态 / 右 token·round）
-     #slashPanel      斜杠命令面板（定位在 .composer-stack 之上）
+     #slashPanel      提示面板（定位在 .composer-stack 之上）：/ 指令 + @ 引用共用
      .cmp-menu        模式/沙箱/模型弹出菜单（fixed，不被卡片 overflow 裁切）
    只引用 00-tokens.css 的令牌；旧 03-molecules 里的 .composer-inner/.inputbox
    规则由本文件的高优先级选择器覆盖（Lead 正在移除旧样式）。
@@ -1228,6 +1228,16 @@ body.locked{overflow:hidden}
 .sx-ico .uico{width:13px;height:13px;stroke-width:1.7}
 .sx-main{display:flex;align-items:baseline;gap:7px;min-width:0;flex:none;max-width:58%}
 .sx-name{font-family:var(--mono);font-size:12.5px;font-weight:650;color:var(--accent);white-space:nowrap}
+/* @ 面板：会话名用正文字体（不是路径），右侧挂一个「会话」小标签 */
+.sx-name.sx-sess{
+  font-family:var(--sans);font-size:12.5px;font-weight:600;color:var(--fg);
+  overflow:hidden;text-overflow:ellipsis;max-width:100%;
+}
+.sx-tag{
+  flex:none;font-size:10px;line-height:1;padding:2px 5px;border-radius:var(--radius-full);
+  background:var(--raise2);color:var(--fg3);white-space:nowrap;
+}
+.sx-row.sel .sx-tag{background:var(--accent-soft);color:var(--accent)}
 .sx-usage{
   font-family:var(--mono);font-size:11px;color:var(--fg3);
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:190px;
@@ -8577,6 +8587,11 @@ function highlightBody(body) {
    focusInput / autosize / buildSlash / renderChips / syncComposerText /
    addFiles / enterSlash / applySlash / execSlash / layoutSlash / slashSel；
    并新增 window.ComposerUI = { init, render, refresh, ... } 供 boot 优先调用。
+
+   #slashPanel 一个浮层两种来源（见 docs/ui-redesign.md §5.9）：文本以 / 开头 →
+   斜杠指令候选；光标处有「空白之后的 @…」→ 引用候选（fs.list 列文件/目录，
+   sessions.search 搜会话；选中会话时用 session.digest 取上下文摘要，
+   以 session:```…``` 内容块写进输入框）。
    ===================================================================== */
 
 const CMP_PLACEHOLDER = '描述你想构建的内容，/ 调用指令，@ 文件或对话';
@@ -8617,6 +8632,15 @@ let slashSel = 0;
 let cmpMenu = null;        // 当前打开的 composer 弹出菜单
 let cmpModelFetching = false;
 let cmpMetaSig = '';       // 状态行右侧 token/round 的缓存签名
+
+/* @ 引用面板：与斜杠面板共用同一个浮层（#slashPanel），只是候选来源不同。
+   文件/目录走 ls 工具（fs.list）逐层列举，会话走 sessions.search 做检索；
+   选中会话时先取它的上下文摘要（session.digest），再以
+     session:```…```  的代码块形式写进输入框。 */
+const AT_FILE_LIMIT = 40;
+const AT_SESSION_LIMIT = 8;
+let atState = { key: '', busy: false, files: [], sessions: [] };
+let atTimer = 0;
 
 /* ---------- I1. 构建 DOM ------------------------------------------- */
 function cmpHost() { return $('#composerInner') || $('.composer-inner'); }
@@ -8924,11 +8948,12 @@ function onComposerKeydown(ev) {
   const entries = (panel && panel._entries) || [];
 
   if (open) {
-    if (ev.key === 'ArrowDown') { ev.preventDefault(); moveSlashSel(1); return; }
-    if (ev.key === 'ArrowUp') { ev.preventDefault(); moveSlashSel(-1); return; }
-    if (ev.key === 'Tab' && !ev.shiftKey) { ev.preventDefault(); if (entries[slashSel]) applySlash(entries[slashSel]); return; }
-    if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); enterSlash(); return; }
-    if (ev.key === 'Escape') { ev.preventDefault(); closeSlash(); return; }
+    // 面板自己消费掉的键不再冒泡：全局 Escape 处理器看到面板已关会顺手把右栏也关掉
+    if (ev.key === 'ArrowDown') { ev.preventDefault(); ev.stopPropagation(); moveSlashSel(1); return; }
+    if (ev.key === 'ArrowUp') { ev.preventDefault(); ev.stopPropagation(); moveSlashSel(-1); return; }
+    if (ev.key === 'Tab' && !ev.shiftKey) { ev.preventDefault(); ev.stopPropagation(); if (entries[slashSel]) applySlash(entries[slashSel]); return; }
+    if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); ev.stopPropagation(); enterSlash(); return; }
+    if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); closeSlash(); return; }
   }
   if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); sendCurrent(); return; }
   if (ev.key === 'Tab' && ev.shiftKey) { ev.preventDefault(); cycleComposerMode(); return; }
@@ -8937,7 +8962,7 @@ function onComposerKeydown(ev) {
 
 function closeSlash() {
   const p = $('#slashPanel');
-  if (p) { p.classList.remove('show'); p._entries = []; }
+  if (p) { p.classList.remove('show'); p._entries = []; p._mode = ''; }
 }
 
 function cycleComposerMode() {
@@ -9729,22 +9754,14 @@ function slashArgItems(cmdName) {
 function slashRowIcon(e) {
   if (e.kind === 'cmd') return CMP_CMD_ICONS[e.name] || 'command';
   if (e.kind === 'arg' && e.cmd && CMP_ARG_ICONS[e.cmd.ctx]) return CMP_ARG_ICONS[e.cmd.ctx];
+  if (e.kind === 'dir') return 'folder';
+  if (e.kind === 'file') return 'file';
+  if (e.kind === 'sess') return 'message';
   return 'info';
 }
 
-function buildSlash(forceClose) {
-  const panel = $('#slashPanel');
-  if (!panel) return;
-  const t = curTab();
-  const v = t ? (t.composer.text || '') : '';
-  // team 模式下输入行是隐藏的（换成工作流编辑器），斜杠面板无从补全，
-  // 留着只会是一块浮在工作流编辑器上、关不掉的死面板
-  const teamMode = !!t && t.composer.mode === 'team';
-  if (forceClose || teamMode || !v || !v.startsWith('/') || v.includes('\n')) {
-    panel.classList.remove('show');
-    panel._entries = [];
-    return;
-  }
+/* 斜杠候选：指令名模糊匹配，或某条指令的参数候选 */
+function slashEntries(v) {
   const sp = v.indexOf(' ');
   const token = sp < 0 ? v : v.slice(0, sp);
   const rest = sp < 0 ? '' : v.slice(sp + 1);
@@ -9762,9 +9779,123 @@ function buildSlash(forceClose) {
     }
     if (!entries.length && c) entries.push({ kind: 'hint', desc: c.desc, cmd: c });
   }
-  if (!entries.length) { panel.classList.remove('show'); panel._entries = []; return; }
-  if (slashSel >= entries.length) slashSel = 0;
+  return { title: title, entries: entries };
+}
 
+/* ---------- I8b. @ 引用：文件 / 目录 / 会话 -------------------------
+   输入行里出现「空白之后的 @…」时，同一个面板换成引用候选：
+     · 文件 / 目录 → 复用 ls 工具（fs.list）逐层列举。选目录 = 继续往下翻，
+       选文件 = 把相对路径写进输入框（模型可用 fs 工具读内容）；
+     · 会话 → 空查询列最近会话，有查询走 sessions.search 做内容检索。
+       选中时取该会话的上下文摘要（session.digest），以
+         session:```…```  内容块的形式插入输入框。               */
+function atTokenOf(text, caret) {
+  text = String(text || '');
+  let pos = (caret == null || caret < 0) ? text.length : Math.min(caret, text.length);
+  let i = pos;
+  while (i > 0 && !/\s/.test(text[i - 1])) i--;
+  const frag = text.slice(i, pos);
+  if (!frag || frag[0] !== '@' || frag.length > 160) return null; // 邮箱等普通 @ 文本不触发
+  return { start: i, end: pos, query: frag.slice(1) };
+}
+
+/* "src/ui/05" → { dir:"src/ui", base:"05" }：dir 交给 fs.list，base 用于过滤 */
+function atSplitPath(q) {
+  const i = q.lastIndexOf('/');
+  return i < 0 ? { dir: '', base: q } : { dir: q.slice(0, i), base: q.slice(i + 1) };
+}
+
+function atTitle(q) {
+  return q ? '@ ' + q : '@ 引用文件或会话';
+}
+
+/* 空查询时的会话候选：当前工作区在前，其余按最近使用排序 */
+function atRecentSessions(t) {
+  const mine = [], other = [];
+  for (const s of (S.sessions || [])) {
+    if (!s || !s.id) continue;
+    (t && s.ws === t.ws ? mine : other).push(s);
+  }
+  const byTime = (a, b) => (b.mtime || 0) - (a.mtime || 0);
+  return mine.sort(byTime).concat(other.sort(byTime)).slice(0, AT_SESSION_LIMIT);
+}
+
+/* 拉候选（带 140ms 防抖）：结果按 key 缓存 15s，落定后重绘面板 */
+function atFetch(t, at) {
+  const key = t.ws + '\u0000' + at.query;
+  if (atState.key === key && (Date.now() - (atState.ts || 0)) < 15000) return;
+  atState = { key: key, busy: true, files: [], sessions: [], ts: 0 };
+  clearTimeout(atTimer);
+  const q = at.query;
+  atTimer = setTimeout(() => {
+    const sp = atSplitPath(q);
+    const jobs = [];
+    jobs.push(api('fs.list', { ws: t.ws, path: sp.dir }).then(out => {
+      if (atState.key !== key) return;
+      const list = (out && out.ok !== false && Array.isArray(out.entries)) ? out.entries : [];
+      const rows = [];
+      for (const e of list) {
+        if (!e || !e.name) continue;
+        if (sp.base && !fuzzy(sp.base, e.name)) continue;
+        rows.push(e);
+      }
+      rows.sort((a, b) => ((b.dir ? 1 : 0) - (a.dir ? 1 : 0))
+        || (fuzzy(sp.base, b.name) - fuzzy(sp.base, a.name)));
+      // 空查询（刚敲下 @）先给少量条目，好让下面的「最近会话」不用滚动就能看到
+      atState.files = rows.slice(0, sp.base ? AT_FILE_LIMIT : 12);
+    }).catch(() => {}));
+    // 会话：路径形态的查询（含 /）明显是在翻目录，不去搜会话
+    if (!q) atState.sessions = atRecentSessions(t);
+    else if (q.indexOf('/') < 0) {
+      jobs.push(api('sessions.search', { q: q }).then(out => {
+        if (atState.key !== key) return;
+        atState.sessions = ((out && Array.isArray(out.results)) ? out.results : []).slice(0, AT_SESSION_LIMIT);
+      }).catch(() => {}));
+    }
+    Promise.all(jobs).then(() => {
+      if (atState.key !== key) return;
+      atState.busy = false;
+      atState.ts = Date.now();
+      if (curTab() === t) buildSlash(); // 候选到位：重绘（面板在此才真正弹出）
+    });
+  }, q ? 140 : 0);
+}
+
+function atCandidates(t, at) {
+  atFetch(t, at);
+  if (atState.key !== (t.ws + '\u0000' + at.query)) return [];
+  const out = [];
+  for (const e of atState.files) {
+    out.push({
+      kind: e.dir ? 'dir' : 'file',
+      name: e.name,
+      path: e.path || e.name,
+      desc: e.dir ? '目录' : fmtBytes(e.size || 0),
+    });
+  }
+  for (const s of atState.sessions) {
+    const title = s.title || shortId(s.id);
+    const hit = (s.hits && s.hits[0]) ? String(s.hits[0].text || '') : '';
+    const snippet = hit.replace(/\s+/g, ' ').trim();
+    // 命中片段与标题是同一段话（标题只是被截断了）就不再重复显示
+    const same = !!snippet && (snippet === title || snippet.indexOf(title.slice(0, 16)) === 0);
+    out.push({
+      kind: 'sess',
+      id: s.id,
+      ws: s.ws || '',
+      title: title,
+      desc: (!same && snippet)
+        ? snippet.slice(0, 90)
+        : (relTime(s.mtime) + (s.ws && s.ws !== t.ws ? ' · 其他工作区' : '')),
+    });
+  }
+  return out;
+}
+
+/* 候选渲染（斜杠 / @ 共用一套行样式，只是行内容与底部键位不同） */
+function sxPaint(panel, title, entries, mode) {
+  if (slashSel >= entries.length) slashSel = 0;
+  if (slashSel < 0) slashSel = 0;
   panel.replaceChildren();
   const head = el('div', 'sx-head');
   head.appendChild(el('span', 'sx-title', title));
@@ -9774,7 +9905,7 @@ function buildSlash(forceClose) {
   const list = el('div', 'sx-list');
   panel._rows = [];
   entries.forEach((e, i) => {
-    const row = el('div', 'sx-row' + (i === slashSel ? ' sel' : ''));
+    const row = el('div', 'sx-row' + (i === slashSel ? ' sel' : '') + (mode === 'at' ? ' at' : ''));
     row.setAttribute('role', 'option');
     const ico = el('span', 'sx-ico');
     ico.innerHTML = iconHtml(slashRowIcon(e));
@@ -9787,12 +9918,18 @@ function buildSlash(forceClose) {
     } else if (e.kind === 'arg') {
       main.appendChild(el('span', 'sx-name', e.label));
       if (e.insert && e.insert !== e.label) main.appendChild(el('span', 'sx-usage', String(e.insert).slice(0, 24)));
+    } else if (e.kind === 'file' || e.kind === 'dir') {
+      // 表头已经写明当前目录，行里只留名字（目录带尾斜杠），不再重复整条路径
+      main.appendChild(el('span', 'sx-name', e.name + (e.kind === 'dir' ? '/' : '')));
+    } else if (e.kind === 'sess') {
+      main.appendChild(el('span', 'sx-name sx-sess', e.title));
+      main.appendChild(el('span', 'sx-tag', '会话'));
     } else {
       main.appendChild(el('span', 'sx-name', '说明'));
     }
     row.appendChild(main);
     if (e.desc) row.appendChild(el('span', 'sx-desc trunc', e.desc));
-    row.onclick = () => { slashSel = i; applySlash(entries[i]); };
+    if (e.kind !== 'hint' || e.cmd) row.onclick = () => { slashSel = i; applySlash(entries[i]); };
     list.appendChild(row);
     panel._rows.push(row);
   });
@@ -9800,16 +9937,41 @@ function buildSlash(forceClose) {
 
   const foot = el('div', 'sx-foot');
   foot.innerHTML = '<span class="sx-k"><kbd>↑</kbd><kbd>↓</kbd> 选择</span>'
-    + '<span class="sx-k"><kbd>Tab</kbd> 补全</span>'
-    + '<span class="sx-k"><kbd>Enter</kbd> 执行</span>'
+    + (mode === 'at'
+      ? '<span class="sx-k"><kbd>Tab</kbd><kbd>Enter</kbd> 插入</span>'
+      : '<span class="sx-k"><kbd>Tab</kbd> 补全</span><span class="sx-k"><kbd>Enter</kbd> 执行</span>')
     + '<span class="sx-k"><kbd>Esc</kbd> 关闭</span>';
   panel.appendChild(foot);
 
   panel.scrollTop = 0; // 换了候选列表就从顶部看起（否则沿用上一轮的滚动位置）
+  panel._mode = mode;
   panel.classList.add('show');
   panel._entries = entries;
   layoutSlash();
   moveSlashSel(0);
+}
+
+function buildSlash(forceClose) {
+  const panel = $('#slashPanel');
+  if (!panel) return;
+  const t = curTab();
+  if (!t) return closeSlash();
+  // team 模式下输入行是隐藏的（换成工作流编辑器），补全面板无从对应，
+  // 留着只会是一块浮在工作流编辑器上、关不掉的死面板
+  if (forceClose || t.composer.mode === 'team') return closeSlash();
+  const v = t.composer.text || '';
+  if (v && v[0] === '/' && v.indexOf('\n') < 0) {
+    const r = slashEntries(v);
+    if (!r.entries.length) return closeSlash();
+    return sxPaint(panel, r.title, r.entries, 'slash');
+  }
+  const ta = $('#ta');
+  const at = atTokenOf(v, ta ? ta.selectionStart : v.length);
+  if (!at) return closeSlash();
+  const entries = atCandidates(t, at);
+  if (!entries.length) return closeSlash(); // 候选还在路上：落定后由 atFetch 回调重绘
+  panel._at = at;
+  sxPaint(panel, atTitle(at.query), entries, 'at');
 }
 
 function moveSlashSel(delta) {
@@ -9832,9 +9994,65 @@ function moveSlashSel(delta) {
   }
 }
 
+/* 接受一条 @ 候选。dir → 继续往下翻目录；file → 写入相对路径；
+   sess → 取该会话的上下文摘要，作为 session:```…``` 内容块插入。 */
+function applyAt(t, e) {
+  const panel = $('#slashPanel');
+  const at = (panel && panel._at) || atTokenOf(t.composer.text || '', null);
+  closeSlash();
+  if (!at) return;
+  if (e.kind === 'dir') return atSplice(t, at, '@' + String(e.path || e.name).replace(/\/$/, '') + '/');
+  if (e.kind === 'file') return atSplice(t, at, '@' + String(e.path || e.name) + ' ');
+  if (e.kind === 'sess') return atInsertSession(t, at, e);
+}
+
+/* 把光标处的 @ 片段换成 insert：插完把插入符放到插入内容之后并重算面板
+   （目录补全以 / 结尾 → 面板继续列出该目录；文件补全带空格 → 面板收起） */
+function atSplice(t, at, insert) {
+  const cur = t.composer.text || '';
+  let start = at.start, end = at.end;
+  if (cur.slice(start, end)[0] !== '@') {
+    // 等待异步结果期间文本变了：退化成「在当前位置插入」，不破坏用户输入
+    const ta0 = $('#ta');
+    const p = clamp(ta0 ? ta0.selectionStart : cur.length, 0, cur.length);
+    start = end = p;
+  }
+  const next = cur.slice(0, start) + insert + cur.slice(end);
+  syncComposerText(next);
+  const ta = $('#ta');
+  const pos = start + insert.length;
+  if (ta) { ta.focus(); try { ta.setSelectionRange(pos, pos); } catch (err) {} }
+  buildSlash();
+}
+
+/* 会话引用：向核心要一份上下文摘要（已有压缩摘要优先，否则现场摘录），
+   折成 markdown 代码块插入。形如：
+     session:```
+     会话「标题」· N 条消息 · 已有压缩摘要
+     - 用户：…
+     ```                                                        */
+async function atInsertSession(t, at, e) {
+  // 会话可能来自任意工作区：用会话自己的 ws（留空则由核心从 id 反推），
+  // 不能硬塞当前标签页的 ws —— 否则跨工作区引用会被判「不属于该工作区」
+  const out = await api('session.digest', { ws: e.ws || '', id: e.id });
+  if (!out || out.ok === false) {
+    toast((out && out.error) || '读取会话摘要失败', 'bad');
+    return;
+  }
+  let body = String(out.summary || '').trim();
+  if (!body) { toast('该会话没有可引用的上下文', 'bad'); return; }
+  // 摘要里若自带三连反引号，会把外层代码块提前结束：打散它
+  body = body.replace(/```/g, '``\u200b`');
+  const head = '会话「' + (out.title || e.title || shortId(e.id)) + '」· '
+    + Number(out.msgs || 0) + ' 条消息 · '
+    + (out.source === 'summary' ? '已有压缩摘要' : '压缩摘录');
+  atSplice(t, at, 'session:```\n' + head + '\n' + body + '\n```\n');
+}
+
 function applySlash(e) {
   const t = curTab();
   if (!t) return;
+  if (e.kind === 'file' || e.kind === 'dir' || e.kind === 'sess') { applyAt(t, e); return; }
   const panel = $('#slashPanel');
   const entries = (panel && panel._entries) || [];
   if (e.kind === 'cmd') {
@@ -9910,10 +10128,14 @@ function runSlash(t, it) {
 function enterSlash() {
   const t = curTab();
   if (!t) return;
-  const v = (t.composer.text || '').trim();
-  const it = slashIntent(v);
   const panel = $('#slashPanel');
   const entries = (panel && panel._entries) || [];
+  if (panel && panel._mode === 'at') { // @ 引用面板：Enter = 接受当前候选
+    if (entries[slashSel]) applySlash(entries[slashSel]);
+    return;
+  }
+  const v = (t.composer.text || '').trim();
+  const it = slashIntent(v);
   if (it.kind === 'exec') { // 已写完的指令：按输入执行
     closeSlash();
     syncComposerText('');
@@ -12126,6 +12348,20 @@ const Mock = {
           if (hits.length) { total += hits.length; out.push({ id: s.id, ws: s.ws, cwd: s.cwd, title: s.title, mtime: s.mtime, hits, more: 0 }); }
         }
         return Promise.resolve({ ok: true, results: out, total: total });
+      }
+      case 'session.digest': {
+        const id = args.id || sid;
+        const row = this.sessions().find(x => x.id === id) || { title: '演示会话', msgs: 0 };
+        return Promise.resolve({
+          ok: true, id: id, ws: args.ws || ws, title: row.title, msgs: row.msgs || 0,
+          turns: 12, archives: 1, source: 'summary',
+          summary: '# Here is a summary that captures the previous conversation:\n'
+            + '目标：把 WebUI 的会话体验重做一遍（消息流 / 工具调用 / 回合产物 / 输入栏）。\n'
+            + '- 已确认设计令牌与三区外壳结构，输入栏按悬浮卡片实现。\n'
+            + '- 消息流：用户右对齐气泡，助手消息带 22px logo 头像。\n'
+            + '- 工具调用收成紧凑行卡；回合结束插入「已编辑 N 个文件」卡与用量行。\n'
+            + '- 未完成：输入栏的 @ 引用（文件 / 会话）补全。',
+        });
       }
       case 'session.history': {
         const id = args.id || sid;
