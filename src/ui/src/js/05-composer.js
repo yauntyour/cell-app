@@ -468,6 +468,8 @@ function paintSandboxChip(mode) {
 /* S.model 是「供应商:模型」（核心的 model_label），但输入栏的圆钮只放模型名：
    供应商在底部状态行里已经写着了，再塞进按钮只会把名字挤成省略号。 */
 function modelShortName() {
+  // 未选模型时 model_label() 只剩供应商名，当成模型名显示会让人以为已选好
+  if (!S.modelSet) return '';
   const m = String(S.model || '');
   const p = String(S.provider || '');
   if (p && m.slice(0, p.length + 1) === p + ':') return m.slice(p.length + 1);
@@ -479,12 +481,30 @@ function isCurrentModel(m) { return !!m && (m === S.model || m === modelShortNam
 /* 状态里的模型名补齐回「供应商:模型」，别让 S.model 在两种形状间来回变 */
 function modelLabelOf(m) { return S.provider ? S.provider + ':' + m : m; }
 
+/* 未选模型：有供应商但模型为空（后端 state.model_set=false）。切供应商会清空
+   current_model，此时 model_label() 只剩供应商名，chip 上看起来像「已选好」——
+   必须用权威标志判断，不能靠「有没有冒号」猜字符串形状。 */
+function needsModel() { return !!S.provider && S.modelSet === false; }
+
+/* 强制提醒：未选模型时不允许开始会话 —— 红字提示 + chip 抖一下 + 直接弹模型
+   菜单（菜单打开时会自动拉列表，用户不必再去找入口） */
+function demandModel(msg) {
+  toast(msg || '还没有选择模型 —— 先选一个模型才能开始会话', 'bad', 5000);
+  const chip = $('#modelChip');
+  if (!chip) return;
+  chip.classList.add('shake');
+  setTimeout(() => chip.classList.remove('shake'), 620);
+  if (cmpMenu && cmpMenu.kind === 'model') reopenModelMenu();
+  else toggleModelMenu(chip);
+}
+
 function paintModelChip(t) {
   const chip = $('#modelChip');
   if (!chip) return;
   const lv = Number((S.settings || {}).think_level || 0);
   const lvl = THINK_LEVELS[lv] || THINK_LEVELS[0];
-  const name = modelShortName() || '(未选择模型)';
+  const need = !!t && needsModel(); // 有工作区才谈得上「开始会话」
+  const name = need ? '选择模型' : (modelShortName() || '(未选择模型)');
   const qual = String(S.model || '');
   const prov = S.provider || (qual.indexOf(':') > 0 ? qual.slice(0, qual.indexOf(':')) : '');
   chip.innerHTML = '<span class="cmp-chip-ico">' + iconHtml('cpu') + '</span>'
@@ -492,10 +512,13 @@ function paintModelChip(t) {
     + '<span class="cmp-chev">' + iconHtml('chevronDown') + '</span>';
   const nm = chip.querySelector('.cmp-model-name');
   if (nm) nm.textContent = name;
-  chip.title = '模型：' + name
-    + (prov ? '\n供应商：' + prov : '')
-    + '\n思考：' + (lv > 0 ? lvl.name + ' (' + lvl.v + ') · ' + lvl.desc : '关闭')
-    + '\n点击切换模型 / 供应商 / 思考级别';
+  chip.classList.toggle('need', need);
+  chip.title = need
+    ? '未选择模型：供应商 ' + (prov || '?') + ' 已切换，但还没有指定模型\n点这里选一个模型后才能开始会话'
+    : '模型：' + name
+      + (prov ? '\n供应商：' + prov : '')
+      + '\n思考：' + (lv > 0 ? lvl.name + ' (' + lvl.v + ') · ' + lvl.desc : '关闭')
+      + '\n点击切换模型 / 供应商 / 思考级别';
   chip.disabled = !t;
   chip.setAttribute('aria-expanded', cmpMenu && cmpMenu.kind === 'model' ? 'true' : 'false');
 }
@@ -821,6 +844,9 @@ async function sendCurrent() {
   if (atts.length) {
     text += (text ? '\n\n' : '') + '[附件]\n' + atts.map(a => '- ' + a.path).join('\n');
   }
+  // 没选模型就发出去只会白跑一个回合（引擎报错的那行还会被转录重载冲掉），
+  // 所以在这里截住：内容留在输入框里，弹菜单让用户当场选
+  if (needsModel()) { closeSlash(); demandModel(); return; }
   closeSlash();
   const optimistic = { id: uid(), role: 'user', text: text, ts: nowSec() };
   t.msgs.push(optimistic);
@@ -1055,6 +1081,8 @@ function toggleModelMenu(anchor) {
     align: 'right',
     build: menu => {
       menu.appendChild(cmpMenuHead('模型'));
+      // 未选模型是「发不出去」的硬条件：菜单一开就把话说清楚
+      if (needsModel()) menu.appendChild(el('div', 'cmp-menu-hint danger', '未选择模型 · 选一个才能开始会话'));
       if (S.models.length) {
         for (const m of S.models) {
           const row = cmpMenuRow('cpu', m, isCurrentModel(m) ? '当前模型' : '', isCurrentModel(m));
@@ -1100,12 +1128,13 @@ function autoFetchModels() {
   if (S.models.length || cmpModelFetching) return;
   fetchModels(false);
 }
+// 返回 Promise<boolean>：切供应商后要等列表回来再提示模型数量
 function fetchModels(force) {
-  if (cmpModelFetching) return;
+  if (cmpModelFetching) return Promise.resolve(false);
   cmpModelFetching = true;
-  cmd('models.fetch', {}).then(out => {
+  return cmd('models.fetch', {}).then(out => {
     cmpModelFetching = false;
-    if (!out || out.ok === false || !Array.isArray(out.models)) return;
+    if (!out || out.ok === false || !Array.isArray(out.models)) return false;
     S.models = out.models;
     if (out.models.length) {
       if (force) toast('已拉取 ' + out.models.length + ' 个模型', 'ok');
@@ -1114,6 +1143,29 @@ function fetchModels(force) {
     } else if (force) {
       toast('供应商未返回模型列表', 'bad');
     }
+    return true;
+  });
+}
+
+/* 切供应商的收尾（/provider 与设置页共用）：旧模型列表属于上一个供应商，
+   后端也已经把 current_model 清空了 —— 这里重拉一次列表并提醒选模型。
+   popMenu=true 时把模型菜单直接弹出来：换供应商本来就是为了换模型。 */
+function afterProviderSwitch(name, popMenu) {
+  S.models = [];
+  renderComposer();
+  const p = fetchModels(false); // 先发出去（同步置位 fetching，挡掉 autoFetchModels 的重复拉取）
+  if (popMenu) {
+    const chip = $('#modelChip');
+    if (chip && !(cmpMenu && cmpMenu.kind === 'model')) toggleModelMenu(chip);
+  }
+  return p.then(ok => {
+    // S.modelSet 不在这里改写：上面的 resync 已经把后端的权威值带回来了
+    // （重选同一个供应商时模型仍有效，乐观置 false 会误报「未选模型」）
+    if (!ok && cmpModelFetching) return; // 另一次拉取还在飞，别报假失败
+    const n = S.models.length;
+    toast(n ? '供应商：' + name + ' · 已拉取 ' + n + ' 个模型，请选择模型后开始会话'
+            : '供应商：' + name + ' · 没能拉到模型列表（检查密钥 / Base URL）',
+          n ? 'ok' : 'warn', 4600);
   });
 }
 function reopenModelMenu() {
@@ -1129,6 +1181,7 @@ async function switchModel(m) {
   const out = await cmd('model.set', { model: m });
   if (!out || out.ok === false) return;
   S.model = modelLabelOf(m);
+  S.modelSet = true;
   renderComposer();
   if (typeof renderFoot === 'function') renderFoot();
   if (typeof renderStatLine === 'function') renderStatLine();
@@ -1778,6 +1831,7 @@ async function execSlash(t, name, arg) {
       return cmd('model.set', { model: arg }).then(out => {
         if (out && out.ok === false) return;
         S.model = modelLabelOf(arg);
+        S.modelSet = true;
         renderComposer();
         if (typeof renderFoot === 'function') renderFoot();
         if (typeof renderStatLine === 'function') renderStatLine();
@@ -1786,7 +1840,9 @@ async function execSlash(t, name, arg) {
     case '/provider':
       if (arg) return cmd('providers.select', { name: arg }).then(out => {
         if (out && out.ok === false) return;
-        return afterSet(out, '供应商：' + arg);
+        // 换供应商会清空模型：resync 之后自动拉一次列表并弹出模型菜单。
+        // 提示统一交给 afterProviderSwitch（它带着拉取结果），不再单独弹「已切换」
+        return resync().then(() => { renderComposer(); return afterProviderSwitch(arg, true); });
       });
       toast('用法：/provider <name>'); break;
     case '/think': {
@@ -2086,6 +2142,8 @@ function refreshTeamworkNow(ws, quiet, force) {
 }
 
 async function submitWorkflow(t, mode) {
+  // 团队任务同样要有模型才能跑：没选就当场提醒，别创建出一个跑不动的任务
+  if (needsModel()) { demandModel(); return; }
   const wf = t.composer.workflow || defaultWorkflow();
   const stages = [];
   for (const st of wf.stages) {

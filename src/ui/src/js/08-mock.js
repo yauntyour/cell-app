@@ -150,9 +150,11 @@ const Mock = {
     const cur = wk.find(w => w.ws === ws) || wk[0] || wk[0];
     const sid = cur ? cur.session : this.sessionOf(this.A);
     const isB = cur && cur.ws === this.B;
+    const cp = (this.providers.find(x => x.current) || {}).name || '';
     return {
       t: 'hello', ws: cur ? cur.ws : this.A, active: this.A, session: sid, cwd: cur ? cur.cwd : this.cwdA,
-      model: this.model, provider: 'openai', sandbox: this.settings.sandbox_mode, tools: true,
+      model: this.model, model_set: String(this.model).indexOf(':') > 0,
+      provider: cp, sandbox: this.settings.sandbox_mode, tools: true,
       providers: this.providers, settings: this.settings, busy: false,
       promptChars: 1240, skills: 3, promptInjected: true,
       history: [],
@@ -516,7 +518,15 @@ const Mock = {
         }, 1400);
         return Promise.resolve({ ok: true });
       }
-      case 'providers.select': return Promise.resolve({ ok: true, providers: this.providers });
+      case 'providers.select': {
+        // 与真实后端一致：换供应商才会重置 current_model（重选同一个保留模型）
+        const p = (this.providers || []).find(x => x.name === args.name);
+        if (!p) return Promise.resolve({ ok: false, error: 'provider not found: ' + args.name });
+        const wasCurrent = !!p.current;
+        for (const q of this.providers) q.current = (q === p);
+        if (!wasCurrent) this.model = p.name;
+        return Promise.resolve({ ok: true, providers: this.providers });
+      }
       case 'providers.rm': this.providers = this.providers.filter(p => p.name !== args.name); return Promise.resolve({ ok: true, providers: this.providers });
       case 'providers.add': this.providers.push({ name: args.name || args.api_style, api_style: args.api_style, base: args.base, proxy: args.proxy || '', has_key: !!args.key, current: false }); return Promise.resolve({ ok: true, name: args.name || args.api_style, providers: this.providers });
       case 'provider.set_key': { const p = this.providers.find(x => x.name === args.name); if (p) p.has_key = true; return Promise.resolve({ ok: true, providers: this.providers }); }

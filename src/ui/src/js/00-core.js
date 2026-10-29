@@ -345,6 +345,9 @@ const S = {
   theme: '',
   active: '', tabOrder: [], tabs: new Map(),
   model: '', provider: '', sandbox: 'full-access', tools: true,
+  // modelSet: 权威的「已选模型」标志（后端 state.model_set）。model 里只剩
+  // 供应商名时它是 false —— 输入栏据此强制提醒，别再靠冒号猜字符串形状
+  modelSet: true,
   providers: [], settings: {}, workspaces: [], sessions: [], sessionsTotal: 0, models: [],
   skills: [], skillsRoot: '',   // /skills、/skill 共用（启动时拉一次，/skills 强制刷新）
   usages: null, usagesLoading: false, usagesOpen: false, // 用量缓存（usages.summary）+ 左侧栏收纳浮层是否展开
@@ -514,7 +517,17 @@ function handleEvent(e) {
     case 'reason': onStream(e.ws, 'reason', e.d); break;
     case 'summary': onStream(e.ws, 'summary', e.d); break;
     case 'status': pushMsg(e.ws, { role: 'status', text: e.d }); break;
-    case 'error': pushMsg(e.ws, { role: 'error', text: e.d }); break;
+    // 错误行要记进本回合：turn_end 会以落盘转录为准重载，临时消息会被冲掉，
+    // 而失败原因（无模型 / 无密钥 / 请求失败）根本不在转录里 —— 不补回来
+    // 就变成「消息发出去后什么都没发生」的静默失败
+    case 'error': {
+      const t = ensureTab(e.ws);
+      const m = pushMsg(e.ws, { role: 'error', text: e.d });
+      // 只有回合进行中的错误会被 turn_end 的重载冲掉，才需要补回；
+      // 其余场景（如 send 被拒绝）本来就留在消息流里
+      if (t.busy) (t._turnErrors = t._turnErrors || []).push(m);
+      break;
+    }
     case 'round': onRound(e); break;
     case 'tool_begin': onToolBegin(e); break;
     case 'tool_end': onToolEnd(e); break;
@@ -571,6 +584,10 @@ function applyHello(st, rebuild, opts) {
   if (!st) return;
   opts = opts || {};
   S.model = st.model || S.model;
+  // 后端的权威标志优先；缺字段（演示/旧快照）时按「供应商:模型」形状兜底
+  S.modelSet = typeof st.model_set === 'boolean'
+    ? st.model_set
+    : (!!st.model && String(st.model).indexOf(':') > 0);
   const prevProvider = S.provider;
   S.provider = st.provider || '';
   // 模型列表是按需拉的（state 快照里没有），换供应商后旧列表就属于上一个
@@ -688,6 +705,7 @@ function onTurnBegin(ws) {
   t._liveMsgId = null;
   t.turnRounds = 0;
   t._turnNotices = []; // 本回合的通知气泡：回合结束重载转录后要补回聊天流
+  t._turnErrors = [];  // 同上：本回合的错误行（转录里没有，必须补回）
   markChat(ws); schedule('tabbar', renderTabbar); markComposer(ws); // 发送按钮切「停止」
 }
 function onTurnEnd(e) {
@@ -701,7 +719,7 @@ function onTurnEnd(e) {
   t.archivesFor = '';
   const n = e.tool_calls || 0, r = e.rounds || 0;
   const statusText = '回合结束 · ' + r + ' 轮 · ' + n + ' 次工具调用' + (e.natural === false ? '（中断）' : '');
-  const sid = t.session, notices = t._turnNotices || [];
+  const sid = t.session, notices = t._turnNotices || [], errors = t._turnErrors || [];
   // 回合里 LLM 可能通过 tw 工具创建/运行了团队任务（这一路径没有 SSE 事件）：
   // 让面板重拉内容；出现新任务且右侧面板关着时自动展开 Teamwork 面板
   const beforeIds = new Set((t.jobs || []).map(j => j.id));
@@ -717,6 +735,7 @@ function onTurnEnd(e) {
   reloadSessionDetail(e.ws, () => {
     if (S.tabs.get(e.ws) !== t || t.session !== sid) return; // 已切走
     for (const m of notices) pushMsgSilent(e.ws, m);
+    for (const m of errors) pushMsgSilent(e.ws, m);
     pushMsg(e.ws, { role: 'status', text: statusText });
   });
   markChat(e.ws); schedule('tabbar', renderTabbar); markComposer(e.ws); // 切回「发送」

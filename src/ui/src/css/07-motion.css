@@ -9,6 +9,7 @@
 @keyframes toastIn{from{opacity:0;transform:translateX(24px)}to{opacity:1;transform:none}}
 @keyframes toastOut{to{opacity:0;transform:translateX(24px)}}
 @keyframes paneIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+@keyframes cmpShake{10%,90%{transform:translateX(-1px)}30%,70%{transform:translateX(2px)}50%{transform:translateX(-3px)}}
 .tabpane.active{animation:paneIn 220ms var(--ease)}
 html[data-anim="1"] *{animation-duration:.001ms!important;transition-duration:110ms!important}
 html[data-anim="0"] *{animation:none!important;transition:none!important}

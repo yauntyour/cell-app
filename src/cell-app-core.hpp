@@ -1395,6 +1395,10 @@ namespace app
             // 全局状态与工作区无关：零工作区启动是常态，供应商列表 / 设置
             // 必须在无工作区的 hello 里就带出去，否则设置页永远显示为空
             st["model"] = cfg.model_label();
+            // model_label() 在 current_model 为空时只剩供应商名，前端无法从形状上
+            // 区分「没选模型」和「模型名恰好等于供应商名」——单给一个权威布尔值，
+            // 输入栏据此在未选模型时强制提醒（切供应商会清空模型）
+            st["model_set"] = !cfg.current_model.empty();
             st["provider"] = cfg.providers.empty()
                                  ? ""
                                  : (cfg.current_provider.empty() ? cfg.providers[0].name : cfg.current_provider);
@@ -1936,6 +1940,13 @@ namespace app
                     std::string text = args.value("text", "");
                     if (text.empty())
                         return ok_error("empty message");
+                    // 没有模型时排队进 worker 只会让回合内部报错后结束，前端拿到
+                    // 的 error 还会被 turn_end 的转录重载冲掉——直接在这里拒绝，
+                    // 让调用方拿到一条明确的失败回执
+                    if (!cfg.current_provider_entry())
+                        return ok_error("no provider configured - add one in settings, then pick a model");
+                    if (cfg.current_model.empty())
+                        return ok_error("no model selected - pick one before sending");
                     cfg.active_sessions[c->cwd_key] = c->h.now().id();
                     c->queue_turn(std::move(text));
                     return ok();

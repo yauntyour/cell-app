@@ -421,7 +421,12 @@ function providerItem(p) {
   const acts = el('div', 'pacts');
   if (!p.current) {
     acts.appendChild(setBtn('设为当前', 'sm', () => {
-      cmd('providers.select', { name: p.name }).then(() => resync());
+      cmd('providers.select', { name: p.name }).then(out => {
+        if (out && out.ok === false) return;
+        // 与 /provider 一致：自动拉一次模型列表并提醒选模型（设置页是浮层，
+        // 不在下面弹模型菜单，靠输入栏的红色 chip 提示）
+        resync().then(() => afterProviderSwitch(p.name, false));
+      });
     }));
   }
   acts.appendChild(setBtn('密钥', 'sm', () => promptKey(p.name), 'key'));
@@ -547,6 +552,7 @@ function buildModels() {
         cmd('model.set', { model: m }).then(out => {
           if (out && out.ok !== false) {
             S.model = modelLabelOf(m);
+            S.modelSet = true;
             nameEl.textContent = m;
             paint();
             toast('模型已切换', 'ok');

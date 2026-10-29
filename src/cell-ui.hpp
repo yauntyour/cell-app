@@ -1140,6 +1140,17 @@ body.locked{overflow:hidden}
   max-width:190px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
   font-family:var(--mono);font-size:12px;color:var(--fg);
 }
+/* 未选模型（切供应商后后端会清空模型）：这枚 chip 必须持续报警，否则它看上去
+   跟「已选好」一模一样，用户会一直对着它发送、然后什么都收不到 */
+.cmp-chip-model.need{
+  color:var(--bad);border-color:color-mix(in srgb,var(--bad) 45%,transparent);
+  background:color-mix(in srgb,var(--bad) 12%,transparent);
+}
+.cmp-chip-model.need:hover{background:color-mix(in srgb,var(--bad) 20%,transparent)}
+.cmp-chip-model.need .cmp-model-name,
+.cmp-chip-model.need .cmp-chip-ico .uico,
+.cmp-chip-model.need .cmp-chev .uico{color:var(--bad)}
+.cmp-chip-model.shake{animation:cmpShake 560ms var(--ease)}
 
 .cmp-send{
   width:34px;height:34px;flex:none;border-radius:var(--radius-full);
@@ -1194,6 +1205,7 @@ body.locked{overflow:hidden}
   display:flex;align-items:center;gap:3px;flex-wrap:wrap;
   font-size:11px;color:var(--fg4);padding:5px 9px 6px;
 }
+.cmp-menu-hint.danger{color:var(--bad)}
 .cmp-menu-hint kbd,.sx-foot kbd{
   font-family:var(--mono);font-size:10px;line-height:1;padding:2px 4px;border-radius:4px;
   background:var(--bg2);border:1px solid var(--line);color:var(--fg3);
@@ -2174,6 +2186,7 @@ body.locked{overflow:hidden}
 @keyframes toastIn{from{opacity:0;transform:translateX(24px)}to{opacity:1;transform:none}}
 @keyframes toastOut{to{opacity:0;transform:translateX(24px)}}
 @keyframes paneIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+@keyframes cmpShake{10%,90%{transform:translateX(-1px)}30%,70%{transform:translateX(2px)}50%{transform:translateX(-3px)}}
 .tabpane.active{animation:paneIn 220ms var(--ease)}
 html[data-anim="1"] *{animation-duration:.001ms!important;transition-duration:110ms!important}
 html[data-anim="0"] *{animation:none!important;transition:none!important}
@@ -3516,6 +3529,9 @@ const S = {
   theme: '',
   active: '', tabOrder: [], tabs: new Map(),
   model: '', provider: '', sandbox: 'full-access', tools: true,
+  // modelSet: 权威的「已选模型」标志（后端 state.model_set）。model 里只剩
+  // 供应商名时它是 false —— 输入栏据此强制提醒，别再靠冒号猜字符串形状
+  modelSet: true,
   providers: [], settings: {}, workspaces: [], sessions: [], sessionsTotal: 0, models: [],
   skills: [], skillsRoot: '',   // /skills、/skill 共用（启动时拉一次，/skills 强制刷新）
   usages: null, usagesLoading: false, usagesOpen: false, // 用量缓存（usages.summary）+ 左侧栏收纳浮层是否展开
@@ -3685,7 +3701,17 @@ function handleEvent(e) {
     case 'reason': onStream(e.ws, 'reason', e.d); break;
     case 'summary': onStream(e.ws, 'summary', e.d); break;
     case 'status': pushMsg(e.ws, { role: 'status', text: e.d }); break;
-    case 'error': pushMsg(e.ws, { role: 'error', text: e.d }); break;
+    // 错误行要记进本回合：turn_end 会以落盘转录为准重载，临时消息会被冲掉，
+    // 而失败原因（无模型 / 无密钥 / 请求失败）根本不在转录里 —— 不补回来
+    // 就变成「消息发出去后什么都没发生」的静默失败
+    case 'error': {
+      const t = ensureTab(e.ws);
+      const m = pushMsg(e.ws, { role: 'error', text: e.d });
+      // 只有回合进行中的错误会被 turn_end 的重载冲掉，才需要补回；
+      // 其余场景（如 send 被拒绝）本来就留在消息流里
+      if (t.busy) (t._turnErrors = t._turnErrors || []).push(m);
+      break;
+    }
     case 'round': onRound(e); break;
     case 'tool_begin': onToolBegin(e); break;
     case 'tool_end': onToolEnd(e); break;
@@ -3742,6 +3768,10 @@ function applyHello(st, rebuild, opts) {
   if (!st) return;
   opts = opts || {};
   S.model = st.model || S.model;
+  // 后端的权威标志优先；缺字段（演示/旧快照）时按「供应商:模型」形状兜底
+  S.modelSet = typeof st.model_set === 'boolean'
+    ? st.model_set
+    : (!!st.model && String(st.model).indexOf(':') > 0);
   const prevProvider = S.provider;
   S.provider = st.provider || '';
   // 模型列表是按需拉的（state 快照里没有），换供应商后旧列表就属于上一个
@@ -3859,6 +3889,7 @@ function onTurnBegin(ws) {
   t._liveMsgId = null;
   t.turnRounds = 0;
   t._turnNotices = []; // 本回合的通知气泡：回合结束重载转录后要补回聊天流
+  t._turnErrors = [];  // 同上：本回合的错误行（转录里没有，必须补回）
   markChat(ws); schedule('tabbar', renderTabbar); markComposer(ws); // 发送按钮切「停止」
 }
 function onTurnEnd(e) {
@@ -3872,7 +3903,7 @@ function onTurnEnd(e) {
   t.archivesFor = '';
   const n = e.tool_calls || 0, r = e.rounds || 0;
   const statusText = '回合结束 · ' + r + ' 轮 · ' + n + ' 次工具调用' + (e.natural === false ? '（中断）' : '');
-  const sid = t.session, notices = t._turnNotices || [];
+  const sid = t.session, notices = t._turnNotices || [], errors = t._turnErrors || [];
   // 回合里 LLM 可能通过 tw 工具创建/运行了团队任务（这一路径没有 SSE 事件）：
   // 让面板重拉内容；出现新任务且右侧面板关着时自动展开 Teamwork 面板
   const beforeIds = new Set((t.jobs || []).map(j => j.id));
@@ -3888,6 +3919,7 @@ function onTurnEnd(e) {
   reloadSessionDetail(e.ws, () => {
     if (S.tabs.get(e.ws) !== t || t.session !== sid) return; // 已切走
     for (const m of notices) pushMsgSilent(e.ws, m);
+    for (const m of errors) pushMsgSilent(e.ws, m);
     pushMsg(e.ws, { role: 'status', text: statusText });
   });
   markChat(e.ws); schedule('tabbar', renderTabbar); markComposer(e.ws); // 切回「发送」
@@ -9527,6 +9559,8 @@ function paintSandboxChip(mode) {
 /* S.model 是「供应商:模型」（核心的 model_label），但输入栏的圆钮只放模型名：
    供应商在底部状态行里已经写着了，再塞进按钮只会把名字挤成省略号。 */
 function modelShortName() {
+  // 未选模型时 model_label() 只剩供应商名，当成模型名显示会让人以为已选好
+  if (!S.modelSet) return '';
   const m = String(S.model || '');
   const p = String(S.provider || '');
   if (p && m.slice(0, p.length + 1) === p + ':') return m.slice(p.length + 1);
@@ -9538,12 +9572,30 @@ function isCurrentModel(m) { return !!m && (m === S.model || m === modelShortNam
 /* 状态里的模型名补齐回「供应商:模型」，别让 S.model 在两种形状间来回变 */
 function modelLabelOf(m) { return S.provider ? S.provider + ':' + m : m; }
 
+/* 未选模型：有供应商但模型为空（后端 state.model_set=false）。切供应商会清空
+   current_model，此时 model_label() 只剩供应商名，chip 上看起来像「已选好」——
+   必须用权威标志判断，不能靠「有没有冒号」猜字符串形状。 */
+function needsModel() { return !!S.provider && S.modelSet === false; }
+
+/* 强制提醒：未选模型时不允许开始会话 —— 红字提示 + chip 抖一下 + 直接弹模型
+   菜单（菜单打开时会自动拉列表，用户不必再去找入口） */
+function demandModel(msg) {
+  toast(msg || '还没有选择模型 —— 先选一个模型才能开始会话', 'bad', 5000);
+  const chip = $('#modelChip');
+  if (!chip) return;
+  chip.classList.add('shake');
+  setTimeout(() => chip.classList.remove('shake'), 620);
+  if (cmpMenu && cmpMenu.kind === 'model') reopenModelMenu();
+  else toggleModelMenu(chip);
+}
+
 function paintModelChip(t) {
   const chip = $('#modelChip');
   if (!chip) return;
   const lv = Number((S.settings || {}).think_level || 0);
   const lvl = THINK_LEVELS[lv] || THINK_LEVELS[0];
-  const name = modelShortName() || '(未选择模型)';
+  const need = !!t && needsModel(); // 有工作区才谈得上「开始会话」
+  const name = need ? '选择模型' : (modelShortName() || '(未选择模型)');
   const qual = String(S.model || '');
   const prov = S.provider || (qual.indexOf(':') > 0 ? qual.slice(0, qual.indexOf(':')) : '');
   chip.innerHTML = '<span class="cmp-chip-ico">' + iconHtml('cpu') + '</span>'
@@ -9551,10 +9603,13 @@ function paintModelChip(t) {
     + '<span class="cmp-chev">' + iconHtml('chevronDown') + '</span>';
   const nm = chip.querySelector('.cmp-model-name');
   if (nm) nm.textContent = name;
-  chip.title = '模型：' + name
-    + (prov ? '\n供应商：' + prov : '')
-    + '\n思考：' + (lv > 0 ? lvl.name + ' (' + lvl.v + ') · ' + lvl.desc : '关闭')
-    + '\n点击切换模型 / 供应商 / 思考级别';
+  chip.classList.toggle('need', need);
+  chip.title = need
+    ? '未选择模型：供应商 ' + (prov || '?') + ' 已切换，但还没有指定模型\n点这里选一个模型后才能开始会话'
+    : '模型：' + name
+      + (prov ? '\n供应商：' + prov : '')
+      + '\n思考：' + (lv > 0 ? lvl.name + ' (' + lvl.v + ') · ' + lvl.desc : '关闭')
+      + '\n点击切换模型 / 供应商 / 思考级别';
   chip.disabled = !t;
   chip.setAttribute('aria-expanded', cmpMenu && cmpMenu.kind === 'model' ? 'true' : 'false');
 }
@@ -9880,6 +9935,9 @@ async function sendCurrent() {
   if (atts.length) {
     text += (text ? '\n\n' : '') + '[附件]\n' + atts.map(a => '- ' + a.path).join('\n');
   }
+  // 没选模型就发出去只会白跑一个回合（引擎报错的那行还会被转录重载冲掉），
+  // 所以在这里截住：内容留在输入框里，弹菜单让用户当场选
+  if (needsModel()) { closeSlash(); demandModel(); return; }
   closeSlash();
   const optimistic = { id: uid(), role: 'user', text: text, ts: nowSec() };
   t.msgs.push(optimistic);
@@ -10114,6 +10172,8 @@ function toggleModelMenu(anchor) {
     align: 'right',
     build: menu => {
       menu.appendChild(cmpMenuHead('模型'));
+      // 未选模型是「发不出去」的硬条件：菜单一开就把话说清楚
+      if (needsModel()) menu.appendChild(el('div', 'cmp-menu-hint danger', '未选择模型 · 选一个才能开始会话'));
       if (S.models.length) {
         for (const m of S.models) {
           const row = cmpMenuRow('cpu', m, isCurrentModel(m) ? '当前模型' : '', isCurrentModel(m));
@@ -10159,12 +10219,13 @@ function autoFetchModels() {
   if (S.models.length || cmpModelFetching) return;
   fetchModels(false);
 }
+// 返回 Promise<boolean>：切供应商后要等列表回来再提示模型数量
 function fetchModels(force) {
-  if (cmpModelFetching) return;
+  if (cmpModelFetching) return Promise.resolve(false);
   cmpModelFetching = true;
-  cmd('models.fetch', {}).then(out => {
+  return cmd('models.fetch', {}).then(out => {
     cmpModelFetching = false;
-    if (!out || out.ok === false || !Array.isArray(out.models)) return;
+    if (!out || out.ok === false || !Array.isArray(out.models)) return false;
     S.models = out.models;
     if (out.models.length) {
       if (force) toast('已拉取 ' + out.models.length + ' 个模型', 'ok');
@@ -10173,6 +10234,29 @@ function fetchModels(force) {
     } else if (force) {
       toast('供应商未返回模型列表', 'bad');
     }
+    return true;
+  });
+}
+
+/* 切供应商的收尾（/provider 与设置页共用）：旧模型列表属于上一个供应商，
+   后端也已经把 current_model 清空了 —— 这里重拉一次列表并提醒选模型。
+   popMenu=true 时把模型菜单直接弹出来：换供应商本来就是为了换模型。 */
+function afterProviderSwitch(name, popMenu) {
+  S.models = [];
+  renderComposer();
+  const p = fetchModels(false); // 先发出去（同步置位 fetching，挡掉 autoFetchModels 的重复拉取）
+  if (popMenu) {
+    const chip = $('#modelChip');
+    if (chip && !(cmpMenu && cmpMenu.kind === 'model')) toggleModelMenu(chip);
+  }
+  return p.then(ok => {
+    // S.modelSet 不在这里改写：上面的 resync 已经把后端的权威值带回来了
+    // （重选同一个供应商时模型仍有效，乐观置 false 会误报「未选模型」）
+    if (!ok && cmpModelFetching) return; // 另一次拉取还在飞，别报假失败
+    const n = S.models.length;
+    toast(n ? '供应商：' + name + ' · 已拉取 ' + n + ' 个模型，请选择模型后开始会话'
+            : '供应商：' + name + ' · 没能拉到模型列表（检查密钥 / Base URL）',
+          n ? 'ok' : 'warn', 4600);
   });
 }
 function reopenModelMenu() {
@@ -10188,6 +10272,7 @@ async function switchModel(m) {
   const out = await cmd('model.set', { model: m });
   if (!out || out.ok === false) return;
   S.model = modelLabelOf(m);
+  S.modelSet = true;
   renderComposer();
   if (typeof renderFoot === 'function') renderFoot();
   if (typeof renderStatLine === 'function') renderStatLine();
@@ -10837,6 +10922,7 @@ async function execSlash(t, name, arg) {
       return cmd('model.set', { model: arg }).then(out => {
         if (out && out.ok === false) return;
         S.model = modelLabelOf(arg);
+        S.modelSet = true;
         renderComposer();
         if (typeof renderFoot === 'function') renderFoot();
         if (typeof renderStatLine === 'function') renderStatLine();
@@ -10845,7 +10931,9 @@ async function execSlash(t, name, arg) {
     case '/provider':
       if (arg) return cmd('providers.select', { name: arg }).then(out => {
         if (out && out.ok === false) return;
-        return afterSet(out, '供应商：' + arg);
+        // 换供应商会清空模型：resync 之后自动拉一次列表并弹出模型菜单。
+        // 提示统一交给 afterProviderSwitch（它带着拉取结果），不再单独弹「已切换」
+        return resync().then(() => { renderComposer(); return afterProviderSwitch(arg, true); });
       });
       toast('用法：/provider <name>'); break;
     case '/think': {
@@ -11145,6 +11233,8 @@ function refreshTeamworkNow(ws, quiet, force) {
 }
 
 async function submitWorkflow(t, mode) {
+  // 团队任务同样要有模型才能跑：没选就当场提醒，别创建出一个跑不动的任务
+  if (needsModel()) { demandModel(); return; }
   const wf = t.composer.workflow || defaultWorkflow();
   const stages = [];
   for (const st of wf.stages) {
@@ -11633,7 +11723,12 @@ function providerItem(p) {
   const acts = el('div', 'pacts');
   if (!p.current) {
     acts.appendChild(setBtn('设为当前', 'sm', () => {
-      cmd('providers.select', { name: p.name }).then(() => resync());
+      cmd('providers.select', { name: p.name }).then(out => {
+        if (out && out.ok === false) return;
+        // 与 /provider 一致：自动拉一次模型列表并提醒选模型（设置页是浮层，
+        // 不在下面弹模型菜单，靠输入栏的红色 chip 提示）
+        resync().then(() => afterProviderSwitch(p.name, false));
+      });
     }));
   }
   acts.appendChild(setBtn('密钥', 'sm', () => promptKey(p.name), 'key'));
@@ -11759,6 +11854,7 @@ function buildModels() {
         cmd('model.set', { model: m }).then(out => {
           if (out && out.ok !== false) {
             S.model = modelLabelOf(m);
+            S.modelSet = true;
             nameEl.textContent = m;
             paint();
             toast('模型已切换', 'ok');
@@ -12810,9 +12906,11 @@ const Mock = {
     const cur = wk.find(w => w.ws === ws) || wk[0] || wk[0];
     const sid = cur ? cur.session : this.sessionOf(this.A);
     const isB = cur && cur.ws === this.B;
+    const cp = (this.providers.find(x => x.current) || {}).name || '';
     return {
       t: 'hello', ws: cur ? cur.ws : this.A, active: this.A, session: sid, cwd: cur ? cur.cwd : this.cwdA,
-      model: this.model, provider: 'openai', sandbox: this.settings.sandbox_mode, tools: true,
+      model: this.model, model_set: String(this.model).indexOf(':') > 0,
+      provider: cp, sandbox: this.settings.sandbox_mode, tools: true,
       providers: this.providers, settings: this.settings, busy: false,
       promptChars: 1240, skills: 3, promptInjected: true,
       history: [],
@@ -13176,7 +13274,15 @@ const Mock = {
         }, 1400);
         return Promise.resolve({ ok: true });
       }
-      case 'providers.select': return Promise.resolve({ ok: true, providers: this.providers });
+      case 'providers.select': {
+        // 与真实后端一致：换供应商才会重置 current_model（重选同一个保留模型）
+        const p = (this.providers || []).find(x => x.name === args.name);
+        if (!p) return Promise.resolve({ ok: false, error: 'provider not found: ' + args.name });
+        const wasCurrent = !!p.current;
+        for (const q of this.providers) q.current = (q === p);
+        if (!wasCurrent) this.model = p.name;
+        return Promise.resolve({ ok: true, providers: this.providers });
+      }
       case 'providers.rm': this.providers = this.providers.filter(p => p.name !== args.name); return Promise.resolve({ ok: true, providers: this.providers });
       case 'providers.add': this.providers.push({ name: args.name || args.api_style, api_style: args.api_style, base: args.base, proxy: args.proxy || '', has_key: !!args.key, current: false }); return Promise.resolve({ ok: true, name: args.name || args.api_style, providers: this.providers });
       case 'provider.set_key': { const p = this.providers.find(x => x.name === args.name); if (p) p.has_key = true; return Promise.resolve({ ok: true, providers: this.providers }); }
