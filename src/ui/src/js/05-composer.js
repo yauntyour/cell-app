@@ -69,13 +69,21 @@ let cmpModelFetching = false;
 let cmpMetaSig = '';       // 状态行右侧 token/round 的缓存签名
 
 /* @ 引用面板：与斜杠面板共用同一个浮层（#slashPanel），只是候选来源不同。
-   文件/目录走 ls 工具（fs.list）逐层列举，会话走 sessions.search 做检索；
-   选中会话时先取它的上下文摘要（session.digest），再以
-     session:```…```  的代码块形式写进输入框。 */
+   候选分两页，表头就是页签（←→ 或鼠标点击翻页）：
+     · 文件页 → 走 ls 工具（fs.list）逐层列举；
+     · 会话页 → 走 sessions.search 做检索，选中时先取它的上下文摘要
+       （session.digest），再以 session:```…``` 的代码块形式写进输入框。 */
 const AT_FILE_LIMIT = 40;
 const AT_SESSION_LIMIT = 8;
+const AT_PAGES = [
+  { page: 'files', label: '文件', icon: 'folder' },
+  { page: 'sessions', label: '会话', icon: 'message' },
+];
 let atState = { key: '', busy: false, files: [], sessions: [] };
 let atTimer = 0;
+let atPage = 'files';                        // 当前页
+let atPinned = false;                        // 用户手动翻过页：不再自动跟随
+const atSel = { files: 0, sessions: 0 };     // 两页各自记住选中的行
 
 /* ---------- I1. 构建 DOM ------------------------------------------- */
 function cmpHost() { return $('#composerInner') || $('.composer-inner'); }
@@ -381,13 +389,22 @@ function onComposerKeydown(ev) {
   const panel = $('#slashPanel');
   const open = !!(panel && panel.classList.contains('show'));
   const entries = (panel && panel._entries) || [];
+  // @ 面板当前页是空态（只有一行灰字提示）：Enter 不拦，照常把这段文本发出去
+  const atEmptyPage = !!(open && panel._mode === 'at'
+    && entries[slashSel] && entries[slashSel].kind === 'empty');
 
   if (open) {
     // 面板自己消费掉的键不再冒泡：全局 Escape 处理器看到面板已关会顺手把右栏也关掉
+    // @ 面板分两页（文件 / 会话）：←→ 翻页，行内 ↑↓ 才是选择
+    if (panel._mode === 'at' && (ev.key === 'ArrowLeft' || ev.key === 'ArrowRight')) {
+      ev.preventDefault(); ev.stopPropagation();
+      setAtPage(ev.key === 'ArrowRight' ? 'sessions' : 'files');
+      return;
+    }
     if (ev.key === 'ArrowDown') { ev.preventDefault(); ev.stopPropagation(); moveSlashSel(1); return; }
     if (ev.key === 'ArrowUp') { ev.preventDefault(); ev.stopPropagation(); moveSlashSel(-1); return; }
     if (ev.key === 'Tab' && !ev.shiftKey) { ev.preventDefault(); ev.stopPropagation(); if (entries[slashSel]) applySlash(entries[slashSel]); return; }
-    if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); ev.stopPropagation(); enterSlash(); return; }
+    if (ev.key === 'Enter' && !ev.shiftKey && !atEmptyPage) { ev.preventDefault(); ev.stopPropagation(); enterSlash(); return; }
     if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); closeSlash(); return; }
   }
   if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); sendCurrent(); return; }
@@ -443,22 +460,36 @@ function paintSandboxChip(mode) {
   chip.setAttribute('aria-expanded', cmpMenu && cmpMenu.kind === 'sandbox' ? 'true' : 'false');
 }
 
+/* S.model 是「供应商:模型」（核心的 model_label），但输入栏的圆钮只放模型名：
+   供应商在底部状态行里已经写着了，再塞进按钮只会把名字挤成省略号。 */
+function modelShortName() {
+  const m = String(S.model || '');
+  const p = String(S.provider || '');
+  if (p && m.slice(0, p.length + 1) === p + ':') return m.slice(p.length + 1);
+  const i = m.indexOf(':');
+  return i > 0 ? m.slice(i + 1) : m;
+}
+/* 模型菜单/设置页标记「当前」用：列表里是裸模型名，状态里是「供应商:模型」 */
+function isCurrentModel(m) { return !!m && (m === S.model || m === modelShortName()); }
+/* 状态里的模型名补齐回「供应商:模型」，别让 S.model 在两种形状间来回变 */
+function modelLabelOf(m) { return S.provider ? S.provider + ':' + m : m; }
+
 function paintModelChip(t) {
   const chip = $('#modelChip');
   if (!chip) return;
   const lv = Number((S.settings || {}).think_level || 0);
   const lvl = THINK_LEVELS[lv] || THINK_LEVELS[0];
-  const name = S.model || '(未选择模型)';
+  const name = modelShortName() || '(未选择模型)';
+  const qual = String(S.model || '');
+  const prov = S.provider || (qual.indexOf(':') > 0 ? qual.slice(0, qual.indexOf(':')) : '');
   chip.innerHTML = '<span class="cmp-chip-ico">' + iconHtml('cpu') + '</span>'
     + '<span class="cmp-model-name trunc"></span>'
-    + '<span class="cmp-sep">·</span>'
-    + '<span class="cmp-think' + (lv > 0 ? ' on' : '') + '"></span>'
     + '<span class="cmp-chev">' + iconHtml('chevronDown') + '</span>';
   const nm = chip.querySelector('.cmp-model-name');
   if (nm) nm.textContent = name;
-  const th = chip.querySelector('.cmp-think');
-  if (th) th.textContent = lv > 0 ? ('思考 ' + lvl.name) : '思考 off';
-  chip.title = '模型：' + name + '\n思考：' + (lv > 0 ? lvl.name + ' (' + lvl.v + ') · ' + lvl.desc : '关闭')
+  chip.title = '模型：' + name
+    + (prov ? '\n供应商：' + prov : '')
+    + '\n思考：' + (lv > 0 ? lvl.name + ' (' + lvl.v + ') · ' + lvl.desc : '关闭')
     + '\n点击切换模型 / 供应商 / 思考级别';
   chip.disabled = !t;
   chip.setAttribute('aria-expanded', cmpMenu && cmpMenu.kind === 'model' ? 'true' : 'false');
@@ -1019,7 +1050,7 @@ function toggleModelMenu(anchor) {
       menu.appendChild(cmpMenuHead('模型'));
       if (S.models.length) {
         for (const m of S.models) {
-          const row = cmpMenuRow('cpu', m, m === S.model ? '当前模型' : '', m === S.model);
+          const row = cmpMenuRow('cpu', m, isCurrentModel(m) ? '当前模型' : '', isCurrentModel(m));
           row.onclick = () => switchModel(m);
           menu.appendChild(row);
         }
@@ -1087,10 +1118,10 @@ function reopenModelMenu() {
 async function switchModel(m) {
   closeComposerMenu(false);
   if (!m) return focusInput();
-  if (m === S.model) return focusInput();
+  if (isCurrentModel(m)) return focusInput();
   const out = await cmd('model.set', { model: m });
   if (!out || out.ok === false) return;
-  S.model = m;
+  S.model = modelLabelOf(m);
   renderComposer();
   if (typeof renderFoot === 'function') renderFoot();
   if (typeof renderStatLine === 'function') renderStatLine();
@@ -1149,7 +1180,7 @@ function slashArgItems(cmdName) {
       break;
     case 'models':
       add('◌ 拉取模型列表', '__fetch__', 'models.fetch');
-      for (const m of S.models) add(m, m, m === S.model ? '当前' : '');
+      for (const m of S.models) add(m, m, isCurrentModel(m) ? '当前' : '');
       break;
     case 'providers':
       for (const p of S.providers) add(p.name, p.name, p.current ? '当前' : (p.api_style || ''));
@@ -1240,9 +1271,28 @@ function atSplitPath(q) {
   return i < 0 ? { dir: '', base: q } : { dir: q.slice(0, i), base: q.slice(i + 1) };
 }
 
-function atTitle(q) {
-  return q ? '@ ' + q : '@ 引用文件或会话';
+/* 一个 @ 片段的生命周期结束（输入框里没有 @ 片段了）：页签与选中位都回到默认，
+   下一次敲 @ 从文件页重新开始 */
+function atReset() {
+  atPage = 'files';
+  atPinned = false;
+  atSel.files = 0;
+  atSel.sessions = 0;
+  const panel = $('#slashPanel');
+  if (panel) { panel._atStart = null; panel._atQuery = null; }
 }
+
+/* 表头右上角：文件页显示当前所在目录（行里就只留条目名） */
+function atDirHint(q) {
+  const sp = atSplitPath(q);
+  return sp.dir ? sp.dir + '/' : '';
+}
+
+/* 会话页是否参与检索：路径形态的查询（含 /）明显是在翻目录，不去搜会话——
+   除非用户就停在会话页，那说明他要的正是会话 */
+function atWantSessions(q) { return !q || q.indexOf('/') < 0 || atPage === 'sessions'; }
+/* 候选缓存的 key：工作区 + 查询 + 这一轮有没有搜会话 */
+function atKey(t, at) { return t.ws + '\u0000' + at.query + '\u0000' + (atWantSessions(at.query) ? 's' : '-'); }
 
 /* 空查询时的会话候选：当前工作区在前，其余按最近使用排序 */
 function atRecentSessions(t) {
@@ -1255,13 +1305,20 @@ function atRecentSessions(t) {
   return mine.sort(byTime).concat(other.sort(byTime)).slice(0, AT_SESSION_LIMIT);
 }
 
-/* 拉候选（带 140ms 防抖）：结果按 key 缓存 15s，落定后重绘面板 */
+/* 拉候选（带 140ms 防抖）：两页一次拉齐（页签上的条数才有意义），
+   结果按 key 缓存 15s，落定后重绘面板 */
 function atFetch(t, at) {
-  const key = t.ws + '\u0000' + at.query;
+  const key = atKey(t, at);
   if (atState.key === key && (Date.now() - (atState.ts || 0)) < 15000) return;
-  atState = { key: key, busy: true, files: [], sessions: [], ts: 0 };
-  clearTimeout(atTimer);
   const q = at.query;
+  // 同一个查询只是翻了页（会话页要补一次检索）：已经拿到的那一半留着，
+  // 否则翻回文件页会闪一下空列表
+  const keep = (atState.q === q && atState.ws === t.ws) ? atState : null;
+  atState = {
+    key: key, ws: t.ws, q: q, busy: true, ts: 0,
+    files: keep ? keep.files : [], sessions: keep ? keep.sessions : [],
+  };
+  clearTimeout(atTimer);
   atTimer = setTimeout(() => {
     const sp = atSplitPath(q);
     const jobs = [];
@@ -1276,12 +1333,10 @@ function atFetch(t, at) {
       }
       rows.sort((a, b) => ((b.dir ? 1 : 0) - (a.dir ? 1 : 0))
         || (fuzzy(sp.base, b.name) - fuzzy(sp.base, a.name)));
-      // 空查询（刚敲下 @）先给少量条目，好让下面的「最近会话」不用滚动就能看到
-      atState.files = rows.slice(0, sp.base ? AT_FILE_LIMIT : 12);
+      atState.files = rows.slice(0, AT_FILE_LIMIT);
     }).catch(() => {}));
-    // 会话：路径形态的查询（含 /）明显是在翻目录，不去搜会话
     if (!q) atState.sessions = atRecentSessions(t);
-    else if (q.indexOf('/') < 0) {
+    else if (atWantSessions(q)) {
       jobs.push(api('sessions.search', { q: q }).then(out => {
         if (atState.key !== key) return;
         atState.sessions = ((out && Array.isArray(out.results)) ? out.results : []).slice(0, AT_SESSION_LIMIT);
@@ -1296,25 +1351,21 @@ function atFetch(t, at) {
   }, q ? 140 : 0);
 }
 
-function atCandidates(t, at) {
-  atFetch(t, at);
-  if (atState.key !== (t.ws + '\u0000' + at.query)) return [];
-  const out = [];
-  for (const e of atState.files) {
-    out.push({
-      kind: e.dir ? 'dir' : 'file',
-      name: e.name,
-      path: e.path || e.name,
-      desc: e.dir ? '目录' : fmtBytes(e.size || 0),
-    });
-  }
-  for (const s of atState.sessions) {
+/* 两页的行（面板只管渲染，翻页只换这一层） */
+function atRows(t) {
+  const files = atState.files.map(e => ({
+    kind: e.dir ? 'dir' : 'file',
+    name: e.name,
+    path: e.path || e.name,
+    desc: e.dir ? '目录' : fmtBytes(e.size || 0),
+  }));
+  const sessions = atState.sessions.map(s => {
     const title = s.title || shortId(s.id);
     const hit = (s.hits && s.hits[0]) ? String(s.hits[0].text || '') : '';
     const snippet = hit.replace(/\s+/g, ' ').trim();
     // 命中片段与标题是同一段话（标题只是被截断了）就不再重复显示
     const same = !!snippet && (snippet === title || snippet.indexOf(title.slice(0, 16)) === 0);
-    out.push({
+    return {
       kind: 'sess',
       id: s.id,
       ws: s.ws || '',
@@ -1322,25 +1373,80 @@ function atCandidates(t, at) {
       desc: (!same && snippet)
         ? snippet.slice(0, 90)
         : (relTime(s.mtime) + (s.ws && s.ws !== t.ws ? ' · 其他工作区' : '')),
-    });
+    };
+  });
+  return { files: files, sessions: sessions };
+}
+
+/* 空页也要留住面板：页签上的条数还在，用户才知道该换页还是该改查询 */
+function atEmptyRow(page, q, busy) {
+  const text = busy ? '正在检索…'
+    : page === 'files'
+      ? (q ? '没有匹配的文件或目录' : '这个目录里没有东西')
+      : (q ? '没有匹配的会话' : '还没有可以引用的会话');
+  return [{ kind: 'empty', desc: text }];
+}
+
+/* 页签：鼠标点一下就是翻页（←→ 也一样） */
+function sxTabStrip(tabs, cur) {
+  const strip = el('div', 'sx-tabs');
+  strip.setAttribute('role', 'tablist');
+  for (const tb of tabs) {
+    const on = tb.page === cur;
+    const b = el('button', 'sx-tab' + (on ? ' on' : ''));
+    b.type = 'button';
+    b.dataset.page = tb.page;
+    b.setAttribute('role', 'tab');
+    b.setAttribute('aria-selected', on ? 'true' : 'false');
+    b.innerHTML = '<span class="sx-tab-ico">' + iconHtml(tb.icon) + '</span>'
+      + '<span class="sx-tab-tx"></span><span class="sx-tab-n"></span>';
+    const tx = b.querySelector('.sx-tab-tx');
+    if (tx) tx.textContent = tb.label;
+    const n = b.querySelector('.sx-tab-n');
+    if (n) n.textContent = String(tb.count);
+    b.title = tb.label + '（' + tb.count + '）· 点击或 ←→ 翻页';
+    b.onmousedown = ev => ev.preventDefault(); // 别把焦点从输入框抢走，翻完页还能接着打字
+    b.onclick = ev => { ev.preventDefault(); ev.stopPropagation(); setAtPage(tb.page); };
+    strip.appendChild(b);
   }
-  return out;
+  return strip;
+}
+
+/* 翻页：只换面板里的那一页，输入框里的 @ 片段原样不动 */
+function setAtPage(page) {
+  if (!AT_PAGES.some(p => p.page === page)) return;
+  if (atPage !== page) {
+    atPage = page;
+    slashSel = atSel[page] || 0;
+  }
+  atPinned = true; // 手动翻过页：之后不再自动跟随「有内容的那页」
+  buildSlash();
+  focusInput();
 }
 
 /* 候选渲染（斜杠 / @ 共用一套行样式，只是行内容与底部键位不同） */
-function sxPaint(panel, title, entries, mode) {
+function sxPaint(panel, title, entries, mode, opts) {
+  opts = opts || {};
   if (slashSel >= entries.length) slashSel = 0;
   if (slashSel < 0) slashSel = 0;
   panel.replaceChildren();
   const head = el('div', 'sx-head');
-  head.appendChild(el('span', 'sx-title', title));
-  head.appendChild(el('span', 'sx-count', String(entries.length)));
+  if (opts.tabs) {
+    head.classList.add('sx-head-at');
+    head.appendChild(sxTabStrip(opts.tabs, opts.page));
+    if (opts.hint) head.appendChild(el('span', 'sx-dir trunc', opts.hint));
+  } else {
+    head.appendChild(el('span', 'sx-title', title));
+    head.appendChild(el('span', 'sx-count', String(entries.length)));
+  }
   panel.appendChild(head);
 
   const list = el('div', 'sx-list');
   panel._rows = [];
   entries.forEach((e, i) => {
-    const row = el('div', 'sx-row' + (i === slashSel ? ' sel' : '') + (mode === 'at' ? ' at' : ''));
+    const sel = i === slashSel && e.kind !== 'empty';
+    const row = el('div', 'sx-row' + (sel ? ' sel' : '') + (mode === 'at' ? ' at' : '')
+      + (e.kind === 'empty' ? ' empty' : ''));
     row.setAttribute('role', 'option');
     const ico = el('span', 'sx-ico');
     ico.innerHTML = iconHtml(slashRowIcon(e));
@@ -1359,12 +1465,15 @@ function sxPaint(panel, title, entries, mode) {
     } else if (e.kind === 'sess') {
       main.appendChild(el('span', 'sx-name sx-sess', e.title));
       main.appendChild(el('span', 'sx-tag', '会话'));
+    } else if (e.kind === 'empty') {
+      main.appendChild(el('span', 'sx-empty', e.desc || '没有匹配'));
     } else {
       main.appendChild(el('span', 'sx-name', '说明'));
     }
     row.appendChild(main);
-    if (e.desc) row.appendChild(el('span', 'sx-desc trunc', e.desc));
-    if (e.kind !== 'hint' || e.cmd) row.onclick = () => { slashSel = i; applySlash(entries[i]); };
+    if (e.desc && e.kind !== 'empty') row.appendChild(el('span', 'sx-desc trunc', e.desc));
+    if (e.kind !== 'empty' && (e.kind !== 'hint' || e.cmd))
+      row.onclick = () => { slashSel = i; applySlash(entries[i]); };
     list.appendChild(row);
     panel._rows.push(row);
   });
@@ -1373,7 +1482,8 @@ function sxPaint(panel, title, entries, mode) {
   const foot = el('div', 'sx-foot');
   foot.innerHTML = '<span class="sx-k"><kbd>↑</kbd><kbd>↓</kbd> 选择</span>'
     + (mode === 'at'
-      ? '<span class="sx-k"><kbd>Tab</kbd><kbd>Enter</kbd> 插入</span>'
+      ? '<span class="sx-k"><kbd>←</kbd><kbd>→</kbd> 翻页</span>'
+        + '<span class="sx-k"><kbd>Tab</kbd><kbd>Enter</kbd> 插入</span>'
       : '<span class="sx-k"><kbd>Tab</kbd> 补全</span><span class="sx-k"><kbd>Enter</kbd> 执行</span>')
     + '<span class="sx-k"><kbd>Esc</kbd> 关闭</span>';
   panel.appendChild(foot);
@@ -1402,11 +1512,41 @@ function buildSlash(forceClose) {
   }
   const ta = $('#ta');
   const at = atTokenOf(v, ta ? ta.selectionStart : v.length);
-  if (!at) return closeSlash();
-  const entries = atCandidates(t, at);
-  if (!entries.length) return closeSlash(); // 候选还在路上：落定后由 atFetch 回调重绘
+  if (!at) { atReset(); return closeSlash(); }
+  atFetch(t, at);
+  if (atState.key !== atKey(t, at)) return closeSlash(); // 候选还在路上：落定后由 atFetch 回调重绘
+  // 新查询的第一批候选还没到：先不画（否则会闪一下「没有匹配」）。
+  // 翻页不改查询，所以只有翻页那一下会立刻重画，页签条数随后再刷新。
+  if (atState.busy && panel._atQuery !== at.query) return closeSlash();
+  // 新的 @ 片段 → 回到默认的文件页；同一个片段里保留用户翻到的页
+  if (panel._atStart !== at.start || panel._atWs !== t.ws) {
+    panel._atStart = at.start;
+    panel._atWs = t.ws;
+    atPage = 'files';
+    atPinned = false;
+  }
+  if (panel._atQuery !== at.query) { // 查询变了：两页都从头选起
+    panel._atQuery = at.query;
+    atSel.files = 0;
+    atSel.sessions = 0;
+  }
+  const rows = atRows(t);
+  const count = { files: rows.files.length, sessions: rows.sessions.length };
+  let page = atPage;
+  if (!atPinned) { // 没手选就跟随有内容的那页（敲下 @ 默认文件页）
+    const alt = page === 'files' ? 'sessions' : 'files';
+    if (!count[page] && count[alt]) page = alt;
+  }
+  atPage = page;
+  let entries = rows[page];
+  if (!entries.length) entries = atEmptyRow(page, at.query, atState.busy);
+  slashSel = atSel[page] || 0;
   panel._at = at;
-  sxPaint(panel, atTitle(at.query), entries, 'at');
+  sxPaint(panel, '', entries, 'at', {
+    page: page,
+    tabs: AT_PAGES.map(p => ({ page: p.page, label: p.label, icon: p.icon, count: count[p.page] })),
+    hint: page === 'files' ? atDirHint(at.query) : '',
+  });
 }
 
 function moveSlashSel(delta) {
@@ -1415,8 +1555,11 @@ function moveSlashSel(delta) {
   const entries = panel._entries || [];
   if (!entries.length) return;
   slashSel = ((slashSel + delta) % entries.length + entries.length) % entries.length;
+  // 两页各自记一份选中行：翻回来还停在原来那条上
+  if (panel._mode === 'at') atSel[atPage] = slashSel;
   const rows = panel._rows || [];
-  rows.forEach((r, i) => r.classList.toggle('sel', i === slashSel));
+  // 空态行不可选：光标停在它上面会把「↑↓ 选择」演成什么都没选中
+  rows.forEach((r, i) => r.classList.toggle('sel', i === slashSel && entries[i] && entries[i].kind !== 'empty'));
   const cur = rows[slashSel];
   if (cur && cur.scrollIntoView) cur.scrollIntoView({ block: 'nearest' });
   const list = panel.querySelector('.sx-list');
@@ -1487,6 +1630,7 @@ async function atInsertSession(t, at, e) {
 function applySlash(e) {
   const t = curTab();
   if (!t) return;
+  if (!e || e.kind === 'empty') return; // 空页提示行不是候选
   if (e.kind === 'file' || e.kind === 'dir' || e.kind === 'sess') { applyAt(t, e); return; }
   const panel = $('#slashPanel');
   const entries = (panel && panel._entries) || [];
@@ -1605,7 +1749,7 @@ async function execSlash(t, name, arg) {
       if (!arg) { openSettings('models'); return; }
       return cmd('model.set', { model: arg }).then(out => {
         if (out && out.ok === false) return;
-        S.model = arg;
+        S.model = modelLabelOf(arg);
         renderComposer();
         if (typeof renderFoot === 'function') renderFoot();
         if (typeof renderStatLine === 'function') renderStatLine();

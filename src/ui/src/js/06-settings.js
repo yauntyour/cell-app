@@ -500,7 +500,7 @@ function buildModels() {
   if (ic) tile.appendChild(ic);
   hero.appendChild(tile);
   const info = el('div', 'model-info');
-  const nameEl = el('div', 'model-name', S.model || '(未选择模型)');
+  const nameEl = el('div', 'model-name', modelShortName() || '(未选择模型)');
   const subEl = el('div', 'model-sub', (S.provider || '未选择供应商') + ' · ' + (S.models || []).length + ' 个可用模型');
   info.appendChild(nameEl);
   info.appendChild(subEl);
@@ -538,14 +538,15 @@ function buildModels() {
       return;
     }
     for (const m of S.models) {
-      const tag = el('button', 'modeltag' + (m === S.model ? ' on' : ''));
+      const cur = isCurrentModel(m);
+      const tag = el('button', 'modeltag' + (cur ? ' on' : ''));
       tag.type = 'button';
-      if (m === S.model) { const c = setIcon('check', 'sm'); if (c) tag.appendChild(c); }
+      if (cur) { const c = setIcon('check', 'sm'); if (c) tag.appendChild(c); }
       tag.appendChild(el('span', 'modeltag-name', m));
       tag.onclick = () => {
         cmd('model.set', { model: m }).then(out => {
           if (out && out.ok !== false) {
-            S.model = m;
+            S.model = modelLabelOf(m);
             nameEl.textContent = m;
             paint();
             toast('模型已切换', 'ok');
@@ -808,7 +809,7 @@ function buildAbout(st) {
   const lv = THINK_LEVELS[clamp(Number(st.think_level == null ? 0 : st.think_level), 0, 4)];
   const rows = [
     ['连接', S.mode === 'demo' ? '演示模式（数据不持久化）' : (S.connected ? '已连接本地服务' : '连接断开，正在重试')],
-    ['模型', S.model || '(未选择)'],
+    ['模型', modelShortName() || '(未选择)'],
     ['供应商', (curProvider && curProvider.name) || S.provider || '(未选择)'],
     ['沙箱', sandboxLabel(st.sandbox_mode || S.sandbox || 'full-access') + ' · ' + (st.sandbox_mode || S.sandbox || 'full-access')],
     ['工具调用', st.tools === false ? '已关闭' : '已开启'],

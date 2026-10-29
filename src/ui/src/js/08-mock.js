@@ -35,7 +35,9 @@ const Mock = {
     system_prompt: 'You are a helpful assistant.', teamwork_max_children: 5, max_threads: 8,
   },
   models: ['gpt-4o', 'gpt-4o-mini', 'o3-mini', 'deepseek-chat', 'deepseek-reasoner'],
-  model: 'deepseek-v4-flash',
+  // 真实核心的 model_label() 是「供应商:模型」：演示模式照抄这个形状，
+  // 输入栏圆钮只显示冒号后面的模型名（供应商在底部状态行里）
+  model: 'openai:deepseek-v4-flash',
 
   /* ---- 会话 / 工作区 ------------------------------------------------ */
   sessionOf(ws) {
@@ -461,7 +463,11 @@ const Mock = {
       case 'providers.add': this.providers.push({ name: args.name || args.api_style, api_style: args.api_style, base: args.base, proxy: args.proxy || '', has_key: !!args.key, current: false }); return Promise.resolve({ ok: true, name: args.name || args.api_style, providers: this.providers });
       case 'provider.set_key': { const p = this.providers.find(x => x.name === args.name); if (p) p.has_key = true; return Promise.resolve({ ok: true, providers: this.providers }); }
       case 'models.fetch': return Promise.resolve({ ok: true, models: this.models });
-      case 'model.set': this.model = args.model; return Promise.resolve({ ok: true });
+      case 'model.set': {
+        const cp = (this.providers || []).find(x => x.current) || { name: 'openai' };
+        this.model = cp.name + ':' + args.model;
+        return Promise.resolve({ ok: true });
+      }
       case 'teamwork.list': return Promise.resolve({ ok: true, jobs: Object.values(this.jobs) });
       case 'teamwork.report':
         return Promise.resolve({ ok: true, report: '# 报告 · ' + args.worker + '\n\n这是演示模式下的子代理报告。\n\n- 已完成调研\n- 已给出结论\n- 建议合并到主分支' });
