@@ -370,6 +370,15 @@ select{appearance:none;background-image:url("data:image/svg+xml;charset=utf-8,%3
 .sb-account-sub.demo{color:var(--warn)}
 .sb-gear{display:flex;color:var(--fg3);flex:none}
 .sb-account:hover .sb-gear{color:var(--fg2)}
+/* 3.3b 用量 chip（⌂ 主页按钮旁边；点开侧栏收纳浮层，见 6b.9） ---------
+   .icon-btn 写死了 26×26，这里要「图标 + 数字」的胶囊，所以提高一级选择器 */
+.icon-btn.sb-uchip{width:auto;min-width:26px;gap:5px;padding:0 6px}
+.sb-uchip .uico{width:13px;height:13px;flex:none}
+.sb-uchip .sb-uval{font-family:var(--mono);font-size:10.5px;line-height:1;color:var(--fg4);
+  font-variant-numeric:tabular-nums;letter-spacing:-.1px;white-space:nowrap}
+.sb-uchip.has-val .sb-uval{color:var(--fg3)}
+.sb-uchip:hover .sb-uval{color:var(--fg)}
+.sb-uchip.on .sb-uval{color:inherit}
 /* 3.4 右侧面板外壳 -------------------------------------------------- */
 .dockhead{height:46px;flex:none;display:flex;align-items:center;gap:6px;padding:0 8px 0 10px;
   border-bottom:1px solid var(--line);background:var(--bg)}
@@ -432,6 +441,8 @@ select{appearance:none;background-image:url("data:image/svg+xml;charset=utf-8,%3
   .sb-account-txt{display:none}
   .sb-account{justify-content:center}
   .sb-gear{display:none}
+  .sb-uchip{padding:0;min-width:26px;justify-content:center}
+  .sb-uchip .sb-uval{display:none}
   .smeta .sid{display:none}
 }
 @container sb (max-width: 236px){
@@ -2080,6 +2091,76 @@ body.locked{overflow:hidden}
 .ww-acts .btn{height:24px;padding:0 8px;font-size:11px}
 .ww-stream > .wmsg:first-child{margin-top:0;border-top:0;padding-top:0}
 
+
+/* ---- 6b.9 用量统计（左侧栏「用量」chip 的收纳浮层；/usages） --------
+   入口是侧栏底部 ⌂ 旁边的 chip（见 03-molecules.css §3.3b），点开是一个贴在
+   chip 上方的浮层：总览方块 → 模型占比条 → 会话明细。数字统一走
+   tabular-nums，条形图只用强调色（深浅靠 opacity 区分），与黑白灰主题不冲突。
+   宽度固定 340，高度超过视口时正文内部滚动。                            */
+.usage-pop{position:fixed;z-index:130;display:flex;flex-direction:column;
+  width:340px;max-width:calc(100vw - 16px);max-height:min(600px,calc(100vh - 32px));
+  background:var(--panel2);border:1px solid var(--line2);border-radius:12px;
+  box-shadow:var(--shadow);animation:popIn 140ms var(--ease);overflow:hidden}
+.up-head{flex:none;display:flex;align-items:center;gap:7px;padding:7px 8px 7px 12px;
+  border-bottom:1px solid var(--line)}
+.up-title{font-size:12.5px;font-weight:600;color:var(--fg)}
+.up-sub{min-width:0;font-size:10.5px;color:var(--fg4);
+  font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.up-body{flex:1;min-height:0;overflow-y:auto;padding:11px 12px 13px}
+.up-empty{padding:26px 8px;text-align:center;font-size:11.5px;line-height:1.7;color:var(--fg4)}
+
+/* 正文积木：总览方块 + 模型条 + 会话行（浮层与旧的 dock 面板共用） */
+.us-tiles{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;flex:none;margin-bottom:18px}
+.us-tile{display:flex;flex-direction:column;gap:3px;min-width:0;padding:9px 11px;
+  background:var(--elev-1);border:1px solid var(--line);border-radius:var(--radius-s)}
+.us-tile.wide{grid-column:1 / -1;padding:12px 13px;
+  background:linear-gradient(135deg,color-mix(in srgb,var(--accent) 13%,var(--elev-1)),var(--elev-1));
+  border-color:color-mix(in srgb,var(--accent) 30%,var(--line))}
+.us-v{font-size:16px;font-weight:650;line-height:1.2;letter-spacing:-.2px;color:var(--fg);
+  font-variant-numeric:tabular-nums}
+.us-tile.wide .us-v{font-size:27px;letter-spacing:-.6px}
+.us-k{font-size:10.5px;color:var(--fg4)}
+
+.us-sec{display:flex;align-items:center;gap:8px;margin:0 0 9px;font-size:10.5px;
+  letter-spacing:.07em;text-transform:uppercase;color:var(--fg4)}
+.us-sec-n{margin-left:auto;font-family:var(--mono);font-size:10px;letter-spacing:0;
+  text-transform:none;color:var(--fg4);opacity:.8}
+
+.us-bars{display:flex;flex-direction:column;gap:11px;margin-bottom:20px}
+.us-bar-row{display:flex;flex-direction:column;gap:5px;min-width:0}
+.us-bar-top{display:flex;align-items:baseline;gap:8px;min-width:0}
+.us-bar-name{min-width:0;font-size:12px;color:var(--fg2)}
+.us-bar-val{margin-left:auto;flex:none;font-family:var(--mono);font-size:11px;color:var(--fg);
+  font-variant-numeric:tabular-nums}
+.us-bar-track{height:6px;border-radius:99px;background:var(--raise);overflow:hidden}
+.us-bar-track i{display:block;height:100%;border-radius:99px;
+  background:linear-gradient(90deg,color-mix(in srgb,var(--accent) 58%,transparent),var(--accent));
+  transition:width 320ms var(--ease)}
+.us-bar-sub{font-family:var(--mono);font-size:10px;color:var(--fg4)}
+
+.us-sess{display:flex;flex-direction:column;gap:6px}
+.us-srow{display:flex;align-items:center;gap:10px;width:100%;padding:8px 10px;text-align:left;
+  background:var(--elev-1);border:1px solid var(--line);border-radius:var(--radius-s);
+  transition:background var(--dur) var(--ease),border-color var(--dur) var(--ease)}
+.us-srow:hover{background:var(--elev-2);border-color:var(--line2)}
+.us-srow:focus-visible{outline:none;border-color:var(--accent);
+  box-shadow:0 0 0 3px var(--accent-soft)}
+.us-s-main{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1}
+.us-s-title{font-size:12px;color:var(--fg)}
+.us-s-meta{font-family:var(--mono);font-size:10.5px;color:var(--fg4)}
+.us-s-val{flex:none;font-family:var(--mono);font-size:11px;color:var(--fg3);
+  font-variant-numeric:tabular-nums}
+.us-more{padding:6px 2px 0;font-size:11px;color:var(--fg4)}
+
+/* 浮层里同一套积木更紧凑一档（340px 宽，别显得空） */
+.usage-pop .us-tiles{gap:6px;margin-bottom:14px}
+.usage-pop .us-tile{padding:7px 9px}
+.usage-pop .us-tile.wide{padding:9px 11px}
+.usage-pop .us-v{font-size:14px}
+.usage-pop .us-tile.wide .us-v{font-size:22px;letter-spacing:-.4px}
+.usage-pop .us-bars{gap:9px;margin-bottom:14px}
+.usage-pop .us-srow{padding:7px 9px}
+
 /* ==== css/07-motion.css =============================================== */
 
 /* ---- §5 动效 ------------------------------------------------------ */
@@ -2962,6 +3043,10 @@ mark{background:var(--accent-soft);color:var(--accent);border-radius:3px;padding
           <button class="icon-btn sm" id="navFwd" title="前进" disabled><svg class="uico" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M12 5l7 7-7 7"/></svg></button>
           <button class="icon-btn sm" id="navRefresh" title="刷新状态"><svg class="uico" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a8 8 0 1 1-2.34-5.66M21 4v4h-4"/></svg></button>
           <button class="icon-btn sm" id="navHome" title="主页（返回主视图）"><svg class="uico" viewBox="0 0 24 24" aria-hidden="true"><path d="m3 11 9-8 9 8"/><path d="M5 10v10h5v-6h4v6h5V10"/></svg></button>
+          <button class="icon-btn sm sb-uchip" id="navUsage" title="用量统计" aria-haspopup="dialog" aria-expanded="false" aria-label="用量统计">
+            <svg class="uico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 20V11M9.75 20V5M15 20v-6M20.25 20V8.5"/><path d="M2.5 20h19"/></svg>
+            <span class="sb-uval" id="navUsageVal">—</span>
+          </button>
           <span class="grow"></span>
           <button class="icon-btn sm docktoggle" id="navDock" title="打开面板" aria-pressed="false">
             <svg class="uico" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M15 3v18"/></svg>
@@ -3126,7 +3211,10 @@ const COMMANDS = [
   { name: '/tools', usage: '/tools <on|off>', desc: '开关工具调用', ctx: 'onoff' },
   { name: '/sandbox', usage: '/sandbox <mode>', desc: '设置沙箱模式', ctx: 'sandbox' },
   { name: '/autoallow', usage: '/autoallow <on|off>', desc: '自动放行（仅完全访问）', ctx: 'onoff' },
-  { name: '/compact', usage: '/compact <on|off>', desc: '自动上下文压缩', ctx: 'onoff' },
+  { name: '/compact', usage: '/compact [auto on|off]', desc: '立即压缩当前上下文（对齐 CLI）；auto on|off 开关自动压缩', ctx: 'compact' },
+  { name: '/skills', usage: '/skills', desc: '列出可用技能（.cell/skills）', run: t => listSkills(t) },
+  { name: '/skill', usage: '/skill <name>', desc: '把技能正文注入当前会话（对齐 CLI）', ctx: 'skills' },
+  { name: '/usages', usage: '/usages', desc: '展开左侧栏的用量统计（总览 / 按模型 / 按会话）', run: () => openUsagePop(true) },
   { name: '/stop', usage: '/stop', desc: '停止当前工作区正在跑的回合', run: t => cmd('stop', { ws: S.active }) },
   { name: '/teamwork', usage: '/teamwork [run|resume|stop] <id>', desc: '列出/运行/恢复团队任务', ctx: 'teamwork' },
   { name: '/notice', usage: '/notice', desc: '查看通知列表', run: () => { openDock('notices'); refreshNotices(S.active); } },
@@ -3137,8 +3225,27 @@ const COMMANDS = [
   { name: '/worktree', usage: '/worktree', desc: '管理并行工作树（Git Worktree）', run: () => openDock('git') },
   { name: '/files', usage: '/files [path]', desc: '打开工作区文件面板；Ctrl+P 快速打开', run: () => openDock('files') },
   { name: '/terminal', usage: '/terminal', desc: '打开终端面板（在工作区运行命令）', run: () => openDock('terminal') },
+  { name: '/save', usage: '/save', desc: '立即把当前会话写盘（对齐 CLI）', run: () => saveSession() },
+  { name: '/export', usage: '/export [path]', desc: '导出会话为自包含 HTML（默认落到工作区目录）', ctx: 'export' },
+  { name: '/reload', usage: '/reload', desc: '继续被中断的回合（对齐 CLI）', run: () => resumeTurn() },
   { name: '/help', usage: '/help', desc: '显示指令帮助', run: () => toast('输入 / 查看全部指令；↑↓ 选择，Tab 补全，Enter 执行', 'ok', 4200) },
+  // ---- CLI 指令名别名：候选列表里不显示，输入完整名字照常执行 ----
+  { name: '/provide', alias: true, usage: '/provide [name]', desc: 'CLI 写法：/provider', ctx: 'providers' },
+  { name: '/provides', alias: true, usage: '/provides', desc: 'CLI 写法：列出供应商', run: () => listProviders() },
+  { name: '/sessions', alias: true, usage: '/sessions', desc: 'CLI 写法：/session', ctx: 'sessions' },
+  { name: '/models', alias: true, usage: '/models', desc: 'CLI 写法：/model', ctx: 'models' },
+  { name: '/notices', alias: true, usage: '/notices', desc: 'CLI 写法：/notice', run: () => { openDock('notices'); refreshNotices(S.active); } },
+  { name: '/teamworks', alias: true, usage: '/teamworks [run|resume|stop] <id>', desc: 'CLI 写法：/teamwork', ctx: 'teamwork' },
+  { name: '/tool', alias: true, usage: '/tool <on|off>', desc: 'CLI 写法：/tools', ctx: 'onoff' },
+  { name: '/saved', alias: true, usage: '/saved', desc: 'CLI 写法：/archive', run: () => { openDock('archives'); refreshArchives(S.active, true); } },
+  { name: '/ins', alias: true, usage: '/ins <message text>', desc: 'CLI 写法：插入一条消息并触发一轮（等同直接发送）', ctx: 'ins' },
 ];
+
+// CLI 指令名 → WebUI 主名（execSlash 开头统一；别名不进候选列表）
+const CMD_ALIAS = {
+  '/provide': '/provider', '/sessions': '/session', '/models': '/model',
+  '/notices': '/notice', '/teamworks': '/teamwork', '/tool': '/tools', '/saved': '/archive',
+};
 
 /* ---------- B. 工具函数 -------------------------------------------- */
 function el(tag, cls, txt) {
@@ -3221,6 +3328,7 @@ const ICON_PATHS = {
   command: '<path d="M18 3a3 3 0 0 0-3 3v12a3 3 0 1 0 3-3H6a3 3 0 1 0 3 3V6a3 3 0 1 0-3 3h12a3 3 0 0 0 0-6Z"/>',
   shield: '<path d="M12 3l8 3v6c0 5-3.5 7.5-8 9-4.5-1.5-8-4-8-9V6l8-3Z"/>',
   gauge: '<path d="M12 21a9 9 0 1 1 9-9"/><path d="M12 12l4.5-4.5"/><circle cx="12" cy="12" r="2"/>',
+  bars: '<path d="M4.5 20V11M9.75 20V5M15 20v-6M20.25 20V8.5"/><path d="M2.5 20h19"/>',
   key: '<circle cx="8" cy="15" r="4"/><path d="m10.8 12.2 8.2-8.2M16 7l2.5 2.5M19 4l2 2"/>',
   rotate: '<path d="M3 12a9 9 0 1 0 3-6.7M3 4v5h5"/>',
 
@@ -3409,6 +3517,8 @@ const S = {
   active: '', tabOrder: [], tabs: new Map(),
   model: '', provider: '', sandbox: 'full-access', tools: true,
   providers: [], settings: {}, workspaces: [], sessions: [], sessionsTotal: 0, models: [],
+  skills: [], skillsRoot: '',   // /skills、/skill 共用（启动时拉一次，/skills 强制刷新）
+  usages: null, usagesLoading: false, usagesOpen: false, // 用量缓存（usages.summary）+ 左侧栏收纳浮层是否展开
   connected: true, everConnected: false,
   dock: 'teamwork', dockOpen: false, settingsOpen: false,
   recentCwds: [],
@@ -3428,6 +3538,58 @@ function cwdOf(ws) {
   if (t && t.cwd) return t.cwd;
   const w = S.workspaces.find(w => w.ws === ws);
   return w ? w.cwd : '';
+}
+
+/* 技能清单（对齐 CLI /skills、/skill）：面板补全用缓存，/skills 强制刷新 ——
+   技能目录是磁盘上的文件，用户可能刚改过 */
+function fetchSkills(force) {
+  if (!force && S.skills && S.skills.length) return Promise.resolve(S.skills);
+  return api('skills.list', {}).then(out => {
+    if (out && Array.isArray(out.skills)) { S.skills = out.skills; S.skillsRoot = out.root || ''; }
+    return S.skills || [];
+  }).catch(() => S.skills || []);
+}
+function listSkills() {
+  return fetchSkills(true).then(list => {
+    if (!list.length) { toast('没有可用技能' + (S.skillsRoot ? '（' + S.skillsRoot + '）' : '')); return; }
+    toast('技能 ' + list.length + ' 个：'
+      + list.map(s => s.name + (s.description ? ' — ' + s.description : '')).join('；'), 'ok', 7000);
+  });
+}
+
+/* 会话类指令（对齐 CLI /save、/export、/reload、/provides） */
+function saveSession(ws) {
+  ws = ws || S.active;
+  return cmd('session.save', { ws: ws }).then(out => {
+    if (!out || out.ok === false) {
+      const err = String((out && out.error) || '');
+      toast(err.indexOf('a turn is running') >= 0 ? '回合进行中，结束后再保存' : (err || '保存失败'), 'bad');
+      return;
+    }
+    toast('会话已保存（' + out.msgs + ' 条消息）', 'ok');
+  });
+}
+function exportSession(t, path) {
+  const ws = (t && t.ws) || S.active;
+  return cmd('session.export', { ws: ws, path: path || '' }).then(out => {
+    if (!out || out.ok === false) { toast((out && out.error) || '导出失败', 'bad', 5200); return; }
+    toast('已导出 ' + out.msgs + ' 条消息 → ' + out.path, 'ok', 7000);
+  });
+}
+function resumeTurn(t) {
+  const ws = (t && t.ws) || S.active;
+  return cmd('turn.resume', { ws: ws }).then(out => {
+    if (!out || out.ok === false) {
+      const err = String((out && out.error) || '');
+      toast(err.indexOf('no interrupted turn') >= 0 ? '没有可继续的中断回合' : (err || '无法继续'), 'bad', 4200);
+      return;
+    }
+    toast('继续被中断的回合（' + (out.reason || '中断') + '）', 'ok');
+  });
+}
+function listProviders() {
+  const names = (S.providers || []).map(p => p.name + (p.current ? '（当前）' : ''));
+  toast(names.length ? '供应商 ' + names.length + ' 个：' + names.join('、') : '还没有配置供应商', 'ok', 7000);
 }
 
 /* ---------- D. 传输层 ---------------------------------------------- */
@@ -3515,6 +3677,8 @@ function handleEvent(e) {
     case 'hello': applyHello(e, true, { keepActive: true }); break;
     case 'turn_begin': onTurnBegin(e.ws); break;
     case 'turn_end': onTurnEnd(e); break;
+    case 'compact_begin': onCompactBegin(e.ws); break;
+    case 'compact_end': onCompactEnd(e); break;
     case 'answer_begin': onAnswerBegin(e.ws); break;
     // 引擎的 answer 流就是助手正文：统一按 assistant 归档（其余前端同义）
     case 'answer': onStream(e.ws, 'assistant', e.d); break;
@@ -3713,6 +3877,8 @@ function onTurnEnd(e) {
   // 让面板重拉内容；出现新任务且右侧面板关着时自动展开 Teamwork 面板
   const beforeIds = new Set((t.jobs || []).map(j => j.id));
   t.jobsFor = '';
+  // 一轮跑完总会多出 token：顺手刷新侧栏「用量」chip（缓存 20s，最多两秒一次请求量级）
+  if (typeof refreshUsages === 'function') refreshUsages(false);
   refreshTeamwork(e.ws, true).then(jobs => {
     if (e.ws === S.active && jobs && jobs.some(j => !beforeIds.has(j.id)) && !S.dockOpen)
       openDock('teamwork');
@@ -3725,6 +3891,34 @@ function onTurnEnd(e) {
     pushMsg(e.ws, { role: 'status', text: statusText });
   });
   markChat(e.ws); schedule('tabbar', renderTabbar); markComposer(e.ws); // 切回「发送」
+  refreshSessions();
+}
+
+// /compact 在 worker 里跑（可能要几十秒）：期间按「忙」处理 —— 发送键切停止、
+// 思考指示器顶上；用户在压缩中再发消息只会排在压缩后面
+function onCompactBegin(ws) {
+  const t = ensureTab(ws);
+  t.busy = true;
+  t.thinkingSince = Date.now();
+  t._live = { assistant: null, reason: null, summary: null };
+  t._liveMsgId = null;
+  markChat(ws); schedule('tabbar', renderTabbar); markComposer(ws);
+}
+// 压缩把上下文重写成「system + 最近一条用户消息 + 摘要」：只能以落盘转录为准重载
+function onCompactEnd(e) {
+  const t = ensureTab(e.ws);
+  t.busy = false;
+  t.thinkingSince = 0;
+  t._live = { assistant: null, reason: null, summary: null };
+  t._liveMsgId = null;
+  t.archivesFor = ''; // 压缩落了一份存档：存档架下次渲染时重拉列表
+  // state 与 CLI /compact 打印的字符串同源：done 真压了 / idle 消息太少 /
+  // aborted+error 未改动上下文
+  if (e.state === 'idle') toast('上下文还很小，不需要压缩', 'ok');
+  else if (e.state === 'done') toast('上下文已压缩', 'ok');
+  else toast('压缩未完成：' + (e.d || '未知原因'), 'bad', 5200);
+  reloadSessionDetail(e.ws);
+  markChat(e.ws); schedule('tabbar', renderTabbar); markComposer(e.ws);
   refreshSessions();
 }
 function onAnswerBegin(ws) {
@@ -4026,13 +4220,20 @@ function parseList(lines, i, baseIndent) {
   const ordered = first.ordered;
   const items = [];
   while (i < lines.length) {
+    // 松散列表：项之间的空行不结束列表（markdown 的 loose list）。跳过它继续
+    // 收集，否则每项各自成列表，有序列表的编号会全部回到 1。
+    if (isBlank(lines[i])) {
+      const nxt = lines[i + 1] || '';
+      const nm = listMark(nxt);
+      if (!nm || nm.indent < baseIndent) break;
+      i++;
+    }
     const m = listMark(lines[i]);
     if (!m || m.indent < baseIndent) break;
-    if (m.indent > baseIndent) { // 更深的缩进：交给下一层递归
-      const sub = parseList(lines, i, m.indent);
-      if (!sub.html) break;
-      if (items.length) items[items.length - 1].push(sub.html);
-      i = sub.next;
+    if (m.indent > baseIndent) { // 松散列表里的子列表：并进上一项，交给 renderBlocks 递归
+      if (!items.length) break;
+      items[items.length - 1].push(lines[i].replace(/\s+$/, ''));
+      i++;
       continue;
     }
     if (m.ordered !== ordered && items.length) break; // 类型切换：另起一个列表
@@ -4590,6 +4791,7 @@ function renderFoot() {
     sub.classList.toggle('demo', S.mode === 'demo');
   }
   renderBrand();
+  paintUsageChip(); // 侧栏底部「用量」chip：数字跟 S.usages 走
 }
 
 /* ---------- 品牌标识 ------------------------------------------------ */
@@ -4700,6 +4902,8 @@ function dockSave() {
 }
 function toggleDock() { S.dockOpen ? closeDock() : openDock(S.dock); }
 function openDock(name) {
+  // 用量统计不在右栏了（左侧栏 ⌂ 旁边的收纳浮层）：旧调用点/旧链接统一改道
+  if (name === 'usages') { openUsagePop(true); return; }
   if (name && DOCK_LABEL[name]) S.dock = name;
   S.dockOpen = true;
   const dk = $('#rightdock');
@@ -4744,6 +4948,7 @@ function renderDock() {
     try { Panels.render(S.dock, body, t); } catch (e) { console.error(e); body.replaceChildren(el('div', 'empty', '面板渲染失败：' + e.message)); }
     return;
   }
+  // 用量统计是全局的（不依赖工作区），入口在左侧栏底部：见 openUsagePop
   if (!t) { body.replaceChildren(el('div', 'empty', '没有打开的工作区')); return; }
   if (S.dock === 'teamwork') renderDockTeamwork(body, t);
   else if (S.dock === 'archives') renderDockArchives(body, t);
@@ -4811,6 +5016,8 @@ function toggleSidebar() {
   if (!sb) return;
   const col = sb.classList.toggle('collapsed');
   S.sidebarCollapsed = col;
+  // 收纳浮层挂在侧栏上：侧栏收起就一起收掉，免得浮在半空
+  if (col && typeof closeUsagePop === 'function') closeUsagePop();
   try { localStorage.setItem(SIDEBAR_KEY, col ? '1' : '0'); } catch (e) {}
   paintSidebarToggle();
   setTimeout(() => Layout.apply(), 180);
@@ -4957,11 +5164,11 @@ function ensurePane(ws) {
 const CHAT_STICK_PX = 28;
 function isNearBottom(node) { return node.scrollHeight - node.scrollTop - node.clientHeight < CHAT_STICK_PX; }
 function maxScrollOf(node) { return Math.max(0, node.scrollHeight - node.clientHeight); }
-function scrollChatBottom(chat, smooth) {
+/* 贴底只走瞬时滚动：平滑滚动的目标高度是「启动那一刻」的 scrollHeight，
+   而窗口化列表滚到新位置后才会挂载末尾条目（估算高度换成实测高度），
+   scrollHeight 中途长高 → 动画停在半路，正是「回到底部滑一段就停」。 */
+function scrollChatBottom(chat) {
   if (!chat) return;
-  if (smooth) {
-    try { chat.scrollTo({ top: chat.scrollHeight, behavior: 'smooth' }); return; } catch (e) {}
-  }
   try { chat.scrollTo({ top: chat.scrollHeight, behavior: 'instant' }); }
   catch (e) { chat.scrollTop = chat.scrollHeight; }
 }
@@ -5004,7 +5211,10 @@ function ensureJumpButton(ws) {
     btn.onclick = ev => {
       ev.stopPropagation();
       t._stick = true;
-      scrollChatBottom(t._chat, true);
+      scrollChatBottom(t._chat);
+      // 滚到当时的高度只挂载了旧窗口；按「贴底」重排一次，末尾条目才真正挂上
+      // （估算高度换成实测高度后 scrollHeight 还会变），否则会停在离底部一段处
+      markChat(ws);
       paintJump(ws);
     };
     pane.appendChild(btn);
@@ -5069,10 +5279,13 @@ async function deleteSession(s) {
 // 删除工作区：只移除该工作区的全部会话记录（sessions 数据根下），cwd 目录本身保留
 async function deleteWorkspace(ws) {
   const cwd = cwdOf(ws) || (S.sessions.find(s => s.ws === ws) || {}).cwd || '';
-  if (!cwd) { toast('找不到该工作区的目录，无法删除', 'bad'); return; }
-  if (!(await confirmDlg('删除工作区「' + cwd + '」？\n将移除该工作区的全部会话记录（对话历史不可恢复）；目录本身不会被删除。',
-                         { title: '删除工作区', ok: '删除' }))) return;
-  const out = await cmd('workspace.delete', { ws, confirm: cwd });
+  // cwd 反查不到 = 目录已被移走/删除，只剩 sessions 记录。这种情况仍要能删，
+  // 否则分组永远挂在侧栏里（删除只清记录，从不碰目录）；确认串退化为 ws
+  const ask = cwd
+    ? '删除工作区「' + cwd + '」？\n将移除该工作区的全部会话记录（对话历史不可恢复）；目录本身不会被删除。'
+    : '删除工作区「' + shortId(ws) + '」？\n该工作区的目录已不存在，只剩会话记录；删除会清掉这些记录（对话历史不可恢复）。';
+  if (!(await confirmDlg(ask, { title: '删除工作区', ok: '删除' }))) return;
+  const out = await cmd('workspace.delete', { ws, confirm: cwd || ws });
   if (out && out.ok === false) { toast(out.error || '删除失败', 'bad'); return; }
   await resync();
   await refreshSessions();
@@ -5292,7 +5505,7 @@ function renderChat(ws) {
     t._win = null;
   }
   // 流式期间只在用户仍贴着底部时跟底；用户滚上去后保持当前位置
-  if (t._stick) scrollChatBottom(chat, false);
+  if (t._stick) scrollChatBottom(chat);
   else if (anchor) restoreAnchor(t, chat, anchor);
   paintJump(ws);
 }
@@ -8199,6 +8412,221 @@ function makeDraggable(node, handle) {
   document.addEventListener('mouseup', up);
 }
 
+/* ---------------------------------------------------------------- 用量统计
+   入口在**左侧栏底部** ⌂ 主页按钮旁边：chip 里收纳一个总 tokens，点开是贴在
+   chip 上方的收纳浮层（总览方块 → 模型占比条 → 会话明细）。数据来自
+   usages.summary（结构化：totals / models / sessions），全局一份，20s 内复用
+   缓存；侧栏收起 / 点外面 / Esc 都会把浮层收回去。
+   会话行可点：同/跨工作区都交给 session.select（后端按 cwd 索引打开）。   */
+function refreshUsages(force) {
+  if (S.usagesLoading) return;
+  if (!force && S.usages && Date.now() - (S.usages.at || 0) < 20000) return;
+  S.usagesLoading = true;
+  cmd('usages.summary', {}).then(out => {
+    S.usagesLoading = false;
+    if (!out || out.ok === false) return;
+    S.usages = {
+      at: Date.now(),
+      totals: out.totals || {},
+      models: out.models || [],
+      sessions: out.sessions || [],
+      totalSessions: out.total_sessions || 0,
+    };
+    paintUsageChip();
+    paintUsagePop();
+  }).catch(() => { S.usagesLoading = false; });
+}
+// provider:model → model（浮层里只留短名，完整名字放 title）
+function usShortModel(n) {
+  const s = String(n || '');
+  const i = s.indexOf(':');
+  return i > 0 ? s.slice(i + 1) : (s || '未知模型');
+}
+function usTile(value, label, wide) {
+  const box = el('div', 'us-tile' + (wide ? ' wide' : ''));
+  box.appendChild(el('span', 'us-v', value));
+  box.appendChild(el('span', 'us-k', label));
+  return box;
+}
+
+/* chip：收纳在侧栏里的那一小块 —— 图标 + 总 tokens（还没数据时是「—」） */
+function paintUsageChip() {
+  const b = $('#navUsage');
+  if (!b) return;
+  const val = b.querySelector('.sb-uval');
+  const d = S.usages;
+  const tot = d ? (d.totals || {}) : { total_tokens: 0, requests: 0 };
+  b.classList.toggle('has-val', !!d);
+  b.classList.toggle('on', !!S.usagesOpen);
+  b.setAttribute('aria-expanded', S.usagesOpen ? 'true' : 'false');
+  if (val) val.textContent = d ? fmtTok(tot.total_tokens) : '—';
+  b.title = d
+    ? '用量统计 · ' + fmtTok(tot.total_tokens) + ' tokens / ' + (tot.requests || 0) + ' 请求（点击展开）'
+    : '用量统计（点击展开）';
+}
+
+/* 收纳浮层：贴 chip 上方（放不下才翻到下方），宽度固定 340，超出视口内收 */
+let usagePop = null;
+function closeUsagePop() {
+  if (!usagePop) return;
+  usagePop.el.remove();
+  document.removeEventListener('pointerdown', usagePop.out, true);
+  document.removeEventListener('keydown', usagePop.key, true);
+  window.removeEventListener('resize', usagePop.resize);
+  usagePop = null;
+  S.usagesOpen = false;
+  paintUsageChip();
+}
+function usagePopPlace(pop, anchor) {
+  const r = anchor.getBoundingClientRect();
+  const w = pop.offsetWidth, h = pop.offsetHeight;
+  pop.style.left = Math.max(8, Math.min(r.left, innerWidth - w - 8)) + 'px';
+  let top = r.top - h - 8;              // 优先贴在 chip 上方
+  if (top < 8) top = r.bottom + 8;      // 上方不够就翻到下方
+  pop.style.top = Math.max(8, Math.min(top, innerHeight - h - 8)) + 'px';
+}
+function openUsagePop(force) {
+  if (usagePop) { if (force) refreshUsages(true); return; }
+  const anchor = $('#navUsage');
+  if (!anchor) return;
+  const pop = el('div', 'usage-pop');
+  pop.setAttribute('role', 'dialog');
+  pop.setAttribute('aria-label', '用量统计');
+  const head = el('div', 'up-head');
+  head.appendChild(el('span', 'up-title', '用量统计'));
+  head.appendChild(el('span', 'up-sub', '正在统计…'));
+  head.appendChild(el('span', 'grow'));
+  const bRefresh = el('button', 'icon-btn sm');
+  bRefresh.type = 'button';
+  bRefresh.title = '重新统计';
+  bRefresh.setAttribute('aria-label', '重新统计');
+  bRefresh.appendChild(iconEl('refresh', 'sm'));
+  bRefresh.onclick = () => refreshUsages(true);
+  head.appendChild(bRefresh);
+  const bClose = el('button', 'icon-btn sm');
+  bClose.type = 'button';
+  bClose.title = '收起 (Esc)';
+  bClose.setAttribute('aria-label', '收起');
+  bClose.appendChild(iconEl('x', 'sm'));
+  bClose.onclick = () => closeUsagePop();
+  head.appendChild(bClose);
+  pop.appendChild(head);
+  pop.appendChild(el('div', 'up-body'));
+  document.body.appendChild(pop);
+
+  const out = ev => { if (!pop.contains(ev.target) && !anchor.contains(ev.target)) closeUsagePop(); };
+  const key = ev => {
+    if (ev.key !== 'Escape') return;
+    ev.preventDefault();
+    ev.stopPropagation();   // 别让全局 Esc 顺手把右侧面板也关掉
+    closeUsagePop();
+  };
+  const resize = () => { if (usagePop) usagePopPlace(pop, anchor); };
+  document.addEventListener('pointerdown', out, true);
+  document.addEventListener('keydown', key, true);
+  window.addEventListener('resize', resize);
+  usagePop = { el: pop, anchor: anchor, out: out, key: key, resize: resize };
+  S.usagesOpen = true;
+  paintUsageChip();
+  paintUsagePop();
+  refreshUsages(!!force);
+}
+function toggleUsagePop() { S.usagesOpen ? closeUsagePop() : openUsagePop(true); }
+function paintUsagePop() {
+  if (!usagePop) return;
+  const d = S.usages;
+  const sub = usagePop.el.querySelector('.up-sub');
+  if (sub) sub.textContent = d ? '更新于 ' + relTime(Math.floor(d.at / 1000)) : '正在统计…';
+  const body = usagePop.el.querySelector('.up-body');
+  if (body) renderUsageBody(body, 12);
+  usagePopPlace(usagePop.el, usagePop.anchor); // 内容高度变了，重新贴边
+}
+/* 正文：总览方块 + 模型占比条 + 会话明细（limit = 最多列几条会话） */
+function renderUsageBody(body, limit) {
+  body.replaceChildren();
+  const d = S.usages;
+  if (!d) { body.appendChild(el('div', 'up-empty', '正在统计用量…')); return; }
+  const tot = d.totals || {};
+  const tiles = el('div', 'us-tiles');
+  tiles.appendChild(usTile(fmtTok(tot.total_tokens), '总 tokens', true));
+  tiles.appendChild(usTile(String(tot.requests || 0), '请求'));
+  tiles.appendChild(usTile(fmtTok(tot.input_tokens), '输入 tokens'));
+  tiles.appendChild(usTile(fmtTok(tot.output_tokens), '输出 tokens'));
+  tiles.appendChild(usTile(String(tot.messages || 0), '累计消息'));
+  body.appendChild(tiles);
+
+  if (!d.models.length && !d.sessions.length) {
+    body.appendChild(el('div', 'up-empty', '还没有用量记录。跑一轮对话后，这里会按模型与会话统计 token 消耗。'));
+    return;
+  }
+
+  if (d.models.length) {
+    const sec = el('div', 'us-sec');
+    sec.appendChild(el('span', null, '按模型'));
+    sec.appendChild(el('span', 'us-sec-n', d.models.length + ' 个'));
+    body.appendChild(sec);
+    const maxTok = Math.max.apply(null, d.models.map(m => Number(m.total_tokens) || 0).concat([1]));
+    const bars = el('div', 'us-bars');
+    for (const m of d.models) {
+      const row = el('div', 'us-bar-row');
+      const top = el('div', 'us-bar-top');
+      top.appendChild(el('span', 'us-bar-name trunc', usShortModel(m.name)));
+      top.appendChild(el('span', 'us-bar-val', fmtTok(m.total_tokens)));
+      row.appendChild(top);
+      const track = el('div', 'us-bar-track');
+      const fill = el('i');
+      fill.style.width = Math.max(3, Math.round((Number(m.total_tokens) || 0) / maxTok * 100)) + '%';
+      track.appendChild(fill);
+      row.appendChild(track);
+      row.appendChild(el('div', 'us-bar-sub',
+        [m.requests + ' 请求', fmtTok(m.input_tokens) + ' 入', fmtTok(m.output_tokens) + ' 出'].join(' · ')));
+      row.title = m.name;
+      bars.appendChild(row);
+    }
+    body.appendChild(bars);
+  }
+
+  if (d.sessions.length) {
+    const shown = Math.max(1, Number(limit || 40));
+    const sec = el('div', 'us-sec');
+    sec.appendChild(el('span', null, '按会话'));
+    sec.appendChild(el('span', 'us-sec-n', d.totalSessions + ' 条'));
+    body.appendChild(sec);
+    const list = el('div', 'us-sess');
+    for (const s of d.sessions.slice(0, shown)) {
+      const known = (S.sessions || []).find(x => x.id === s.id);
+      const row = el('button', 'us-srow');
+      row.type = 'button';
+      const main = el('span', 'us-s-main');
+      main.appendChild(el('span', 'us-s-title trunc', (known && known.title) || shortId(s.id)));
+      main.appendChild(el('span', 'us-s-meta trunc',
+        usShortModel(s.model) + ' · ' + (s.requests || 0) + ' 请求'));
+      row.appendChild(main);
+      row.appendChild(el('span', 'us-s-val', fmtTok(s.total_tokens)));
+      row.title = s.id + '  ·  点击切换到这个会话';
+      row.onclick = () => openUsageSession(s);
+      list.appendChild(row);
+    }
+    if (d.sessions.length > shown)
+      list.appendChild(el('div', 'us-more', '另有 ' + (d.sessions.length - shown) + ' 条会话未列出'));
+    body.appendChild(list);
+  }
+}
+// 兼容旧调用点（原来的右栏「用量」标签页已经收进左侧栏，函数名保留）
+function renderDockUsages(body) { renderUsageBody(body, 40); }
+// 点会话行 → 切过去（后端按 cwd 索引打开所属工作区；跨工作区也可以）
+function openUsageSession(s) {
+  if (!s || !s.id) return;
+  const ws = String(s.id).split('-')[0];
+  const t = S.tabs.get(ws);
+  if (t && t.session === s.id) { toast('已经在这个会话里', 'ok'); return; }
+  cmd('session.select', { ws: ws, id: s.id }).then(out => {
+    if (out && out.ok === false) { toast(out.error || '切换会话失败', 'bad'); return; }
+    closeUsagePop(); // 切走了就收起来，别挡着新会话
+    return resync().then(() => refreshSessions());
+  }).catch(() => toast('切换会话失败', 'bad'));
+}
+
 /* ---------- 存档架（dock 第三个标签页）与存档浮窗 ------------------- */
 function renderDockArchives(body, t) {
   const head = pnlHead('存档', (t.archives.length || 0) + ' 个压缩存档', [
@@ -8678,12 +9106,17 @@ const CMP_CMD_ICONS = {
   '/new': 'plus', '/clear': 'trash', '/session': 'message', '/model': 'cpu',
   '/provider': 'database', '/think': 'bulb', '/tools': 'settings', '/sandbox': 'terminal',
   '/autoallow': 'check', '/compact': 'archive', '/stop': 'stop', '/teamwork': 'users',
+  '/skills': 'sparkles', '/skill': 'layers',
+  '/save': 'mark', '/export': 'download', '/reload': 'refresh', '/usages': 'layers',
+  '/provide': 'database', '/provides': 'database', '/sessions': 'message', '/models': 'cpu',
+  '/notices': 'bell', '/teamworks': 'users', '/tool': 'settings', '/saved': 'archive',
   '/notice': 'bell', '/archive': 'archive', '/workspace': 'folder', '/theme': 'eye',
   '/help': 'info',
 };
 const CMP_ARG_ICONS = {
   sessions: 'message', models: 'cpu', providers: 'database', think: 'bulb',
   sandbox: 'terminal', onoff: 'check', theme: 'eye', teamwork: 'users', workspaces: 'folder',
+  compact: 'archive', skills: 'layers', export: 'download',
 };
 
 /* 发送/停止/运行图标用内联 SVG 直接给：停止方块与播放三角填充更扎实 */
@@ -9437,9 +9870,11 @@ async function sendCurrent() {
   // 斜杠指令在前端执行，绝不作为消息发给模型（见 slashIntent 注释）
   const it = slashIntent(text);
   if (it.kind !== 'message') {
+    // 面板没开着时（Esc 关掉后再 Enter）也要执行完整指令名，不能把它改成
+    // 「指令 + 空格」重开参数面板 —— 那样 Enter 永远发不出无参指令
     closeSlash();
-    if (it.kind === 'exec') { syncComposerText(''); runSlash(t, it); }
-    else { syncComposerText(it.name + ' '); buildSlash(); focusInput(); } // complete：先出参数候选
+    syncComposerText('');
+    runSlash(t, it);
     return;
   }
   if (atts.length) {
@@ -9825,6 +10260,14 @@ function slashArgItems(cmdName) {
     case 'onoff':
       add('on', 'on', '开启'); add('off', 'off', '关闭');
       break;
+    case 'compact':
+      // 参数语法对齐 CLI：裸 /compact = 立即压缩，auto on|off = 自动压缩开关
+      add('on', 'on', '开启自动压缩'); add('off', 'off', '关闭自动压缩');
+      add('auto on', 'auto on', '同 on（CLI 写法）'); add('auto off', 'auto off', '同 off（CLI 写法）');
+      break;
+    case 'skills':
+      for (const sk of (S.skills || [])) add(sk.name, sk.name, sk.description || '');
+      break;
     case 'theme':
       add('default', '', '默认外观（与 /export 导出的会话页同源）');
       for (const th of Theme.list()) add(th.name, th.name, th.label + (th.desc ? ' · ' + th.desc : ''));
@@ -9865,7 +10308,8 @@ function slashEntries(v) {
   let entries = [];
   let title = '指令';
   if (!rest && !v.includes(' ')) {
-    const scored = COMMANDS.map(c => ({ c: c, sc: fuzzy(token.slice(1), c.name.slice(1)) }))
+    // 别名（CLI 写法）只在输入完整名字时执行，不占候选列表
+    const scored = COMMANDS.filter(c => !c.alias).map(c => ({ c: c, sc: fuzzy(token.slice(1), c.name.slice(1)) }))
       .filter(x => x.sc > 0).sort((a, b) => b.sc - a.sc);
     entries = scored.map(x => ({ kind: 'cmd', name: x.c.name, usage: x.c.usage, desc: x.c.desc, cmd: x.c }));
   } else {
@@ -10291,7 +10735,7 @@ function applySlash(e) {
   const full = head + ' ' + (e.insert || e.label);
   // 单参数指令：直接执行并清空输入框（是否生效由 execSlash 的 toast 提示）；
   // 其余（多段指令的中间补全）保留补全文本，等下一步继续选
-  if (['/model', '/provider', '/think', '/sandbox', '/tools', '/autoallow', '/compact', '/theme', '/session', '/workspace'].includes(head)
+  if (['/model', '/provider', '/think', '/sandbox', '/tools', '/autoallow', '/compact', '/theme', '/session', '/workspace', '/skill'].includes(head)
       && e.insert && !String(e.insert).endsWith(' ')) {
     syncComposerText('');
     execSlash(t, head, String(e.insert));
@@ -10352,7 +10796,16 @@ function enterSlash() {
     runSlash(t, it);
     return;
   }
-  if (it.kind === 'complete' || v.indexOf(' ') < 0) { // 半成品：接受当前候选补全
+  // 完整指令名（/compact）：Enter 就是执行，补全交给 Tab —— 面板底部写的正是
+  // 「Tab 补全 / Enter 执行」。旧行为把 Enter 当成接受高亮参数（/compact → on），
+  // 无参指令永远发不出去。
+  if (it.kind === 'complete') {
+    closeSlash();
+    syncComposerText('');
+    runSlash(t, it);
+    return;
+  }
+  if (v.indexOf(' ') < 0) { // 半成品指令名：接受当前候选补全
     if (entries[slashSel]) applySlash(entries[slashSel]);
     return;
   }
@@ -10372,10 +10825,13 @@ function afterSet(out, msg) {
 
 async function execSlash(t, name, arg) {
   arg = (arg || '').trim();
+  name = CMD_ALIAS[name] || name; // /provide、/sessions… 统一成主名再分派
   switch (name) {
     case '/new': return cmd('session.new', { ws: t.ws }).then(resync);
     case '/clear': return cmd('session.clear', { ws: t.ws }).then(resync);
-    case '/session': if (arg) return cmd('session.select', { ws: t.ws, id: arg }).then(resync); break;
+    case '/session':
+      if (arg) return cmd('session.select', { ws: t.ws, id: arg }).then(resync);
+      toast('用法：/session <id>'); break;
     case '/model':
       if (!arg) { openSettings('models'); return; }
       return cmd('model.set', { model: arg }).then(out => {
@@ -10391,8 +10847,9 @@ async function execSlash(t, name, arg) {
         if (out && out.ok === false) return;
         return afterSet(out, '供应商：' + arg);
       });
-      break;
+      toast('用法：/provider <name>'); break;
     case '/think': {
+      if (!arg) { toast('用法：/think 0-4 或 ' + THINK_LEVELS.map(l => l.name).join('/')); break; }
       const lv = thinkLevelOf(arg);
       if (lv == null) { toast('无效的思考级别：' + arg + '（0-4 或 ' + THINK_LEVELS.map(l => l.name).join('/') + '）', 'bad'); break; }
       const l = THINK_LEVELS[lv];
@@ -10404,6 +10861,7 @@ async function execSlash(t, name, arg) {
       });
     }
     case '/tools': {
+      if (!arg) { toast('工具调用：' + (S.tools ? '开' : '关'), 'ok'); break; }
       const on = onoffOf(arg);
       if (on == null) { toast('用法：/tools on|off', 'bad'); break; }
       return cmd('settings.set', { patch: { tools: on } }).then(out => {
@@ -10412,19 +10870,56 @@ async function execSlash(t, name, arg) {
       });
     }
     case '/sandbox': {
+      if (!arg) { toast('用法：/sandbox ' + SANDBOX_MODES.map(x => x.v).join('|')); break; }
       const m = SANDBOX_MODES.find(x => x.v === arg);
       if (!m) { toast('无效的沙箱模式：' + arg + '（' + SANDBOX_MODES.map(x => x.v).join(' / ') + '）', 'bad'); break; }
       return setSandboxMode(m.v);
     }
     case '/autoallow': {
+      if (!arg) { toast('自动放行：' + ((S.settings || {}).autoallow ? '开' : '关'), 'ok'); break; }
       const on = onoffOf(arg);
       if (on == null) { toast('用法：/autoallow on|off', 'bad'); break; }
       return cmd('settings.set', { patch: { autoallow: on } }).then(out => afterSet(out, '自动放行：' + (on ? '开' : '关')));
     }
     case '/compact': {
-      const on = onoffOf(arg);
-      if (on == null) { toast('用法：/compact on|off', 'bad'); break; }
+      // 裸 /compact = 立即压缩当前会话（与 CLI 一致）。压缩在 worker 里跑，
+      // 这里只负责投递；进度与结果走 compact_begin / compact_end 事件。
+      if (!arg) return cmd('compact.now', { ws: t.ws }).then(out => {
+        if (!out || out.ok === false) {
+          const err = String((out && out.error) || '');
+          toast(err.indexOf('a turn is running') >= 0 ? '回合进行中，结束后再压缩' : (err || '压缩启动失败'), 'bad');
+        }
+      });
+      // /compact auto [on|off] 与 /compact [on|off] 都是自动压缩开关
+      const m = String(arg).split(/\s+/);
+      if (m[0] === 'auto' && !m[1]) {
+        toast('自动压缩：' + ((S.settings || {}).compact_auto ? '开' : '关'), 'ok');
+        break;
+      }
+      const on = onoffOf(m[0] === 'auto' ? m[1] : arg);
+      if (on == null) { toast('用法：/compact | /compact auto on|off', 'bad'); break; }
       return cmd('settings.set', { patch: { compact_auto: on } }).then(out => afterSet(out, '自动压缩：' + (on ? '开' : '关')));
+    }
+    case '/skills': return listSkills();
+    case '/skill': {
+      // 对齐 CLI /skill NAME：把技能正文注入当前会话的 system 块
+      if (!arg) { toast('用法：/skill <name>'); break; }
+      return cmd('skill.load', { ws: t.ws, name: arg }).then(out => {
+        if (!out || out.ok === false) {
+          const err = String((out && out.error) || '加载失败');
+          toast(err.indexOf('a turn is running') >= 0 ? '回合进行中，结束后再加载' : err, 'bad');
+          return;
+        }
+        toast('已加载技能：' + out.name + '（' + out.chars + ' 字符）', 'ok', 4200);
+      });
+    }
+    case '/export': return exportSession(t, arg);
+    case '/ins': {
+      // 对齐 CLI：文本作为用户消息发出去并触发一轮（GUI 里等同于直接输入）
+      if (!arg) { toast('用法：/ins <message text>'); break; }
+      if (t.busy) { toast('回合进行中，结束后再插入', 'bad'); break; }
+      t.composer.text = arg;
+      return sendCurrent();
     }
     case '/stop': return cmd('stop', { ws: t.ws });
     case '/theme': {
@@ -12620,9 +13115,67 @@ const Mock = {
       }
       case 'session.delete': return Promise.resolve({ ok: true });
       case 'settings.get': return Promise.resolve({ ok: true, settings: this.settings });
+      case 'session.save': {
+        const tt = S.tabs.get(ws);
+        return Promise.resolve({ ok: true, id: sid, msgs: (tt && tt.msgs ? tt.msgs.length : 0) });
+      }
+      case 'session.export':
+        return Promise.resolve({
+          ok: true,
+          path: (this.cwdA + '\\cell-export-20261029-211500.html'),
+          msgs: 14, jobs: 0,
+        });
+      case 'turn.resume':
+        return Promise.resolve({
+          ok: false,
+          error: 'no interrupted turn to resume (the last turn ended normally or the state was already cleared)',
+        });
+      case 'usages.summary':
+        return Promise.resolve({
+          ok: true,
+          totals: { requests: 486, messages: 1320, input_tokens: 8420000, output_tokens: 963000, total_tokens: 9383000, input_chars: 0, output_chars: 0 },
+          models: [
+            { name: 'deepseek-anthropic:deepseek-flash', requests: 402, messages: 1188, input_tokens: 7210000, output_tokens: 812000, total_tokens: 8022000 },
+            { name: 'deepseek-chat:deepseek-chat', requests: 71, messages: 118, input_tokens: 1050000, output_tokens: 128000, total_tokens: 1178000 },
+            { name: 'llama.cpp:qwen3-coder', requests: 13, messages: 14, input_tokens: 160000, output_tokens: 23000, total_tokens: 183000 },
+          ],
+          sessions: [
+            { id: 'sms0001-1-mock', model: 'deepseek-anthropic:deepseek-flash', requests: 196, messages: 612, input_tokens: 3820000, output_tokens: 421000, total_tokens: 4241000 },
+            { id: 'sms0001-2-mock', model: 'deepseek-anthropic:deepseek-flash', requests: 128, messages: 402, input_tokens: 2410000, output_tokens: 268000, total_tokens: 2678000 },
+            { id: 'sms0002-1-mock', model: 'deepseek-chat:deepseek-chat', requests: 71, messages: 118, input_tokens: 1050000, output_tokens: 128000, total_tokens: 1178000 },
+            { id: 'sms0001-3-mock', model: 'deepseek-anthropic:deepseek-flash', requests: 78, messages: 174, input_tokens: 980000, output_tokens: 123000, total_tokens: 1103000 },
+            { id: 'sms0002-2-mock', model: 'llama.cpp:qwen3-coder', requests: 13, messages: 14, input_tokens: 160000, output_tokens: 23000, total_tokens: 183000 },
+          ],
+          total_sessions: 5,
+        });
+      case 'skills.list':
+        return Promise.resolve({
+          ok: true, root: 'C:/demo/.cell/skills', skills: [
+            { name: 'pdf-report', description: '把 Markdown 渲染成 PDF 报告' },
+            { name: 'code-review', description: '按团队规范审查改动' },
+            { name: 'webapp-testing', description: '用 Playwright 验收页面' },
+          ],
+        });
+      case 'skill.load': return Promise.resolve({ ok: true, name: args.name, chars: 1820, msgs: 6 });
       case 'settings.set':
         Object.assign(this.settings, args.patch || {});
         return Promise.resolve({ ok: true, settings: this.settings });
+      // 演示 /compact：走一遍 compact_begin → status → compact_end
+      case 'compact.now': {
+        if (this._compacting) return Promise.resolve({ ok: true });
+        this._compacting = true;
+        const self = this;
+        this.emit({ t: 'compact_begin', ws: ws });
+        setTimeout(() => self.emit({ t: 'status', ws: ws, d: 'compacting context…' }), 500);
+        setTimeout(() => {
+          self._compacting = false;
+          self.emit({
+            t: 'compact_end', ws: ws, ok: true, state: 'done',
+            d: 'context compacted: archived to msg-20261029-204500.jsonl, aggregated 24 message(s) into 1 summary, 4 message(s) remain',
+          });
+        }, 1400);
+        return Promise.resolve({ ok: true });
+      }
       case 'providers.select': return Promise.resolve({ ok: true, providers: this.providers });
       case 'providers.rm': this.providers = this.providers.filter(p => p.name !== args.name); return Promise.resolve({ ok: true, providers: this.providers });
       case 'providers.add': this.providers.push({ name: args.name || args.api_style, api_style: args.api_style, base: args.base, proxy: args.proxy || '', has_key: !!args.key, current: false }); return Promise.resolve({ ok: true, name: args.name || args.api_style, providers: this.providers });
@@ -16857,6 +17410,7 @@ function wireEvents() {
   $('#navFwd').onclick = () => Nav.fwd();
   $('#navRefresh').onclick = () => Nav.refresh();
   $('#navHome').onclick = () => Nav.home();
+  $('#navUsage').onclick = () => toggleUsagePop();
   $('#navDock').onclick = () => toggleDock();
   $('#btnTopDock').onclick = () => toggleDock();
   $('#dockClose').onclick = () => closeDock();
@@ -16996,6 +17550,7 @@ function enterDemo(reason) {
   renderPanes(); renderTabbar(); renderSidebar(); renderFoot(); renderStatLine(); renderDock();
   if (S.active) { renderChat(S.active); renderChatHead(S.active); }
   renderDock();
+  refreshUsages(false); // 侧栏「用量」chip 先显示一个数（演示数据）
   setTimeout(() => { refreshSessions(); renderSidebar(); renderDock(); }, 60);
 }
 
@@ -17011,7 +17566,9 @@ async function boot() {
   try {
     const q = new URLSearchParams(location.search);
     const qd = q.get('dock');
-    if (qd && { start: 1, files: 2, git: 3, terminal: 4, teamwork: 5, notices: 6, archives: 7 }[qd]) openDock(qd);
+    // 用量统计已从右栏挪到左侧栏收纳浮层：?dock=usages 保留给截图/调试
+    if (qd === 'usages') openUsagePop(true);
+    else if (qd && { start: 1, files: 2, git: 3, terminal: 4, teamwork: 5, notices: 6, archives: 7 }[qd]) openDock(qd);
     if (q.get('settings') === '1') openSettings(q.get('section') || undefined);
   } catch (e) {}
   if (MOCK) { enterDemo('file:// 或 ?mock=1'); return; }
@@ -17022,6 +17579,8 @@ async function boot() {
     S.everConnected = true; S.connected = true;
     applyHello(st, true);
     Transport.init();
+    fetchSkills(); // /skill 的参数补全：后台拉一次，失败就退回空列表（不挡启动）
+    refreshUsages(false); // 侧栏「用量」chip 的后台取数（失败就保持「—」）
   } catch (e) {
     enterDemo('无法连接后端：' + (e && e.message ? e.message : e));
   }

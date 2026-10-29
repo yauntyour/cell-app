@@ -116,11 +116,11 @@ function ensurePane(ws) {
 const CHAT_STICK_PX = 28;
 function isNearBottom(node) { return node.scrollHeight - node.scrollTop - node.clientHeight < CHAT_STICK_PX; }
 function maxScrollOf(node) { return Math.max(0, node.scrollHeight - node.clientHeight); }
-function scrollChatBottom(chat, smooth) {
+/* 贴底只走瞬时滚动：平滑滚动的目标高度是「启动那一刻」的 scrollHeight，
+   而窗口化列表滚到新位置后才会挂载末尾条目（估算高度换成实测高度），
+   scrollHeight 中途长高 → 动画停在半路，正是「回到底部滑一段就停」。 */
+function scrollChatBottom(chat) {
   if (!chat) return;
-  if (smooth) {
-    try { chat.scrollTo({ top: chat.scrollHeight, behavior: 'smooth' }); return; } catch (e) {}
-  }
   try { chat.scrollTo({ top: chat.scrollHeight, behavior: 'instant' }); }
   catch (e) { chat.scrollTop = chat.scrollHeight; }
 }
@@ -163,7 +163,10 @@ function ensureJumpButton(ws) {
     btn.onclick = ev => {
       ev.stopPropagation();
       t._stick = true;
-      scrollChatBottom(t._chat, true);
+      scrollChatBottom(t._chat);
+      // 滚到当时的高度只挂载了旧窗口；按「贴底」重排一次，末尾条目才真正挂上
+      // （估算高度换成实测高度后 scrollHeight 还会变），否则会停在离底部一段处
+      markChat(ws);
       paintJump(ws);
     };
     pane.appendChild(btn);
@@ -228,10 +231,13 @@ async function deleteSession(s) {
 // 删除工作区：只移除该工作区的全部会话记录（sessions 数据根下），cwd 目录本身保留
 async function deleteWorkspace(ws) {
   const cwd = cwdOf(ws) || (S.sessions.find(s => s.ws === ws) || {}).cwd || '';
-  if (!cwd) { toast('找不到该工作区的目录，无法删除', 'bad'); return; }
-  if (!(await confirmDlg('删除工作区「' + cwd + '」？\n将移除该工作区的全部会话记录（对话历史不可恢复）；目录本身不会被删除。',
-                         { title: '删除工作区', ok: '删除' }))) return;
-  const out = await cmd('workspace.delete', { ws, confirm: cwd });
+  // cwd 反查不到 = 目录已被移走/删除，只剩 sessions 记录。这种情况仍要能删，
+  // 否则分组永远挂在侧栏里（删除只清记录，从不碰目录）；确认串退化为 ws
+  const ask = cwd
+    ? '删除工作区「' + cwd + '」？\n将移除该工作区的全部会话记录（对话历史不可恢复）；目录本身不会被删除。'
+    : '删除工作区「' + shortId(ws) + '」？\n该工作区的目录已不存在，只剩会话记录；删除会清掉这些记录（对话历史不可恢复）。';
+  if (!(await confirmDlg(ask, { title: '删除工作区', ok: '删除' }))) return;
+  const out = await cmd('workspace.delete', { ws, confirm: cwd || ws });
   if (out && out.ok === false) { toast(out.error || '删除失败', 'bad'); return; }
   await resync();
   await refreshSessions();
@@ -451,7 +457,7 @@ function renderChat(ws) {
     t._win = null;
   }
   // 流式期间只在用户仍贴着底部时跟底；用户滚上去后保持当前位置
-  if (t._stick) scrollChatBottom(chat, false);
+  if (t._stick) scrollChatBottom(chat);
   else if (anchor) restoreAnchor(t, chat, anchor);
   paintJump(ws);
 }

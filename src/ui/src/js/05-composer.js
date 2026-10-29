@@ -47,12 +47,17 @@ const CMP_CMD_ICONS = {
   '/new': 'plus', '/clear': 'trash', '/session': 'message', '/model': 'cpu',
   '/provider': 'database', '/think': 'bulb', '/tools': 'settings', '/sandbox': 'terminal',
   '/autoallow': 'check', '/compact': 'archive', '/stop': 'stop', '/teamwork': 'users',
+  '/skills': 'sparkles', '/skill': 'layers',
+  '/save': 'mark', '/export': 'download', '/reload': 'refresh', '/usages': 'layers',
+  '/provide': 'database', '/provides': 'database', '/sessions': 'message', '/models': 'cpu',
+  '/notices': 'bell', '/teamworks': 'users', '/tool': 'settings', '/saved': 'archive',
   '/notice': 'bell', '/archive': 'archive', '/workspace': 'folder', '/theme': 'eye',
   '/help': 'info',
 };
 const CMP_ARG_ICONS = {
   sessions: 'message', models: 'cpu', providers: 'database', think: 'bulb',
   sandbox: 'terminal', onoff: 'check', theme: 'eye', teamwork: 'users', workspaces: 'folder',
+  compact: 'archive', skills: 'layers', export: 'download',
 };
 
 /* 发送/停止/运行图标用内联 SVG 直接给：停止方块与播放三角填充更扎实 */
@@ -806,9 +811,11 @@ async function sendCurrent() {
   // 斜杠指令在前端执行，绝不作为消息发给模型（见 slashIntent 注释）
   const it = slashIntent(text);
   if (it.kind !== 'message') {
+    // 面板没开着时（Esc 关掉后再 Enter）也要执行完整指令名，不能把它改成
+    // 「指令 + 空格」重开参数面板 —— 那样 Enter 永远发不出无参指令
     closeSlash();
-    if (it.kind === 'exec') { syncComposerText(''); runSlash(t, it); }
-    else { syncComposerText(it.name + ' '); buildSlash(); focusInput(); } // complete：先出参数候选
+    syncComposerText('');
+    runSlash(t, it);
     return;
   }
   if (atts.length) {
@@ -1194,6 +1201,14 @@ function slashArgItems(cmdName) {
     case 'onoff':
       add('on', 'on', '开启'); add('off', 'off', '关闭');
       break;
+    case 'compact':
+      // 参数语法对齐 CLI：裸 /compact = 立即压缩，auto on|off = 自动压缩开关
+      add('on', 'on', '开启自动压缩'); add('off', 'off', '关闭自动压缩');
+      add('auto on', 'auto on', '同 on（CLI 写法）'); add('auto off', 'auto off', '同 off（CLI 写法）');
+      break;
+    case 'skills':
+      for (const sk of (S.skills || [])) add(sk.name, sk.name, sk.description || '');
+      break;
     case 'theme':
       add('default', '', '默认外观（与 /export 导出的会话页同源）');
       for (const th of Theme.list()) add(th.name, th.name, th.label + (th.desc ? ' · ' + th.desc : ''));
@@ -1234,7 +1249,8 @@ function slashEntries(v) {
   let entries = [];
   let title = '指令';
   if (!rest && !v.includes(' ')) {
-    const scored = COMMANDS.map(c => ({ c: c, sc: fuzzy(token.slice(1), c.name.slice(1)) }))
+    // 别名（CLI 写法）只在输入完整名字时执行，不占候选列表
+    const scored = COMMANDS.filter(c => !c.alias).map(c => ({ c: c, sc: fuzzy(token.slice(1), c.name.slice(1)) }))
       .filter(x => x.sc > 0).sort((a, b) => b.sc - a.sc);
     entries = scored.map(x => ({ kind: 'cmd', name: x.c.name, usage: x.c.usage, desc: x.c.desc, cmd: x.c }));
   } else {
@@ -1660,7 +1676,7 @@ function applySlash(e) {
   const full = head + ' ' + (e.insert || e.label);
   // 单参数指令：直接执行并清空输入框（是否生效由 execSlash 的 toast 提示）；
   // 其余（多段指令的中间补全）保留补全文本，等下一步继续选
-  if (['/model', '/provider', '/think', '/sandbox', '/tools', '/autoallow', '/compact', '/theme', '/session', '/workspace'].includes(head)
+  if (['/model', '/provider', '/think', '/sandbox', '/tools', '/autoallow', '/compact', '/theme', '/session', '/workspace', '/skill'].includes(head)
       && e.insert && !String(e.insert).endsWith(' ')) {
     syncComposerText('');
     execSlash(t, head, String(e.insert));
@@ -1721,7 +1737,16 @@ function enterSlash() {
     runSlash(t, it);
     return;
   }
-  if (it.kind === 'complete' || v.indexOf(' ') < 0) { // 半成品：接受当前候选补全
+  // 完整指令名（/compact）：Enter 就是执行，补全交给 Tab —— 面板底部写的正是
+  // 「Tab 补全 / Enter 执行」。旧行为把 Enter 当成接受高亮参数（/compact → on），
+  // 无参指令永远发不出去。
+  if (it.kind === 'complete') {
+    closeSlash();
+    syncComposerText('');
+    runSlash(t, it);
+    return;
+  }
+  if (v.indexOf(' ') < 0) { // 半成品指令名：接受当前候选补全
     if (entries[slashSel]) applySlash(entries[slashSel]);
     return;
   }
@@ -1741,10 +1766,13 @@ function afterSet(out, msg) {
 
 async function execSlash(t, name, arg) {
   arg = (arg || '').trim();
+  name = CMD_ALIAS[name] || name; // /provide、/sessions… 统一成主名再分派
   switch (name) {
     case '/new': return cmd('session.new', { ws: t.ws }).then(resync);
     case '/clear': return cmd('session.clear', { ws: t.ws }).then(resync);
-    case '/session': if (arg) return cmd('session.select', { ws: t.ws, id: arg }).then(resync); break;
+    case '/session':
+      if (arg) return cmd('session.select', { ws: t.ws, id: arg }).then(resync);
+      toast('用法：/session <id>'); break;
     case '/model':
       if (!arg) { openSettings('models'); return; }
       return cmd('model.set', { model: arg }).then(out => {
@@ -1760,8 +1788,9 @@ async function execSlash(t, name, arg) {
         if (out && out.ok === false) return;
         return afterSet(out, '供应商：' + arg);
       });
-      break;
+      toast('用法：/provider <name>'); break;
     case '/think': {
+      if (!arg) { toast('用法：/think 0-4 或 ' + THINK_LEVELS.map(l => l.name).join('/')); break; }
       const lv = thinkLevelOf(arg);
       if (lv == null) { toast('无效的思考级别：' + arg + '（0-4 或 ' + THINK_LEVELS.map(l => l.name).join('/') + '）', 'bad'); break; }
       const l = THINK_LEVELS[lv];
@@ -1773,6 +1802,7 @@ async function execSlash(t, name, arg) {
       });
     }
     case '/tools': {
+      if (!arg) { toast('工具调用：' + (S.tools ? '开' : '关'), 'ok'); break; }
       const on = onoffOf(arg);
       if (on == null) { toast('用法：/tools on|off', 'bad'); break; }
       return cmd('settings.set', { patch: { tools: on } }).then(out => {
@@ -1781,19 +1811,56 @@ async function execSlash(t, name, arg) {
       });
     }
     case '/sandbox': {
+      if (!arg) { toast('用法：/sandbox ' + SANDBOX_MODES.map(x => x.v).join('|')); break; }
       const m = SANDBOX_MODES.find(x => x.v === arg);
       if (!m) { toast('无效的沙箱模式：' + arg + '（' + SANDBOX_MODES.map(x => x.v).join(' / ') + '）', 'bad'); break; }
       return setSandboxMode(m.v);
     }
     case '/autoallow': {
+      if (!arg) { toast('自动放行：' + ((S.settings || {}).autoallow ? '开' : '关'), 'ok'); break; }
       const on = onoffOf(arg);
       if (on == null) { toast('用法：/autoallow on|off', 'bad'); break; }
       return cmd('settings.set', { patch: { autoallow: on } }).then(out => afterSet(out, '自动放行：' + (on ? '开' : '关')));
     }
     case '/compact': {
-      const on = onoffOf(arg);
-      if (on == null) { toast('用法：/compact on|off', 'bad'); break; }
+      // 裸 /compact = 立即压缩当前会话（与 CLI 一致）。压缩在 worker 里跑，
+      // 这里只负责投递；进度与结果走 compact_begin / compact_end 事件。
+      if (!arg) return cmd('compact.now', { ws: t.ws }).then(out => {
+        if (!out || out.ok === false) {
+          const err = String((out && out.error) || '');
+          toast(err.indexOf('a turn is running') >= 0 ? '回合进行中，结束后再压缩' : (err || '压缩启动失败'), 'bad');
+        }
+      });
+      // /compact auto [on|off] 与 /compact [on|off] 都是自动压缩开关
+      const m = String(arg).split(/\s+/);
+      if (m[0] === 'auto' && !m[1]) {
+        toast('自动压缩：' + ((S.settings || {}).compact_auto ? '开' : '关'), 'ok');
+        break;
+      }
+      const on = onoffOf(m[0] === 'auto' ? m[1] : arg);
+      if (on == null) { toast('用法：/compact | /compact auto on|off', 'bad'); break; }
       return cmd('settings.set', { patch: { compact_auto: on } }).then(out => afterSet(out, '自动压缩：' + (on ? '开' : '关')));
+    }
+    case '/skills': return listSkills();
+    case '/skill': {
+      // 对齐 CLI /skill NAME：把技能正文注入当前会话的 system 块
+      if (!arg) { toast('用法：/skill <name>'); break; }
+      return cmd('skill.load', { ws: t.ws, name: arg }).then(out => {
+        if (!out || out.ok === false) {
+          const err = String((out && out.error) || '加载失败');
+          toast(err.indexOf('a turn is running') >= 0 ? '回合进行中，结束后再加载' : err, 'bad');
+          return;
+        }
+        toast('已加载技能：' + out.name + '（' + out.chars + ' 字符）', 'ok', 4200);
+      });
+    }
+    case '/export': return exportSession(t, arg);
+    case '/ins': {
+      // 对齐 CLI：文本作为用户消息发出去并触发一轮（GUI 里等同于直接输入）
+      if (!arg) { toast('用法：/ins <message text>'); break; }
+      if (t.busy) { toast('回合进行中，结束后再插入', 'bad'); break; }
+      t.composer.text = arg;
+      return sendCurrent();
     }
     case '/stop': return cmd('stop', { ws: t.ws });
     case '/theme': {

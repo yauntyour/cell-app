@@ -97,13 +97,22 @@ namespace app
         cell::engine::runner::prompt_info prompt;
 
         // ---- turn worker (one turn at a time per workspace) --------------
+        // resume=true 对齐 CLI 的 /reload：不注入新消息，直接续跑被中断的回合
+        struct turn_task
+        {
+            std::string text;
+            bool resume = false;
+        };
         std::mutex qmx;
         std::condition_variable qcv;
-        std::deque<std::string> turns;
+        std::deque<turn_task> turns;
         bool quit = false;
         std::thread worker;
         std::atomic<bool> stop{false};
         std::atomic<bool> busy{false};
+        // /compact 也走 worker：就地改消息数组，必须与回合串行（CLI 的
+        // /compact 是同步的，桌面壳里改成投递任务，UI 才不会卡住命令通道）
+        std::atomic<bool> compact_req{false};
         // guards the history (h) against command-side readers: the worker
         // flips "busy" before and after a turn while holding it, and every
         // command that reads the transcript takes it too. A turn's mutations
@@ -128,12 +137,12 @@ namespace app
         workspace_ctx(const workspace_ctx &) = delete;
         workspace_ctx &operator=(const workspace_ctx &) = delete;
 
-        void queue_turn(std::string text)
+        void queue_turn(std::string text, bool resume = false)
         {
-            if (text.empty())
+            if (text.empty() && !resume)
                 return;
             std::lock_guard<std::mutex> lk(qmx);
-            turns.push_back(std::move(text));
+            turns.push_back({std::move(text), resume});
             qcv.notify_all();
         }
         void request_stop() { stop.store(true); }
@@ -585,14 +594,28 @@ namespace app
             while (true)
             {
                 std::string text;
+                bool resume = false;
+                bool compact_task = false;
                 {
                     std::unique_lock<std::mutex> lk(ctx.qmx);
                     ctx.qcv.wait(lk, [&]
-                                 { return ctx.quit || !ctx.turns.empty(); });
-                    if (ctx.quit && ctx.turns.empty())
-                        return;
-                    text = std::move(ctx.turns.front());
-                    ctx.turns.pop_front();
+                                 { return ctx.quit || ctx.compact_req.load() || !ctx.turns.empty(); });
+                    if (ctx.quit)
+                    {
+                        // 工作区正在关闭：已排队的回合照旧跑完，但不再新开压缩
+                        ctx.compact_req.store(false);
+                        if (ctx.turns.empty())
+                            return;
+                    }
+                    // /compact 优先：它就地重写上下文，排在队首的回合随后照常跑
+                    compact_task = ctx.compact_req.exchange(false);
+                    if (!compact_task)
+                    {
+                        workspace_ctx::turn_task task = std::move(ctx.turns.front());
+                        ctx.turns.pop_front();
+                        text = std::move(task.text);
+                        resume = task.resume;
+                    }
                     // flip busy under BOTH qmx and hmx: qmx makes the settings
                     // activity check (busy || queued, under qmx) unable to miss a
                     // turn that is about to read the config; hmx keeps the
@@ -601,14 +624,55 @@ namespace app
                     ctx.busy.store(true);
                 }
                 ctx.stop.store(false);
+                auto ev = make_events(ctx);
+
+                if (compact_task)
+                {
+                    // 对齐 CLI 的 /compact：压缩当前会话，丢掉 read 工具结果缓存，
+                    // 把重写后的转录落盘；进度走 ev.on_status，结果走 compact_end
+                    bus.post({{"t", "compact_begin"}, {"ws", ctx.cwd_key}});
+                    std::string result;
+                    bool bad = false;
+                    try
+                    {
+                        result = ctx.eng->compact_now(ev);
+                    }
+                    catch (const std::exception &e)
+                    {
+                        bad = true;
+                        result = e.what();
+                        log.error("ctx", std::format("compact crashed ws={}: {}", ctx.cwd_key, e.what()));
+                    }
+                    cell::box::reset_read_log(&ctx.box_ctx);
+                    ctx.h.now().unload();
+                    cell::async_io::flush();
+                    {
+                        std::lock_guard<std::mutex> lk(ctx.hmx);
+                        ctx.busy.store(false);
+                    }
+                    ctx.turn_cv.notify_all();
+                    // 结果分三类（和 CLI 打印的字符串同源）：
+                    //   context compacted…      → 真的压了
+                    //   context already small…  → 消息太少，没什么可压
+                    //   其余（aborted …）        → 归档/摘要失败，上下文未改
+                    const char *state = bad ? "error"
+                        : result.rfind("context compacted", 0) == 0 ? "done"
+                        : result.rfind("context already small", 0) == 0 ? "idle" : "aborted";
+                    bus.post({{"t", "compact_end"},
+                              {"ws", ctx.cwd_key},
+                              {"d", result},
+                              {"state", state},
+                              {"ok", std::string_view(state) == "done"}});
+                    continue;
+                }
+
                 {
                     nlohmann::json e = {{"t", "turn_begin"}, {"ws", ctx.cwd_key}};
                     bus.post(e);
                 }
-                auto ev = make_events(ctx);
                 try
                 {
-                    ctx.eng->run_turn(text, false, ev);
+                    ctx.eng->run_turn(text, resume, ev);
                 }
                 catch (const std::exception &e)
                 {
@@ -934,7 +998,9 @@ namespace app
                             pre.pop_back();
                         if (!pre.empty())
                             out.push_back({{"role", "system"}, {"kind", "system"}, {"text", cap_text(pre)}});
-                        out.push_back({{"role", "system"}, {"kind", "summary"}, {"text", cap_text(text.substr(at))}});
+                        // 摘要卡片是用户主动展开阅读的上下文，不能按普通正文
+                        // 的 cap 截断（中文 8KB ≈ 2.7K 字符，长摘要会中途断掉）
+                        out.push_back({{"role", "system"}, {"kind", "summary"}, {"text", text.substr(at)}});
                         continue;
                     }
                     if (!text.empty())
@@ -991,7 +1057,7 @@ namespace app
                                 pre.pop_back();
                             if (!pre.empty())
                                 out.push_back({{"role", "assistant"}, {"kind", "assistant"}, {"text", cap_text(pre)}});
-                            out.push_back({{"role", "assistant"}, {"kind", "summary"}, {"text", cap_text(text.substr(at))}});
+                            out.push_back({{"role", "assistant"}, {"kind", "summary"}, {"text", text.substr(at)}});
                         }
                         else if (!text.empty())
                             out.push_back({{"role", "assistant"}, {"kind", "assistant"}, {"text", cap_text(text)}});
@@ -1010,7 +1076,7 @@ namespace app
                             pre.pop_back();
                         if (!pre.empty())
                             out.push_back({{"role", "assistant"}, {"kind", "assistant"}, {"text", cap_text(pre)}});
-                        out.push_back({{"role", "assistant"}, {"kind", "summary"}, {"text", cap_text(text.substr(at))}});
+                        out.push_back({{"role", "assistant"}, {"kind", "summary"}, {"text", text.substr(at)}});
                     }
                     else if (!text.empty())
                         out.push_back({{"role", "assistant"}, {"kind", "assistant"}, {"text", cap_text(text)}});
@@ -1773,12 +1839,17 @@ namespace app
                     if (ws.empty())
                         return ok_error("ws is required");
                     workspace_ctx *c = find_ws(ws);
+                    // ws 只会被拼进 sessions/<ws> 路径：先卡形态（无分隔符、无点号），
+                    // 保证 remove_all 不会越出该目录
+                    if (ws.size() > 64 || ws.find_first_of("/\\:.") != std::string::npos)
+                        return ok_error("bad workspace key");
                     // 工作区未打开时（侧栏里属于已关闭/从未打开的工作区的分组）没有
                     // 上下文：目录从 sessions 索引反查，与前端侧栏拿到的 cwd 同源
                     std::string cwd = c ? c->cwd : cell::cwd_for_key(ws);
-                    if (cwd.empty())
-                        return ok_error("unknown workspace");
-                    if (args.value("confirm", "") != cwd)
+                    // 索引缺失（目录已被移走/删除，只剩 sessions/<ws> 记录）也要能删：
+                    // 删除对象从来只是会话记录，不碰目录。确认串此时退化为 ws，
+                    // 否则这种分组会永远挂在侧栏里删不掉
+                    if (args.value("confirm", "") != (cwd.empty() ? ws : cwd))
                         return ok_error("confirm mismatch - pass confirm=<full cwd path>");
                     if (c)
                     {
@@ -1868,6 +1939,25 @@ namespace app
                     cfg.active_sessions[c->cwd_key] = c->h.now().id();
                     c->queue_turn(std::move(text));
                     return ok();
+                }
+                // 续跑被中断的回合（对齐 CLI /reload）：转录已经以半截回复收尾，
+                // 不再注入新消息，只把 resume 标志交给 worker
+                if (name == "turn.resume")
+                {
+                    std::lock_guard<std::mutex> lk(cmd_mx);
+                    workspace_ctx *c = target_ctx(args);
+                    if (!c)
+                        return ok_error("no workspace open");
+                    const std::string reason = c->h.now().interrupt_state();
+                    if (reason.empty())
+                        return ok_error("no interrupted turn to resume (the last turn ended normally or the state was already cleared)");
+                    cfg.active_sessions[c->cwd_key] = c->h.now().id();
+                    c->queue_turn(std::string(), true);
+                    cell::sys::logger::instance().info(
+                        "cmd", std::format("reload id={} reason={}", c->h.now().id(), reason));
+                    nlohmann::json r = ok();
+                    r["reason"] = reason;
+                    return r;
                 }
                 if (name == "stop")
                 {
@@ -2088,6 +2178,216 @@ namespace app
                     cell::sys::logger::instance().info("sess", std::format("cleared id={} msgs_before={}", c->h.now().id(), before));
                     broadcast_state();
                     return ok();
+                }
+                // 立即压缩当前会话上下文（对齐 CLI 的裸 /compact）。压缩会就地
+                // 重写消息数组并调 LLM 生成摘要（几十秒），所以在 worker 里跑：
+                // 命令通道立刻返回，进度走 status / compact_begin / compact_end 事件
+                if (name == "compact.now")
+                {
+                    std::lock_guard<std::mutex> lk(cmd_mx);
+                    workspace_ctx *c = target_ctx(args);
+                    if (!c)
+                        return ok_error("no workspace open");
+                    {
+                        // busy 由 worker 在 qmx 内置位：同一把锁里判断，避免
+                        // 「刚取到回合还没置 busy」的缝
+                        std::lock_guard<std::mutex> qlk(c->qmx);
+                        if (c->busy.load())
+                            return ok_error("a turn is running - try /compact again when it finishes");
+                        if (c->compact_req.load())
+                            return ok(); // 已在队列里，重复点只算一次
+                        c->compact_req.store(true);
+                    }
+                    c->qcv.notify_all();
+                    return ok();
+                }
+                // 技能清单（对齐 CLI /skills）
+                if (name == "skills.list")
+                {
+                    std::lock_guard<std::mutex> lk(cmd_mx);
+                    nlohmann::json arr = nlohmann::json::array();
+                    for (auto &sk : cell::skills::list())
+                        arr.push_back({{"name", sk.name}, {"description", sk.description}});
+                    nlohmann::json r = ok();
+                    r["skills"] = arr;
+                    r["root"] = (cell::root / "skills").string();
+                    return r;
+                }
+                // 把技能正文注入当前会话的 system 块（对齐 CLI /skill NAME）：
+                // 与回合互斥（就地改消息数组），同步执行 —— 只是几 KB 的写入
+                if (name == "skill.load")
+                {
+                    std::lock_guard<std::mutex> lk(cmd_mx);
+                    workspace_ctx *c = target_ctx(args);
+                    if (!c)
+                        return ok_error("no workspace open");
+                    std::string sname = cell::text::trim(args.value("name", ""));
+                    if (sname.empty())
+                        return ok_error("name is required");
+                    if (c->busy.load())
+                        return ok_error("a turn is running - try /skill again when it finishes");
+                    auto all = cell::skills::list();
+                    const cell::skills::skill *sk = cell::skills::find(all, sname);
+                    if (!sk)
+                        return ok_error("skill not found: " + sname);
+                    std::string body;
+                    if (!cell::skills::content(*sk, body))
+                        return ok_error("failed to read skill: " + sname);
+                    // skill 名来自 front matter，按不可信处理（去掉控制/ANSI 字符）
+                    std::string disp = cell::text::display_safe(sk->name);
+                    c->h.now().msg().push_back(
+                        {{"role", "system"},
+                         {"content", std::format("You have loaded the skill \"{}\". Follow its instructions for the rest of this session.\n\n{}", disp, body)}});
+                    cell::chat::fold_system_messages(c->h.now().msg()); // 中途加载的技能并入前导块
+                    c->h.now().note_rewrite();                          // fold 重排过转录：整文件替换而不是追加
+                    c->h.now().unload();
+                    cell::async_io::flush();
+                    cell::sys::logger::instance().info(
+                        "skill", std::format("loaded name={} chars={} msgs_now={}", sk->name, body.size(), (long long)c->h.now().msg().size()));
+                    broadcast_state();
+                    nlohmann::json r = ok();
+                    r["name"] = sk->name;
+                    r["chars"] = (long long)body.size();
+                    r["msgs"] = (long long)c->h.now().msg().size();
+                    return r;
+                }
+                // 立即把当前会话写盘（对齐 CLI /save）；回合进行中不写，避免半截回合
+                if (name == "session.save")
+                {
+                    std::lock_guard<std::mutex> lk(cmd_mx);
+                    workspace_ctx *c = target_ctx(args);
+                    if (!c)
+                        return ok_error("no workspace open");
+                    {
+                        std::lock_guard<std::mutex> qlk(c->qmx);
+                        if (c->busy.load() || !c->turns.empty())
+                            return ok_error("a turn is running - wait for it to finish");
+                    }
+                    c->h.now().unload();
+                    cell::async_io::flush(); // /save 保证立即落盘
+                    cell::sys::logger::instance().info(
+                        "sess", std::format("saved id={} msgs={}", c->h.now().id(), (long long)c->h.now().msg().size()));
+                    nlohmann::json r = ok();
+                    r["id"] = c->h.now().id();
+                    r["msgs"] = (long long)c->h.now().msg().size();
+                    return r;
+                }
+                // 导出会话（或一份压缩存档）为自包含 HTML（对齐 CLI /export）：
+                // 默认落在工作区目录，path 可以给相对/绝对路径，saved 给存档名
+                if (name == "session.export")
+                {
+                    std::lock_guard<std::mutex> lk(cmd_mx);
+                    workspace_ctx *c = target_ctx(args);
+                    if (!c)
+                        return ok_error("no workspace open");
+                    {
+                        std::lock_guard<std::mutex> qlk(c->qmx);
+                        if (c->busy.load() || !c->turns.empty())
+                            return ok_error("a turn is running - wait for it to finish");
+                    }
+                    nlohmann::json msgs = c->h.now().msg();
+                    std::string what = c->h.now().id();
+                    const std::string saved_name = cell::text::trim(args.value("saved", ""));
+                    if (!saved_name.empty())
+                    {
+                        std::string serr;
+                        std::filesystem::path hit;
+                        if (!cell::chat::resolve_saved(c->h.now().directory() / "saved", saved_name, hit, serr))
+                            return ok_error(serr);
+                        std::ifstream f(hit);
+                        std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+                        msgs = cell::chat::parse_messages_jsonl(text);
+                        if (msgs.empty())
+                            return ok_error("saved archive " + hit.filename().string() + " is empty or unreadable");
+                        what = hit.stem().string();
+                    }
+                    std::filesystem::path out = cell::text::trim(args.value("path", ""));
+                    if (out.empty())
+                        out = std::filesystem::path(c->cwd) / std::format("cell-export-{}.html", cell::utc_stamp());
+                    else
+                    {
+                        if (out.is_relative())
+                            out = std::filesystem::path(c->cwd) / out;
+                        std::string ext = out.extension().string();
+                        for (auto &ch : ext)
+                            ch = (char)std::tolower((unsigned char)ch);
+                        if (ext != ".html" && ext != ".htm")
+                            out += ".html";
+                    }
+                    std::error_code ec;
+                    if (out.has_parent_path())
+                        std::filesystem::create_directories(out.parent_path(), ec);
+                    std::string eerr;
+                    cell::chat::export_context export_ctx;
+                    cell::teamwork::collect_export_jobs(c->h.now().id(), export_ctx.jobs);
+                    if (!cell::chat::export_transcript_html(msgs, what, out, eerr, &export_ctx))
+                        return ok_error(eerr);
+                    cell::sys::logger::instance().info(
+                        "sess", std::format("exported msgs={} teamwork_jobs={} to={}", msgs.size(),
+                                            export_ctx.jobs.size(), out.string()));
+                    nlohmann::json r = ok();
+                    r["path"] = out.string();
+                    r["msgs"] = (long long)msgs.size();
+                    r["jobs"] = (long long)export_ctx.jobs.size();
+                    return r;
+                }
+                // 用量汇总（对齐 CLI /usages）：返回结构化的 models / sessions / totals，
+                // 侧栏「用量」面板直接画图，不用再去解析 CLI 的文本格式
+                if (name == "usages.summary")
+                {
+                    std::lock_guard<std::mutex> lk(cmd_mx);
+                    if (cell::stats::prune())
+                        cell::sys::logger::instance().info("stats", "pruned orphaned session usage records");
+                    auto geti = [](const nlohmann::json &o, const char *k) -> long long
+                    {
+                        auto it = o.find(k);
+                        return (it == o.end() || !it->is_number()) ? 0 : it->get<long long>();
+                    };
+                    nlohmann::json j = cell::stats::load();
+                    nlohmann::json models = nlohmann::json::array();
+                    nlohmann::json sessions = nlohmann::json::array();
+                    nlohmann::json totals = {{"requests", 0}, {"messages", 0}, {"input_tokens", 0},
+                                             {"output_tokens", 0}, {"total_tokens", 0},
+                                             {"input_chars", 0}, {"output_chars", 0}};
+                    auto bump_totals = [&](const nlohmann::json &rec)
+                    {
+                        for (auto &[k, v] : totals.items())
+                            v = (long long)v + geti(rec, k.c_str());
+                    };
+                    if (j.contains("models") && j["models"].is_object())
+                        for (auto &[k, v] : j["models"].items())
+                        {
+                            if (!v.is_object())
+                                continue;
+                            models.push_back({{"name", k}, {"requests", geti(v, "requests")},
+                                              {"messages", geti(v, "messages")},
+                                              {"input_tokens", geti(v, "input_tokens")},
+                                              {"output_tokens", geti(v, "output_tokens")},
+                                              {"total_tokens", geti(v, "total_tokens")}});
+                            bump_totals(v);
+                        }
+                    if (j.contains("sessions") && j["sessions"].is_object())
+                        for (auto &[k, v] : j["sessions"].items())
+                        {
+                            if (!v.is_object())
+                                continue;
+                            sessions.push_back({{"id", k}, {"model", v.value("model", "")},
+                                                {"requests", geti(v, "requests")},
+                                                {"messages", geti(v, "messages")},
+                                                {"input_tokens", geti(v, "input_tokens")},
+                                                {"output_tokens", geti(v, "output_tokens")},
+                                                {"total_tokens", geti(v, "total_tokens")}});
+                        }
+                    auto by_tokens = [](const nlohmann::json &a, const nlohmann::json &b)
+                    { return a.value("total_tokens", 0LL) > b.value("total_tokens", 0LL); };
+                    std::sort(models.begin(), models.end(), by_tokens);
+                    std::sort(sessions.begin(), sessions.end(), by_tokens);
+                    nlohmann::json r = ok();
+                    r["models"] = models;
+                    r["sessions"] = sessions;
+                    r["total_sessions"] = (long long)sessions.size();
+                    r["totals"] = totals;
+                    return r;
                 }
                 // 删除一条会话（仅其转录 + 压缩存档，不动源码）；删除当前会话则
                 // 自动开一条新会话，避免仍指向已被删除的目录

@@ -19,6 +19,7 @@ function wireEvents() {
   $('#navFwd').onclick = () => Nav.fwd();
   $('#navRefresh').onclick = () => Nav.refresh();
   $('#navHome').onclick = () => Nav.home();
+  $('#navUsage').onclick = () => toggleUsagePop();
   $('#navDock').onclick = () => toggleDock();
   $('#btnTopDock').onclick = () => toggleDock();
   $('#dockClose').onclick = () => closeDock();
@@ -158,6 +159,7 @@ function enterDemo(reason) {
   renderPanes(); renderTabbar(); renderSidebar(); renderFoot(); renderStatLine(); renderDock();
   if (S.active) { renderChat(S.active); renderChatHead(S.active); }
   renderDock();
+  refreshUsages(false); // 侧栏「用量」chip 先显示一个数（演示数据）
   setTimeout(() => { refreshSessions(); renderSidebar(); renderDock(); }, 60);
 }
 
@@ -173,7 +175,9 @@ async function boot() {
   try {
     const q = new URLSearchParams(location.search);
     const qd = q.get('dock');
-    if (qd && { start: 1, files: 2, git: 3, terminal: 4, teamwork: 5, notices: 6, archives: 7 }[qd]) openDock(qd);
+    // 用量统计已从右栏挪到左侧栏收纳浮层：?dock=usages 保留给截图/调试
+    if (qd === 'usages') openUsagePop(true);
+    else if (qd && { start: 1, files: 2, git: 3, terminal: 4, teamwork: 5, notices: 6, archives: 7 }[qd]) openDock(qd);
     if (q.get('settings') === '1') openSettings(q.get('section') || undefined);
   } catch (e) {}
   if (MOCK) { enterDemo('file:// 或 ?mock=1'); return; }
@@ -184,6 +188,8 @@ async function boot() {
     S.everConnected = true; S.connected = true;
     applyHello(st, true);
     Transport.init();
+    fetchSkills(); // /skill 的参数补全：后台拉一次，失败就退回空列表（不挡启动）
+    refreshUsages(false); // 侧栏「用量」chip 的后台取数（失败就保持「—」）
   } catch (e) {
     enterDemo('无法连接后端：' + (e && e.message ? e.message : e));
   }

@@ -118,6 +118,15 @@
 .sb-account-sub.demo{color:var(--warn)}
 .sb-gear{display:flex;color:var(--fg3);flex:none}
 .sb-account:hover .sb-gear{color:var(--fg2)}
+/* 3.3b 用量 chip（⌂ 主页按钮旁边；点开侧栏收纳浮层，见 6b.9） ---------
+   .icon-btn 写死了 26×26，这里要「图标 + 数字」的胶囊，所以提高一级选择器 */
+.icon-btn.sb-uchip{width:auto;min-width:26px;gap:5px;padding:0 6px}
+.sb-uchip .uico{width:13px;height:13px;flex:none}
+.sb-uchip .sb-uval{font-family:var(--mono);font-size:10.5px;line-height:1;color:var(--fg4);
+  font-variant-numeric:tabular-nums;letter-spacing:-.1px;white-space:nowrap}
+.sb-uchip.has-val .sb-uval{color:var(--fg3)}
+.sb-uchip:hover .sb-uval{color:var(--fg)}
+.sb-uchip.on .sb-uval{color:inherit}
 /* 3.4 右侧面板外壳 -------------------------------------------------- */
 .dockhead{height:46px;flex:none;display:flex;align-items:center;gap:6px;padding:0 8px 0 10px;
   border-bottom:1px solid var(--line);background:var(--bg)}
@@ -180,6 +189,8 @@
   .sb-account-txt{display:none}
   .sb-account{justify-content:center}
   .sb-gear{display:none}
+  .sb-uchip{padding:0;min-width:26px;justify-content:center}
+  .sb-uchip .sb-uval{display:none}
   .smeta .sid{display:none}
 }
 @container sb (max-width: 236px){

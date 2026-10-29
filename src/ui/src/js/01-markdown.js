@@ -78,13 +78,20 @@ function parseList(lines, i, baseIndent) {
   const ordered = first.ordered;
   const items = [];
   while (i < lines.length) {
+    // 松散列表：项之间的空行不结束列表（markdown 的 loose list）。跳过它继续
+    // 收集，否则每项各自成列表，有序列表的编号会全部回到 1。
+    if (isBlank(lines[i])) {
+      const nxt = lines[i + 1] || '';
+      const nm = listMark(nxt);
+      if (!nm || nm.indent < baseIndent) break;
+      i++;
+    }
     const m = listMark(lines[i]);
     if (!m || m.indent < baseIndent) break;
-    if (m.indent > baseIndent) { // 更深的缩进：交给下一层递归
-      const sub = parseList(lines, i, m.indent);
-      if (!sub.html) break;
-      if (items.length) items[items.length - 1].push(sub.html);
-      i = sub.next;
+    if (m.indent > baseIndent) { // 松散列表里的子列表：并进上一项，交给 renderBlocks 递归
+      if (!items.length) break;
+      items[items.length - 1].push(lines[i].replace(/\s+$/, ''));
+      i++;
       continue;
     }
     if (m.ordered !== ordered && items.length) break; // 类型切换：另起一个列表

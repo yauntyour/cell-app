@@ -974,6 +974,221 @@ function makeDraggable(node, handle) {
   document.addEventListener('mouseup', up);
 }
 
+/* ---------------------------------------------------------------- 用量统计
+   入口在**左侧栏底部** ⌂ 主页按钮旁边：chip 里收纳一个总 tokens，点开是贴在
+   chip 上方的收纳浮层（总览方块 → 模型占比条 → 会话明细）。数据来自
+   usages.summary（结构化：totals / models / sessions），全局一份，20s 内复用
+   缓存；侧栏收起 / 点外面 / Esc 都会把浮层收回去。
+   会话行可点：同/跨工作区都交给 session.select（后端按 cwd 索引打开）。   */
+function refreshUsages(force) {
+  if (S.usagesLoading) return;
+  if (!force && S.usages && Date.now() - (S.usages.at || 0) < 20000) return;
+  S.usagesLoading = true;
+  cmd('usages.summary', {}).then(out => {
+    S.usagesLoading = false;
+    if (!out || out.ok === false) return;
+    S.usages = {
+      at: Date.now(),
+      totals: out.totals || {},
+      models: out.models || [],
+      sessions: out.sessions || [],
+      totalSessions: out.total_sessions || 0,
+    };
+    paintUsageChip();
+    paintUsagePop();
+  }).catch(() => { S.usagesLoading = false; });
+}
+// provider:model → model（浮层里只留短名，完整名字放 title）
+function usShortModel(n) {
+  const s = String(n || '');
+  const i = s.indexOf(':');
+  return i > 0 ? s.slice(i + 1) : (s || '未知模型');
+}
+function usTile(value, label, wide) {
+  const box = el('div', 'us-tile' + (wide ? ' wide' : ''));
+  box.appendChild(el('span', 'us-v', value));
+  box.appendChild(el('span', 'us-k', label));
+  return box;
+}
+
+/* chip：收纳在侧栏里的那一小块 —— 图标 + 总 tokens（还没数据时是「—」） */
+function paintUsageChip() {
+  const b = $('#navUsage');
+  if (!b) return;
+  const val = b.querySelector('.sb-uval');
+  const d = S.usages;
+  const tot = d ? (d.totals || {}) : { total_tokens: 0, requests: 0 };
+  b.classList.toggle('has-val', !!d);
+  b.classList.toggle('on', !!S.usagesOpen);
+  b.setAttribute('aria-expanded', S.usagesOpen ? 'true' : 'false');
+  if (val) val.textContent = d ? fmtTok(tot.total_tokens) : '—';
+  b.title = d
+    ? '用量统计 · ' + fmtTok(tot.total_tokens) + ' tokens / ' + (tot.requests || 0) + ' 请求（点击展开）'
+    : '用量统计（点击展开）';
+}
+
+/* 收纳浮层：贴 chip 上方（放不下才翻到下方），宽度固定 340，超出视口内收 */
+let usagePop = null;
+function closeUsagePop() {
+  if (!usagePop) return;
+  usagePop.el.remove();
+  document.removeEventListener('pointerdown', usagePop.out, true);
+  document.removeEventListener('keydown', usagePop.key, true);
+  window.removeEventListener('resize', usagePop.resize);
+  usagePop = null;
+  S.usagesOpen = false;
+  paintUsageChip();
+}
+function usagePopPlace(pop, anchor) {
+  const r = anchor.getBoundingClientRect();
+  const w = pop.offsetWidth, h = pop.offsetHeight;
+  pop.style.left = Math.max(8, Math.min(r.left, innerWidth - w - 8)) + 'px';
+  let top = r.top - h - 8;              // 优先贴在 chip 上方
+  if (top < 8) top = r.bottom + 8;      // 上方不够就翻到下方
+  pop.style.top = Math.max(8, Math.min(top, innerHeight - h - 8)) + 'px';
+}
+function openUsagePop(force) {
+  if (usagePop) { if (force) refreshUsages(true); return; }
+  const anchor = $('#navUsage');
+  if (!anchor) return;
+  const pop = el('div', 'usage-pop');
+  pop.setAttribute('role', 'dialog');
+  pop.setAttribute('aria-label', '用量统计');
+  const head = el('div', 'up-head');
+  head.appendChild(el('span', 'up-title', '用量统计'));
+  head.appendChild(el('span', 'up-sub', '正在统计…'));
+  head.appendChild(el('span', 'grow'));
+  const bRefresh = el('button', 'icon-btn sm');
+  bRefresh.type = 'button';
+  bRefresh.title = '重新统计';
+  bRefresh.setAttribute('aria-label', '重新统计');
+  bRefresh.appendChild(iconEl('refresh', 'sm'));
+  bRefresh.onclick = () => refreshUsages(true);
+  head.appendChild(bRefresh);
+  const bClose = el('button', 'icon-btn sm');
+  bClose.type = 'button';
+  bClose.title = '收起 (Esc)';
+  bClose.setAttribute('aria-label', '收起');
+  bClose.appendChild(iconEl('x', 'sm'));
+  bClose.onclick = () => closeUsagePop();
+  head.appendChild(bClose);
+  pop.appendChild(head);
+  pop.appendChild(el('div', 'up-body'));
+  document.body.appendChild(pop);
+
+  const out = ev => { if (!pop.contains(ev.target) && !anchor.contains(ev.target)) closeUsagePop(); };
+  const key = ev => {
+    if (ev.key !== 'Escape') return;
+    ev.preventDefault();
+    ev.stopPropagation();   // 别让全局 Esc 顺手把右侧面板也关掉
+    closeUsagePop();
+  };
+  const resize = () => { if (usagePop) usagePopPlace(pop, anchor); };
+  document.addEventListener('pointerdown', out, true);
+  document.addEventListener('keydown', key, true);
+  window.addEventListener('resize', resize);
+  usagePop = { el: pop, anchor: anchor, out: out, key: key, resize: resize };
+  S.usagesOpen = true;
+  paintUsageChip();
+  paintUsagePop();
+  refreshUsages(!!force);
+}
+function toggleUsagePop() { S.usagesOpen ? closeUsagePop() : openUsagePop(true); }
+function paintUsagePop() {
+  if (!usagePop) return;
+  const d = S.usages;
+  const sub = usagePop.el.querySelector('.up-sub');
+  if (sub) sub.textContent = d ? '更新于 ' + relTime(Math.floor(d.at / 1000)) : '正在统计…';
+  const body = usagePop.el.querySelector('.up-body');
+  if (body) renderUsageBody(body, 12);
+  usagePopPlace(usagePop.el, usagePop.anchor); // 内容高度变了，重新贴边
+}
+/* 正文：总览方块 + 模型占比条 + 会话明细（limit = 最多列几条会话） */
+function renderUsageBody(body, limit) {
+  body.replaceChildren();
+  const d = S.usages;
+  if (!d) { body.appendChild(el('div', 'up-empty', '正在统计用量…')); return; }
+  const tot = d.totals || {};
+  const tiles = el('div', 'us-tiles');
+  tiles.appendChild(usTile(fmtTok(tot.total_tokens), '总 tokens', true));
+  tiles.appendChild(usTile(String(tot.requests || 0), '请求'));
+  tiles.appendChild(usTile(fmtTok(tot.input_tokens), '输入 tokens'));
+  tiles.appendChild(usTile(fmtTok(tot.output_tokens), '输出 tokens'));
+  tiles.appendChild(usTile(String(tot.messages || 0), '累计消息'));
+  body.appendChild(tiles);
+
+  if (!d.models.length && !d.sessions.length) {
+    body.appendChild(el('div', 'up-empty', '还没有用量记录。跑一轮对话后，这里会按模型与会话统计 token 消耗。'));
+    return;
+  }
+
+  if (d.models.length) {
+    const sec = el('div', 'us-sec');
+    sec.appendChild(el('span', null, '按模型'));
+    sec.appendChild(el('span', 'us-sec-n', d.models.length + ' 个'));
+    body.appendChild(sec);
+    const maxTok = Math.max.apply(null, d.models.map(m => Number(m.total_tokens) || 0).concat([1]));
+    const bars = el('div', 'us-bars');
+    for (const m of d.models) {
+      const row = el('div', 'us-bar-row');
+      const top = el('div', 'us-bar-top');
+      top.appendChild(el('span', 'us-bar-name trunc', usShortModel(m.name)));
+      top.appendChild(el('span', 'us-bar-val', fmtTok(m.total_tokens)));
+      row.appendChild(top);
+      const track = el('div', 'us-bar-track');
+      const fill = el('i');
+      fill.style.width = Math.max(3, Math.round((Number(m.total_tokens) || 0) / maxTok * 100)) + '%';
+      track.appendChild(fill);
+      row.appendChild(track);
+      row.appendChild(el('div', 'us-bar-sub',
+        [m.requests + ' 请求', fmtTok(m.input_tokens) + ' 入', fmtTok(m.output_tokens) + ' 出'].join(' · ')));
+      row.title = m.name;
+      bars.appendChild(row);
+    }
+    body.appendChild(bars);
+  }
+
+  if (d.sessions.length) {
+    const shown = Math.max(1, Number(limit || 40));
+    const sec = el('div', 'us-sec');
+    sec.appendChild(el('span', null, '按会话'));
+    sec.appendChild(el('span', 'us-sec-n', d.totalSessions + ' 条'));
+    body.appendChild(sec);
+    const list = el('div', 'us-sess');
+    for (const s of d.sessions.slice(0, shown)) {
+      const known = (S.sessions || []).find(x => x.id === s.id);
+      const row = el('button', 'us-srow');
+      row.type = 'button';
+      const main = el('span', 'us-s-main');
+      main.appendChild(el('span', 'us-s-title trunc', (known && known.title) || shortId(s.id)));
+      main.appendChild(el('span', 'us-s-meta trunc',
+        usShortModel(s.model) + ' · ' + (s.requests || 0) + ' 请求'));
+      row.appendChild(main);
+      row.appendChild(el('span', 'us-s-val', fmtTok(s.total_tokens)));
+      row.title = s.id + '  ·  点击切换到这个会话';
+      row.onclick = () => openUsageSession(s);
+      list.appendChild(row);
+    }
+    if (d.sessions.length > shown)
+      list.appendChild(el('div', 'us-more', '另有 ' + (d.sessions.length - shown) + ' 条会话未列出'));
+    body.appendChild(list);
+  }
+}
+// 兼容旧调用点（原来的右栏「用量」标签页已经收进左侧栏，函数名保留）
+function renderDockUsages(body) { renderUsageBody(body, 40); }
+// 点会话行 → 切过去（后端按 cwd 索引打开所属工作区；跨工作区也可以）
+function openUsageSession(s) {
+  if (!s || !s.id) return;
+  const ws = String(s.id).split('-')[0];
+  const t = S.tabs.get(ws);
+  if (t && t.session === s.id) { toast('已经在这个会话里', 'ok'); return; }
+  cmd('session.select', { ws: ws, id: s.id }).then(out => {
+    if (out && out.ok === false) { toast(out.error || '切换会话失败', 'bad'); return; }
+    closeUsagePop(); // 切走了就收起来，别挡着新会话
+    return resync().then(() => refreshSessions());
+  }).catch(() => toast('切换会话失败', 'bad'));
+}
+
 /* ---------- 存档架（dock 第三个标签页）与存档浮窗 ------------------- */
 function renderDockArchives(body, t) {
   const head = pnlHead('存档', (t.archives.length || 0) + ' 个压缩存档', [

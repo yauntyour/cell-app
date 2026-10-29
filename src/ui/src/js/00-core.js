@@ -40,7 +40,10 @@ const COMMANDS = [
   { name: '/tools', usage: '/tools <on|off>', desc: '开关工具调用', ctx: 'onoff' },
   { name: '/sandbox', usage: '/sandbox <mode>', desc: '设置沙箱模式', ctx: 'sandbox' },
   { name: '/autoallow', usage: '/autoallow <on|off>', desc: '自动放行（仅完全访问）', ctx: 'onoff' },
-  { name: '/compact', usage: '/compact <on|off>', desc: '自动上下文压缩', ctx: 'onoff' },
+  { name: '/compact', usage: '/compact [auto on|off]', desc: '立即压缩当前上下文（对齐 CLI）；auto on|off 开关自动压缩', ctx: 'compact' },
+  { name: '/skills', usage: '/skills', desc: '列出可用技能（.cell/skills）', run: t => listSkills(t) },
+  { name: '/skill', usage: '/skill <name>', desc: '把技能正文注入当前会话（对齐 CLI）', ctx: 'skills' },
+  { name: '/usages', usage: '/usages', desc: '展开左侧栏的用量统计（总览 / 按模型 / 按会话）', run: () => openUsagePop(true) },
   { name: '/stop', usage: '/stop', desc: '停止当前工作区正在跑的回合', run: t => cmd('stop', { ws: S.active }) },
   { name: '/teamwork', usage: '/teamwork [run|resume|stop] <id>', desc: '列出/运行/恢复团队任务', ctx: 'teamwork' },
   { name: '/notice', usage: '/notice', desc: '查看通知列表', run: () => { openDock('notices'); refreshNotices(S.active); } },
@@ -51,8 +54,27 @@ const COMMANDS = [
   { name: '/worktree', usage: '/worktree', desc: '管理并行工作树（Git Worktree）', run: () => openDock('git') },
   { name: '/files', usage: '/files [path]', desc: '打开工作区文件面板；Ctrl+P 快速打开', run: () => openDock('files') },
   { name: '/terminal', usage: '/terminal', desc: '打开终端面板（在工作区运行命令）', run: () => openDock('terminal') },
+  { name: '/save', usage: '/save', desc: '立即把当前会话写盘（对齐 CLI）', run: () => saveSession() },
+  { name: '/export', usage: '/export [path]', desc: '导出会话为自包含 HTML（默认落到工作区目录）', ctx: 'export' },
+  { name: '/reload', usage: '/reload', desc: '继续被中断的回合（对齐 CLI）', run: () => resumeTurn() },
   { name: '/help', usage: '/help', desc: '显示指令帮助', run: () => toast('输入 / 查看全部指令；↑↓ 选择，Tab 补全，Enter 执行', 'ok', 4200) },
+  // ---- CLI 指令名别名：候选列表里不显示，输入完整名字照常执行 ----
+  { name: '/provide', alias: true, usage: '/provide [name]', desc: 'CLI 写法：/provider', ctx: 'providers' },
+  { name: '/provides', alias: true, usage: '/provides', desc: 'CLI 写法：列出供应商', run: () => listProviders() },
+  { name: '/sessions', alias: true, usage: '/sessions', desc: 'CLI 写法：/session', ctx: 'sessions' },
+  { name: '/models', alias: true, usage: '/models', desc: 'CLI 写法：/model', ctx: 'models' },
+  { name: '/notices', alias: true, usage: '/notices', desc: 'CLI 写法：/notice', run: () => { openDock('notices'); refreshNotices(S.active); } },
+  { name: '/teamworks', alias: true, usage: '/teamworks [run|resume|stop] <id>', desc: 'CLI 写法：/teamwork', ctx: 'teamwork' },
+  { name: '/tool', alias: true, usage: '/tool <on|off>', desc: 'CLI 写法：/tools', ctx: 'onoff' },
+  { name: '/saved', alias: true, usage: '/saved', desc: 'CLI 写法：/archive', run: () => { openDock('archives'); refreshArchives(S.active, true); } },
+  { name: '/ins', alias: true, usage: '/ins <message text>', desc: 'CLI 写法：插入一条消息并触发一轮（等同直接发送）', ctx: 'ins' },
 ];
+
+// CLI 指令名 → WebUI 主名（execSlash 开头统一；别名不进候选列表）
+const CMD_ALIAS = {
+  '/provide': '/provider', '/sessions': '/session', '/models': '/model',
+  '/notices': '/notice', '/teamworks': '/teamwork', '/tool': '/tools', '/saved': '/archive',
+};
 
 /* ---------- B. 工具函数 -------------------------------------------- */
 function el(tag, cls, txt) {
@@ -135,6 +157,7 @@ const ICON_PATHS = {
   command: '<path d="M18 3a3 3 0 0 0-3 3v12a3 3 0 1 0 3-3H6a3 3 0 1 0 3 3V6a3 3 0 1 0-3 3h12a3 3 0 0 0 0-6Z"/>',
   shield: '<path d="M12 3l8 3v6c0 5-3.5 7.5-8 9-4.5-1.5-8-4-8-9V6l8-3Z"/>',
   gauge: '<path d="M12 21a9 9 0 1 1 9-9"/><path d="M12 12l4.5-4.5"/><circle cx="12" cy="12" r="2"/>',
+  bars: '<path d="M4.5 20V11M9.75 20V5M15 20v-6M20.25 20V8.5"/><path d="M2.5 20h19"/>',
   key: '<circle cx="8" cy="15" r="4"/><path d="m10.8 12.2 8.2-8.2M16 7l2.5 2.5M19 4l2 2"/>',
   rotate: '<path d="M3 12a9 9 0 1 0 3-6.7M3 4v5h5"/>',
 
@@ -323,6 +346,8 @@ const S = {
   active: '', tabOrder: [], tabs: new Map(),
   model: '', provider: '', sandbox: 'full-access', tools: true,
   providers: [], settings: {}, workspaces: [], sessions: [], sessionsTotal: 0, models: [],
+  skills: [], skillsRoot: '',   // /skills、/skill 共用（启动时拉一次，/skills 强制刷新）
+  usages: null, usagesLoading: false, usagesOpen: false, // 用量缓存（usages.summary）+ 左侧栏收纳浮层是否展开
   connected: true, everConnected: false,
   dock: 'teamwork', dockOpen: false, settingsOpen: false,
   recentCwds: [],
@@ -342,6 +367,58 @@ function cwdOf(ws) {
   if (t && t.cwd) return t.cwd;
   const w = S.workspaces.find(w => w.ws === ws);
   return w ? w.cwd : '';
+}
+
+/* 技能清单（对齐 CLI /skills、/skill）：面板补全用缓存，/skills 强制刷新 ——
+   技能目录是磁盘上的文件，用户可能刚改过 */
+function fetchSkills(force) {
+  if (!force && S.skills && S.skills.length) return Promise.resolve(S.skills);
+  return api('skills.list', {}).then(out => {
+    if (out && Array.isArray(out.skills)) { S.skills = out.skills; S.skillsRoot = out.root || ''; }
+    return S.skills || [];
+  }).catch(() => S.skills || []);
+}
+function listSkills() {
+  return fetchSkills(true).then(list => {
+    if (!list.length) { toast('没有可用技能' + (S.skillsRoot ? '（' + S.skillsRoot + '）' : '')); return; }
+    toast('技能 ' + list.length + ' 个：'
+      + list.map(s => s.name + (s.description ? ' — ' + s.description : '')).join('；'), 'ok', 7000);
+  });
+}
+
+/* 会话类指令（对齐 CLI /save、/export、/reload、/provides） */
+function saveSession(ws) {
+  ws = ws || S.active;
+  return cmd('session.save', { ws: ws }).then(out => {
+    if (!out || out.ok === false) {
+      const err = String((out && out.error) || '');
+      toast(err.indexOf('a turn is running') >= 0 ? '回合进行中，结束后再保存' : (err || '保存失败'), 'bad');
+      return;
+    }
+    toast('会话已保存（' + out.msgs + ' 条消息）', 'ok');
+  });
+}
+function exportSession(t, path) {
+  const ws = (t && t.ws) || S.active;
+  return cmd('session.export', { ws: ws, path: path || '' }).then(out => {
+    if (!out || out.ok === false) { toast((out && out.error) || '导出失败', 'bad', 5200); return; }
+    toast('已导出 ' + out.msgs + ' 条消息 → ' + out.path, 'ok', 7000);
+  });
+}
+function resumeTurn(t) {
+  const ws = (t && t.ws) || S.active;
+  return cmd('turn.resume', { ws: ws }).then(out => {
+    if (!out || out.ok === false) {
+      const err = String((out && out.error) || '');
+      toast(err.indexOf('no interrupted turn') >= 0 ? '没有可继续的中断回合' : (err || '无法继续'), 'bad', 4200);
+      return;
+    }
+    toast('继续被中断的回合（' + (out.reason || '中断') + '）', 'ok');
+  });
+}
+function listProviders() {
+  const names = (S.providers || []).map(p => p.name + (p.current ? '（当前）' : ''));
+  toast(names.length ? '供应商 ' + names.length + ' 个：' + names.join('、') : '还没有配置供应商', 'ok', 7000);
 }
 
 /* ---------- D. 传输层 ---------------------------------------------- */
@@ -429,6 +506,8 @@ function handleEvent(e) {
     case 'hello': applyHello(e, true, { keepActive: true }); break;
     case 'turn_begin': onTurnBegin(e.ws); break;
     case 'turn_end': onTurnEnd(e); break;
+    case 'compact_begin': onCompactBegin(e.ws); break;
+    case 'compact_end': onCompactEnd(e); break;
     case 'answer_begin': onAnswerBegin(e.ws); break;
     // 引擎的 answer 流就是助手正文：统一按 assistant 归档（其余前端同义）
     case 'answer': onStream(e.ws, 'assistant', e.d); break;
@@ -627,6 +706,8 @@ function onTurnEnd(e) {
   // 让面板重拉内容；出现新任务且右侧面板关着时自动展开 Teamwork 面板
   const beforeIds = new Set((t.jobs || []).map(j => j.id));
   t.jobsFor = '';
+  // 一轮跑完总会多出 token：顺手刷新侧栏「用量」chip（缓存 20s，最多两秒一次请求量级）
+  if (typeof refreshUsages === 'function') refreshUsages(false);
   refreshTeamwork(e.ws, true).then(jobs => {
     if (e.ws === S.active && jobs && jobs.some(j => !beforeIds.has(j.id)) && !S.dockOpen)
       openDock('teamwork');
@@ -639,6 +720,34 @@ function onTurnEnd(e) {
     pushMsg(e.ws, { role: 'status', text: statusText });
   });
   markChat(e.ws); schedule('tabbar', renderTabbar); markComposer(e.ws); // 切回「发送」
+  refreshSessions();
+}
+
+// /compact 在 worker 里跑（可能要几十秒）：期间按「忙」处理 —— 发送键切停止、
+// 思考指示器顶上；用户在压缩中再发消息只会排在压缩后面
+function onCompactBegin(ws) {
+  const t = ensureTab(ws);
+  t.busy = true;
+  t.thinkingSince = Date.now();
+  t._live = { assistant: null, reason: null, summary: null };
+  t._liveMsgId = null;
+  markChat(ws); schedule('tabbar', renderTabbar); markComposer(ws);
+}
+// 压缩把上下文重写成「system + 最近一条用户消息 + 摘要」：只能以落盘转录为准重载
+function onCompactEnd(e) {
+  const t = ensureTab(e.ws);
+  t.busy = false;
+  t.thinkingSince = 0;
+  t._live = { assistant: null, reason: null, summary: null };
+  t._liveMsgId = null;
+  t.archivesFor = ''; // 压缩落了一份存档：存档架下次渲染时重拉列表
+  // state 与 CLI /compact 打印的字符串同源：done 真压了 / idle 消息太少 /
+  // aborted+error 未改动上下文
+  if (e.state === 'idle') toast('上下文还很小，不需要压缩', 'ok');
+  else if (e.state === 'done') toast('上下文已压缩', 'ok');
+  else toast('压缩未完成：' + (e.d || '未知原因'), 'bad', 5200);
+  reloadSessionDetail(e.ws);
+  markChat(e.ws); schedule('tabbar', renderTabbar); markComposer(e.ws);
   refreshSessions();
 }
 function onAnswerBegin(ws) {

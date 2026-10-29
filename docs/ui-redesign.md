@@ -72,7 +72,7 @@
   │  ├ #btnNewSession（主按钮，整行「＋ 新会话」）
   │  ├ .sb-nav：会话搜索 / 工作区文件 / Git Worktree / 终端（图标+标签+右侧快捷键，hover 显示）
   │  ├ .sb-section：「工作区」标题行（筛选/新建图标）+ #sessionList（分组会话列表）
-  │  └ .sb-foot：导航行（#navBack #navFwd #navRefresh #navHome + #navDock）+ 账户行（#btnSettings）
+  │  └ .sb-foot：导航行（#navBack #navFwd #navRefresh #navHome #navUsage + #navDock）+ 账户行（#btnSettings）
   ├ #rzSidebar（拖拽）
   └ #main
      ├ #banner（连接/演示模式横幅，保留）
@@ -84,7 +84,7 @@
      └ #reconnect
 ```
 
-- 右栏页签：`start 开始 / files 文件 / git Git / terminal 终端 / teamwork 团队 / notices 通知 / archives 存档`，用 `<button class="docktab" data-dock="…">` 静态写在 skeleton 里（图标 + 文字，窄宽降级为纯图标）；`#dockBody` 由 `renderDock()` 按 `S.dock` 分发。
+- 右栏页签：`start 开始 / files 文件 / git Git / terminal 终端 / teamwork 团队 / notices 通知 / archives 存档`，用 `<button class="docktab" data-dock="…">` 静态写在 skeleton 里（图标 + 文字，窄宽降级为纯图标）；`#dockBody` 由 `renderDock()` 按 `S.dock` 分发。**用量统计不在右栏**：入口是侧栏底部的 `#navUsage` chip（见 §5.10）。
 - 侧栏收起后，顶栏左上角常驻「展开侧栏」按钮（也可 Ctrl+B）；右栏默认打开 `start`（首次/无记忆时），开合与页签记在 localStorage `cell.dock`；`?dock=<name>` 可覆盖。
 - 输入卡：宽度 `min(calc(100% - 56px), var(--composer-max))`，底部 22px，圆角 `--radius-xl`，表面 `--elev-2` + 1px `--line2` 描边；聚焦时描边 `--accent` + 外环 `--accent-soft`。
 - 消息流列宽 `min(100% - 48px, var(--chat-max))` 居中；底部留白 `var(--composer-h) + 28px`。
@@ -229,6 +229,27 @@ Ctrl+N 新会话、Ctrl+, 设置、Ctrl+Shift+F 会话搜索、Ctrl+P 快速打�
   「供应商:模型」，供应商已经在底部状态行里写了，按钮再带上只会把名字挤成省略号；
   思考级别也不再塞进按钮，改为悬停 tooltip + 模型菜单里的「思考级别」一节。
 
+### 5.10 用量统计（左侧栏收纳入口，2026-10 从右栏搬过来）
+
+- **入口**：侧栏底部导航行里紧挨 `⌂` 主页按钮的 `#navUsage` chip —— 条形图图标 + 总
+  tokens（如 `9.4M`，还没取到数据时是 `—`）。它不再占右栏页签，右栏只剩
+  `开始 / 文件 / Git / 终端 / 团队 / 通知 / 存档` 七个。
+- **收纳浮层** `.usage-pop`：点 chip 贴在 chip **上方**展开（340px 宽，超视口高时正文
+  内部滚动）：头部「用量统计 · 更新于 N 前 · 重新统计 · 收起」，正文是总览方块
+  （总 tokens 一大 + 请求 / 入 / 出 / 消息四小）→ 按模型占比条 → 按会话明细
+  （浮层里最多 12 条，超出提示「另有 N 条会话未列出」）。点会话行调 `session.select`
+  切过去（跨工作区也行）。
+- **收起**：再点 chip / 点浮层外面 / `Esc` / 收起侧栏，任一种都收回；`Esc` 只收浮层，
+  不会顺手把右侧面板也关掉。
+- **数据**：`usages.summary`（§6）。缓存 20s；启动时后台拉一次只为把数字填进 chip；
+  `/usages` 指令与 `?dock=usages`（截图/调试）都直接展开这个浮层。
+- 极窄侧栏（容器查询降级态）里 chip 只留图标，数字让位给导航按钮。
+- 验收：`_scratch/tmp/usage-sidebar.py`（42 项：位置在 `⌂` 右侧、数值、浮层贴边与宽度、
+  5 块总览 / 3 条模型 / 5 条会话、零用量空态、开关 / `Esc` / 点外面 / 侧栏收起 / 点会话行后
+  自动收起、窄侧栏降级、`?dock=usages`、无脚本错误）；`_scratch/tmp/usage-e2e.py`（12 项：
+  真实后端 + 内嵌 UI，预置 `.cell/usages.json` 后 chip 与浮层数字一致）；
+  `_scratch/verify-cli-parity/verify.py` 追加「右栏不再有用量标签」与「`/usages` 展开收纳浮层」两项。
+
 ## 6. 后端命令契约（src/cell-app-tools.hpp，T-core 实现）
 
 所有命令沿用现有 `exec_command` 协议：入参 JSON、返回 `{"ok":true,...}` 或 `{"ok":false,"error":"..."}`，可选 `ws`（缺省=活动工作区）；以下命令还接受 `cwd`（绝对路径，缺省=该 ws 的 cwd，便于对未打开目录操作 git）。
@@ -299,7 +320,7 @@ Lead 的 `renderDock()` 分发：`start` → 内置开始页；`Panels.has(name)
 ### 7.3 快照/演示（T-chat + T-panels）
 - `08-mock.js`（T-chat）默认演示数据应展示「有内容的会话」：2 个工作区、当前会话含用户/助手/思考/工具/通知消息与一条流式回答；`?demo=empty` 才回到空态 hero；`?demo=stream` 停在流式中。
 - 新面板 mock：T-panels 在 `08b-panels.js` 里包装 `Mock.api`（加 git.* fs.* term.* 分支），数据要真实（仓库 cell-app、分支 main、2 个 worktree、3 个变更文件、5 条提交、目录树、终端示例输出）。
-- 截图 URL 约定：`file:///…/src/ui/index.html?mock=1&dock=start|files|git|terminal|teamwork|notices|archives`、`&demo=empty|stream`、`&settings=1`（Lead 的 boot 负责解析 dock/settings；demo 参数由 mock 处理）。
+- 截图 URL 约定：`file:///…/src/ui/index.html?mock=1&dock=start|files|git|terminal|teamwork|notices|archives`、`&demo=empty|stream`、`&settings=1`（Lead 的 boot 负责解析 dock/settings；demo 参数由 mock 处理）。`&dock=usages` 是例外：它不开右栏，而是展开侧栏的用量收纳浮层（§5.10），保留给截图/调试。
 
 ### 7.4 后端就绪前
 T-panels 先按 §6 契约 + mock 开发；T-core 完成后联调（真实 `?mock=0` + `cell-app.exe --headless 8787 --ui src/ui/index.html`）。

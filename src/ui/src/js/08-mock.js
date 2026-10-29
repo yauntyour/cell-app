@@ -455,9 +455,67 @@ const Mock = {
       }
       case 'session.delete': return Promise.resolve({ ok: true });
       case 'settings.get': return Promise.resolve({ ok: true, settings: this.settings });
+      case 'session.save': {
+        const tt = S.tabs.get(ws);
+        return Promise.resolve({ ok: true, id: sid, msgs: (tt && tt.msgs ? tt.msgs.length : 0) });
+      }
+      case 'session.export':
+        return Promise.resolve({
+          ok: true,
+          path: (this.cwdA + '\\cell-export-20261029-211500.html'),
+          msgs: 14, jobs: 0,
+        });
+      case 'turn.resume':
+        return Promise.resolve({
+          ok: false,
+          error: 'no interrupted turn to resume (the last turn ended normally or the state was already cleared)',
+        });
+      case 'usages.summary':
+        return Promise.resolve({
+          ok: true,
+          totals: { requests: 486, messages: 1320, input_tokens: 8420000, output_tokens: 963000, total_tokens: 9383000, input_chars: 0, output_chars: 0 },
+          models: [
+            { name: 'deepseek-anthropic:deepseek-flash', requests: 402, messages: 1188, input_tokens: 7210000, output_tokens: 812000, total_tokens: 8022000 },
+            { name: 'deepseek-chat:deepseek-chat', requests: 71, messages: 118, input_tokens: 1050000, output_tokens: 128000, total_tokens: 1178000 },
+            { name: 'llama.cpp:qwen3-coder', requests: 13, messages: 14, input_tokens: 160000, output_tokens: 23000, total_tokens: 183000 },
+          ],
+          sessions: [
+            { id: 'sms0001-1-mock', model: 'deepseek-anthropic:deepseek-flash', requests: 196, messages: 612, input_tokens: 3820000, output_tokens: 421000, total_tokens: 4241000 },
+            { id: 'sms0001-2-mock', model: 'deepseek-anthropic:deepseek-flash', requests: 128, messages: 402, input_tokens: 2410000, output_tokens: 268000, total_tokens: 2678000 },
+            { id: 'sms0002-1-mock', model: 'deepseek-chat:deepseek-chat', requests: 71, messages: 118, input_tokens: 1050000, output_tokens: 128000, total_tokens: 1178000 },
+            { id: 'sms0001-3-mock', model: 'deepseek-anthropic:deepseek-flash', requests: 78, messages: 174, input_tokens: 980000, output_tokens: 123000, total_tokens: 1103000 },
+            { id: 'sms0002-2-mock', model: 'llama.cpp:qwen3-coder', requests: 13, messages: 14, input_tokens: 160000, output_tokens: 23000, total_tokens: 183000 },
+          ],
+          total_sessions: 5,
+        });
+      case 'skills.list':
+        return Promise.resolve({
+          ok: true, root: 'C:/demo/.cell/skills', skills: [
+            { name: 'pdf-report', description: '把 Markdown 渲染成 PDF 报告' },
+            { name: 'code-review', description: '按团队规范审查改动' },
+            { name: 'webapp-testing', description: '用 Playwright 验收页面' },
+          ],
+        });
+      case 'skill.load': return Promise.resolve({ ok: true, name: args.name, chars: 1820, msgs: 6 });
       case 'settings.set':
         Object.assign(this.settings, args.patch || {});
         return Promise.resolve({ ok: true, settings: this.settings });
+      // 演示 /compact：走一遍 compact_begin → status → compact_end
+      case 'compact.now': {
+        if (this._compacting) return Promise.resolve({ ok: true });
+        this._compacting = true;
+        const self = this;
+        this.emit({ t: 'compact_begin', ws: ws });
+        setTimeout(() => self.emit({ t: 'status', ws: ws, d: 'compacting context…' }), 500);
+        setTimeout(() => {
+          self._compacting = false;
+          self.emit({
+            t: 'compact_end', ws: ws, ok: true, state: 'done',
+            d: 'context compacted: archived to msg-20261029-204500.jsonl, aggregated 24 message(s) into 1 summary, 4 message(s) remain',
+          });
+        }, 1400);
+        return Promise.resolve({ ok: true });
+      }
       case 'providers.select': return Promise.resolve({ ok: true, providers: this.providers });
       case 'providers.rm': this.providers = this.providers.filter(p => p.name !== args.name); return Promise.resolve({ ok: true, providers: this.providers });
       case 'providers.add': this.providers.push({ name: args.name || args.api_style, api_style: args.api_style, base: args.base, proxy: args.proxy || '', has_key: !!args.key, current: false }); return Promise.resolve({ ok: true, name: args.name || args.api_style, providers: this.providers });

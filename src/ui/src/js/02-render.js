@@ -337,6 +337,7 @@ function renderFoot() {
     sub.classList.toggle('demo', S.mode === 'demo');
   }
   renderBrand();
+  paintUsageChip(); // 侧栏底部「用量」chip：数字跟 S.usages 走
 }
 
 /* ---------- 品牌标识 ------------------------------------------------ */
@@ -447,6 +448,8 @@ function dockSave() {
 }
 function toggleDock() { S.dockOpen ? closeDock() : openDock(S.dock); }
 function openDock(name) {
+  // 用量统计不在右栏了（左侧栏 ⌂ 旁边的收纳浮层）：旧调用点/旧链接统一改道
+  if (name === 'usages') { openUsagePop(true); return; }
   if (name && DOCK_LABEL[name]) S.dock = name;
   S.dockOpen = true;
   const dk = $('#rightdock');
@@ -491,6 +494,7 @@ function renderDock() {
     try { Panels.render(S.dock, body, t); } catch (e) { console.error(e); body.replaceChildren(el('div', 'empty', '面板渲染失败：' + e.message)); }
     return;
   }
+  // 用量统计是全局的（不依赖工作区），入口在左侧栏底部：见 openUsagePop
   if (!t) { body.replaceChildren(el('div', 'empty', '没有打开的工作区')); return; }
   if (S.dock === 'teamwork') renderDockTeamwork(body, t);
   else if (S.dock === 'archives') renderDockArchives(body, t);
@@ -558,6 +562,8 @@ function toggleSidebar() {
   if (!sb) return;
   const col = sb.classList.toggle('collapsed');
   S.sidebarCollapsed = col;
+  // 收纳浮层挂在侧栏上：侧栏收起就一起收掉，免得浮在半空
+  if (col && typeof closeUsagePop === 'function') closeUsagePop();
   try { localStorage.setItem(SIDEBAR_KEY, col ? '1' : '0'); } catch (e) {}
   paintSidebarToggle();
   setTimeout(() => Layout.apply(), 180);

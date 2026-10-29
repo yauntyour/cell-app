@@ -237,3 +237,72 @@
 .ww-acts .btn{height:24px;padding:0 8px;font-size:11px}
 .ww-stream > .wmsg:first-child{margin-top:0;border-top:0;padding-top:0}
 
+
+/* ---- 6b.9 用量统计（左侧栏「用量」chip 的收纳浮层；/usages） --------
+   入口是侧栏底部 ⌂ 旁边的 chip（见 03-molecules.css §3.3b），点开是一个贴在
+   chip 上方的浮层：总览方块 → 模型占比条 → 会话明细。数字统一走
+   tabular-nums，条形图只用强调色（深浅靠 opacity 区分），与黑白灰主题不冲突。
+   宽度固定 340，高度超过视口时正文内部滚动。                            */
+.usage-pop{position:fixed;z-index:130;display:flex;flex-direction:column;
+  width:340px;max-width:calc(100vw - 16px);max-height:min(600px,calc(100vh - 32px));
+  background:var(--panel2);border:1px solid var(--line2);border-radius:12px;
+  box-shadow:var(--shadow);animation:popIn 140ms var(--ease);overflow:hidden}
+.up-head{flex:none;display:flex;align-items:center;gap:7px;padding:7px 8px 7px 12px;
+  border-bottom:1px solid var(--line)}
+.up-title{font-size:12.5px;font-weight:600;color:var(--fg)}
+.up-sub{min-width:0;font-size:10.5px;color:var(--fg4);
+  font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.up-body{flex:1;min-height:0;overflow-y:auto;padding:11px 12px 13px}
+.up-empty{padding:26px 8px;text-align:center;font-size:11.5px;line-height:1.7;color:var(--fg4)}
+
+/* 正文积木：总览方块 + 模型条 + 会话行（浮层与旧的 dock 面板共用） */
+.us-tiles{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;flex:none;margin-bottom:18px}
+.us-tile{display:flex;flex-direction:column;gap:3px;min-width:0;padding:9px 11px;
+  background:var(--elev-1);border:1px solid var(--line);border-radius:var(--radius-s)}
+.us-tile.wide{grid-column:1 / -1;padding:12px 13px;
+  background:linear-gradient(135deg,color-mix(in srgb,var(--accent) 13%,var(--elev-1)),var(--elev-1));
+  border-color:color-mix(in srgb,var(--accent) 30%,var(--line))}
+.us-v{font-size:16px;font-weight:650;line-height:1.2;letter-spacing:-.2px;color:var(--fg);
+  font-variant-numeric:tabular-nums}
+.us-tile.wide .us-v{font-size:27px;letter-spacing:-.6px}
+.us-k{font-size:10.5px;color:var(--fg4)}
+
+.us-sec{display:flex;align-items:center;gap:8px;margin:0 0 9px;font-size:10.5px;
+  letter-spacing:.07em;text-transform:uppercase;color:var(--fg4)}
+.us-sec-n{margin-left:auto;font-family:var(--mono);font-size:10px;letter-spacing:0;
+  text-transform:none;color:var(--fg4);opacity:.8}
+
+.us-bars{display:flex;flex-direction:column;gap:11px;margin-bottom:20px}
+.us-bar-row{display:flex;flex-direction:column;gap:5px;min-width:0}
+.us-bar-top{display:flex;align-items:baseline;gap:8px;min-width:0}
+.us-bar-name{min-width:0;font-size:12px;color:var(--fg2)}
+.us-bar-val{margin-left:auto;flex:none;font-family:var(--mono);font-size:11px;color:var(--fg);
+  font-variant-numeric:tabular-nums}
+.us-bar-track{height:6px;border-radius:99px;background:var(--raise);overflow:hidden}
+.us-bar-track i{display:block;height:100%;border-radius:99px;
+  background:linear-gradient(90deg,color-mix(in srgb,var(--accent) 58%,transparent),var(--accent));
+  transition:width 320ms var(--ease)}
+.us-bar-sub{font-family:var(--mono);font-size:10px;color:var(--fg4)}
+
+.us-sess{display:flex;flex-direction:column;gap:6px}
+.us-srow{display:flex;align-items:center;gap:10px;width:100%;padding:8px 10px;text-align:left;
+  background:var(--elev-1);border:1px solid var(--line);border-radius:var(--radius-s);
+  transition:background var(--dur) var(--ease),border-color var(--dur) var(--ease)}
+.us-srow:hover{background:var(--elev-2);border-color:var(--line2)}
+.us-srow:focus-visible{outline:none;border-color:var(--accent);
+  box-shadow:0 0 0 3px var(--accent-soft)}
+.us-s-main{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1}
+.us-s-title{font-size:12px;color:var(--fg)}
+.us-s-meta{font-family:var(--mono);font-size:10.5px;color:var(--fg4)}
+.us-s-val{flex:none;font-family:var(--mono);font-size:11px;color:var(--fg3);
+  font-variant-numeric:tabular-nums}
+.us-more{padding:6px 2px 0;font-size:11px;color:var(--fg4)}
+
+/* 浮层里同一套积木更紧凑一档（340px 宽，别显得空） */
+.usage-pop .us-tiles{gap:6px;margin-bottom:14px}
+.usage-pop .us-tile{padding:7px 9px}
+.usage-pop .us-tile.wide{padding:9px 11px}
+.usage-pop .us-v{font-size:14px}
+.usage-pop .us-tile.wide .us-v{font-size:22px;letter-spacing:-.4px}
+.usage-pop .us-bars{gap:9px;margin-bottom:14px}
+.usage-pop .us-srow{padding:7px 9px}
