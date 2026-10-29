@@ -132,6 +132,11 @@ function bindChatScroll(ws) {
   chat.addEventListener('scroll', () => {
     t._stick = isNearBottom(chat);
     paintJump(ws);
+    // 窗口化的重算是有成本的（O(n) 前缀和），滚动事件里只在「离开上次窗口太远」时触发
+    if (t._win) {
+      const far = Math.abs((chat.scrollTop || 0) - (t._win.top || 0));
+      if (far > Math.max(240, (chat.clientHeight || 600) * 0.3)) markChat(ws);
+    }
   }, { passive: true });
   chat.addEventListener('wheel', ev => {
     if (ev.deltaY < 0) {
@@ -303,6 +308,81 @@ function reconcile(container, items, keyOf, make, update) {
   for (const n of existing.values()) n.remove();
 }
 
+/* ---------------------------------------------------------------------
+   窗口化：百万级上下文里，一条转录可能有几千个节点、十几万行文本。
+   全挂上去的代价不是「建 DOM」（几十 ms），而是浏览器给整条转录排版
+   （实测 1.69M tokens 时 364ms / 85%）。所以只挂视口附近的一段，
+   上下用等高占位（.flowpad）撑住滚动条：
+     · 已挂载过的条目用实测高度（t._h）
+     · 从没挂过的用 canvas 测出来的估算（02b-measure.js，Pretext 式算术）
+     · 非贴底时按锚点校正 scrollTop，估算误差不会让视图跳动
+   --------------------------------------------------------------------- */
+const VIRT_MIN_ITEMS = 140;   // 条目数超过这个才窗口化（普通会话行为完全不变）
+const VIRT_OVERSCAN = 900;    // 视口上下各多挂的像素
+const CHAT_PAD_TOP = 22;      // .chat 的 padding-top（占位高度要对齐）
+
+function flowGapOf(m) { return FLOW_GAP[m.role] == null ? 18 : FLOW_GAP[m.role]; }
+
+/* 算出这一帧要挂载的条目区间；返回带上下占位的数组 */
+function buildWindow(t, items, chat, wrap) {
+  if (!t._h) t._h = new Map();
+  if (!t._est) t._est = new Map();
+  const textW = Math.max(200, (wrap.clientWidth || 720) - 48);
+  const n = items.length;
+  const pitch = new Array(n), tops = new Array(n);
+  let total = 0;
+  for (let i = 0; i < n; i++) {
+    const it = items[i];
+    let p = t._h.get(it.id);
+    if (p == null) {
+      p = t._est.get(it.id);
+      if (p == null) { p = estimateFlowItem(it, textW).pitch; t._est.set(it.id, p); }
+    }
+    pitch[i] = p; tops[i] = total; total += p;
+  }
+  const viewH = chat.clientHeight || 600;
+  // 贴底时窗口按「底部对齐」算：新打开的大会话也得先看到最后一屏，
+  // 而不是先挂载开头、再滚到底部形成一次空屏
+  const viewTop = t._stick
+    ? Math.max(0, total - viewH)
+    : Math.max(0, (chat.scrollTop || 0) - CHAT_PAD_TOP);
+  const minY = viewTop - VIRT_OVERSCAN, maxY = viewTop + viewH + VIRT_OVERSCAN;
+
+  let lo = 0, hi = n - 1, start = n - 1;
+  while (lo <= hi) { const mid = (lo + hi) >> 1; if (tops[mid] + pitch[mid] >= minY) { start = mid; hi = mid - 1; } else lo = mid + 1; }
+  if (start > n - 1) start = n - 1;
+  lo = start; hi = n - 1;
+  let end = start;
+  while (lo <= hi) { const mid = (lo + hi) >> 1; if (tops[mid] <= maxY) { end = mid; lo = mid + 1; } else hi = mid - 1; }
+
+  const out = [];
+  if (start > 0) out.push({ id: '__padT__', role: 'pad', h: Math.round(tops[start]) });
+  for (let i = start; i <= end; i++) out.push(items[i]);
+  const below = total - (tops[end] + pitch[end]);
+  if (below > 1) out.push({ id: '__padB__', role: 'pad', h: Math.round(below) });
+  t._win = { start: start, end: end, top: chat.scrollTop || 0, count: n };
+  return out;
+}
+
+/* 非贴底时记住视口顶部那一条，重排后按它的位移校正滚动位置 */
+function captureAnchor(t, chat) {
+  if (t._stick || !t._nodes || !t._nodes.size) return null;
+  const ct = chat.getBoundingClientRect().top;
+  for (const [key, node] of t._nodes) {
+    if (!node.isConnected) continue;
+    const r = node.getBoundingClientRect();
+    if (r.bottom > ct + 1) return { key: key, top: r.top };
+  }
+  return null;
+}
+function restoreAnchor(t, chat, anchor) {
+  if (!anchor || !t._nodes) return;
+  const node = t._nodes.get(anchor.key);
+  if (!node) return;
+  const d = node.getBoundingClientRect().top - anchor.top;
+  if (Math.abs(d) > 0.5) chat.scrollTop += d;
+}
+
 /* ---------- 渲染主入口 ---------------------------------------------- */
 function renderChat(ws) {
   const t = S.tabs.get(ws); if (!t) return;
@@ -349,9 +429,30 @@ function renderChat(ws) {
   if (ws === S.active && t.approval) items.push({ id: '__approval__' + t.approval.id, role: '__approval__' });
 
   wrap.classList.toggle('busy', !!t.busy);
-  reconcile(wrap, items, m => m.id, makeMsg, (node, m) => updateMsg(node, m, t));
+  // 条目多时只挂载视口附近：pads 由 reconcile 一起管理（同样的 key/顺序语义）
+  const virt = items.length > VIRT_MIN_ITEMS;
+  const shown = virt ? buildWindow(t, items, chat, wrap) : items;
+  const anchor = virt ? captureAnchor(t, chat) : null;
+  reconcile(wrap, shown, m => m.id, makeMsg, (node, m) => updateMsg(node, m, t));
+  if (virt) {
+    // 记下节点索引，供锚点校正与「挂载后回填实测高度」用
+    t._nodes = new Map();
+    for (const c of wrap.children) if (c.__key != null) t._nodes.set(c.__key, c);
+    for (const it of shown) {
+      if (it.role === 'pad') continue;
+      const node = t._nodes.get(it.id);
+      if (!node) continue;
+      const h = node.offsetHeight;
+      if (h > 0) t._h.set(it.id, h + flowGapOf(it));
+    }
+    if (t._h.size > 4000) t._h.clear();
+    if (t._est.size > 4000) t._est.clear();
+  } else if (t._win) {
+    t._win = null;
+  }
   // 流式期间只在用户仍贴着底部时跟底；用户滚上去后保持当前位置
   if (t._stick) scrollChatBottom(chat, false);
+  else if (anchor) restoreAnchor(t, chat, anchor);
   paintJump(ws);
 }
 
@@ -383,27 +484,34 @@ function withTurnMeta(items, t) {
 
 /* ---------------------------------------------------------------------
    流程分组：把一轮回合里的零散块按「工作流顺序」归组
-     · 连续的思考块（可被工具调用/轮次条分开）→ 一张「思考过程」折叠行
+     · 连续的思考块 → 一张「思考过程」折叠行
      · 连续的工具调用 + 轮次条 → 一张「工具调用」折叠卡
+     · 思考 与 工具 **互不合并**：模型「先 CoT、再调工具、再 CoT」时，
+       后一段推理是新的一块，排在它前面的工具卡之后——否则整轮 CoT 会被
+       并成一大块，读起来像「一大整块 CoT + 工具记录」
      · 用户 / 状态 / 错误 / 助手正文 / 孤儿工具结果闭合分组
    --------------------------------------------------------------------- */
 const FLOW_CLOSERS = { user: 1, status: 1, error: 1, assistant: 1, toolres: 1 };
 function groupFlow(items) {
   const out = [];
   let think = null, tools = null, rounds = null;
+  const flushRounds = () => { if (rounds) { out.push(...rounds); rounds = null; } };
   for (const it of items) {
     if (it.role === 'reason') {
+      tools = null; // 工具调用打断了思考：后续 CoT 另起一块
+      flushRounds();
       if (!think) { think = { id: 'gfp-think-' + it.id, role: '__grpthink__', items: [] }; out.push(think); }
       think.items.push(it);
     } else if (it.role === 'tool') {
       // Teamwork 工具渲染成独立的结构化大卡（团队任务已创建），不塞进
       // 「工具调用」折叠组——否则展开就是一坨原始 JSON。
       if (isTwTool(it)) {
-        if (rounds) { out.push(...rounds); rounds = null; }
+        flushRounds();
         think = null; tools = null;
         out.push(it);
         continue;
       }
+      think = null; // 工具之前的 CoT 到此收尾
       if (!tools) {
         tools = { id: 'gfp-tools-' + it.id, role: '__grptools__', items: [] };
         out.push(tools);
@@ -414,12 +522,12 @@ function groupFlow(items) {
       if (tools) tools.items.push(it);
       else (rounds = rounds || []).push(it);
     } else {
-      if (rounds) { out.push(...rounds); rounds = null; }
+      flushRounds();
       out.push(it);
       if (FLOW_CLOSERS[it.role]) { think = null; tools = null; }
     }
   }
-  if (rounds) out.push(...rounds);
+  flushRounds();
   return out;
 }
 
@@ -700,6 +808,7 @@ function fillProse(w, m) {
 }
 
 function makeMsg(m) {
+  if (m.role === 'pad') return makePad(m);
   if (m.role === '__thinking__') return makeThinking();
   if (m.role === '__grpthink__') return makeThinkGroup(m);
   if (m.role === '__grptools__') return makeToolGroup(m);
@@ -749,6 +858,14 @@ function fillProseNode(prose, txt) {
 }
 
 /* ---- 回合状态行 / 错误 -------------------------------------------- */
+/* 窗口化的等高占位：只撑滚动高度，不参与交互、不进无障碍树 */
+function makePad(m) {
+  const d = el('div', 'flowpad');
+  d.setAttribute('aria-hidden', 'true');
+  d.style.height = (m.h || 0) + 'px';
+  d.__h = m.h || 0;
+  return d;
+}
 function makeStatus(m) {
   const w = el('div', 'msg status');
   const line = el('span', 'sl-line');
@@ -1549,6 +1666,7 @@ function makeThinkGroup(m) {
     panel.hidden = !open;
     w.classList.toggle('open', open);
     line.setAttribute('aria-expanded', open ? 'true' : 'false');
+    if (open) fillThinkPanel(w); // 懒渲染：展开时才解析这一组的正文
   };
   w.appendChild(line); w.appendChild(panel);
   w._panel = panel; w._meta = meta; w._line = line; w._blocks = new Map();
@@ -1580,6 +1698,10 @@ function syncGroupChildren(w, m, makeChild) {
 /* ---------- 详细渲染：更新 ------------------------------------------ */
 function updateMsg(node, m, t) {
   if (!node) return;
+  if (m.role === 'pad') {
+    if (node.__h !== m.h) { node.__h = m.h; node.style.height = (m.h || 0) + 'px'; }
+    return;
+  }
   if (m.role === '__thinking__') {
     node.__tab = t;
     paintThinking(node, t);
@@ -1612,32 +1734,54 @@ function updateMsg(node, m, t) {
     }
     if (node._fold && m.collapsed === false) node._fold.set(true);
   }
-  prose.classList.toggle('cursor', isStreaming);
 }
 
 // 思考组：流式段自动展开、实时追加；统计「N 段」
+// 收起状态下**不建** body 的 DOM（懒渲染）：百万级上下文里 99% 的思考块都是收起的，
+// 解析 + 建节点纯属浪费——首次展开时才补渲染（fillThinkPanel）。
 function updateThinkGroup(node, m, t) {
   syncGroupChildren(node, m, makeThinkBlock);
   const live = t._live && t._live.reason;
   const liveLast = !!(live && t.msgs.length && t.msgs[t.msgs.length - 1] === live);
   let streaming = false, chars = 0;
   for (const it of m.items) {
-    const blk = node._blocks.get(it.id);
-    if (!blk) continue;
-    const isStreaming = !!(liveLast && live.id === it.id && it.streaming);
-    fillThinkBlock(blk._prose, it, isStreaming, t);
-    if (isStreaming) streaming = true;
+    if (liveLast && live.id === it.id && it.streaming) streaming = true;
     chars += String(it.text || '').length;
   }
   node.classList.toggle('streaming', streaming);
+  const open = node._manual ? !node._panel.hidden : (streaming || node.__wasStreaming);
   if (!node._manual) {
-    const open = streaming || node.__wasStreaming;
     node._panel.hidden = !open;
     node.classList.toggle('open', open);
     node._line.setAttribute('aria-expanded', open ? 'true' : 'false');
   }
   node.__wasStreaming = streaming;
-  if (node._meta) node._meta.textContent = m.items.length + ' 段' + (chars ? ' · ' + chars + ' 字符' : '') + (streaming ? ' · 进行中' : '');
+  node.__items = m.items; // 给「展开时补渲染」用
+  node.__tab = t;
+  if (open) {
+    for (const it of m.items) {
+      const blk = node._blocks.get(it.id);
+      if (!blk) continue;
+      const isStreaming = !!(liveLast && live.id === it.id && it.streaming);
+      fillThinkBlock(blk._prose, it, isStreaming, t);
+    }
+  }
+  if (node._meta) {
+    // 分块后每组通常只有一段，再说「1 段」就是噪音
+    const bits = [];
+    if (m.items.length > 1) bits.push(m.items.length + ' 段');
+    if (chars) bits.push(chars + ' 字符');
+    if (streaming) bits.push('进行中');
+    node._meta.textContent = bits.join(' · ');
+  }
+}
+// 展开收起着的思考组时补渲染（懒渲染的另一半）
+function fillThinkPanel(w) {
+  if (!w.__items) return;
+  for (const it of w.__items) {
+    const blk = w._blocks.get(it.id);
+    if (blk && !blk._prose.__txt) fillThinkBlock(blk._prose, it, false, w.__tab);
+  }
 }
 function fillThinkBlock(prose, it, isStreaming, t) {
   const txt = it.text == null ? '' : String(it.text);
@@ -1653,7 +1797,6 @@ function fillThinkBlock(prose, it, isStreaming, t) {
     prose.__txt = txt;
     prose.innerHTML = typeof renderMarkdown === 'function' ? renderMarkdown(txt) : esc(txt);
   }
-  prose.classList.toggle('cursor', isStreaming);
 }
 // 工具组：运行中自动展开（用户手动接管后不再自动）；统计次数/耗时/失败
 function updateToolGroup(node, m, t) {
@@ -1693,9 +1836,13 @@ function updateToolGroup(node, m, t) {
 }
 
 /* ---------- 后端 transcript → 消息对象 ------------------------------ */
-function detailEntries(e) {
+function detailEntries(e, idx, sid) {
   const out = [];
-  const base = { id: uid(), ts: 0 };
+  // 条目 id 必须**跨重载稳定**：reconcile 按 id 复用节点，随机 uid 会让「每回合结束
+  // 后重载转录」把整条会话重建一遍（百万级上下文实测 ~0.5s 主线程卡顿）。
+  // 用「会话 + 条目序号」做键：追加消息不影响旧条目；压缩摘要插到头部时整条平移
+  // 一次（重新稳定），代价是一次重渲染。
+  const base = { id: (sid || 'd') + ':' + (idx == null ? uid() : idx), ts: 0 };
   if (!e) return out;
   if (e.kind === 'summary') { out.push(Object.assign({}, base, { role: 'summary', text: e.text, collapsed: true })); return out; }
   if (e.kind === 'user') { out.push(Object.assign({}, base, { role: 'user', text: e.text })); return out; }
@@ -1712,7 +1859,7 @@ function detailEntries(e) {
     const sp = splitSummary(e.text);
     if (sp) {
       if (sp.prompt) out.push(Object.assign({}, base, { role: 'assistant', text: sp.prompt }));
-      out.push(Object.assign({ id: uid(), ts: 0 }, { role: 'summary', text: sp.summary, collapsed: true }));
+      out.push(Object.assign({ id: base.id + '#2', ts: 0 }, { role: 'summary', text: sp.summary, collapsed: true }));
     } else {
       out.push(Object.assign({}, base, { role: 'assistant', text: e.text }));
     }
@@ -1722,7 +1869,7 @@ function detailEntries(e) {
     const sp = splitSummary(e.text);
     if (sp) {
       if (sp.prompt) out.push(Object.assign({}, base, { role: 'sys', text: sp.prompt, collapsed: true }));
-      out.push(Object.assign({ id: uid(), ts: 0 }, { role: 'summary', text: sp.summary, collapsed: true }));
+      out.push(Object.assign({ id: base.id + '#2', ts: 0 }, { role: 'summary', text: sp.summary, collapsed: true }));
     } else {
       out.push(Object.assign({}, base, { role: 'sys', text: e.text, collapsed: true }));
     }
@@ -1758,8 +1905,9 @@ function loadSessionDetail(ws, id, done, opts) {
     t._live = { assistant: null, reason: null, summary: null };
     t._liveMsgId = null;
     t._md = new Map();
-    for (const e of (out.entries || []))
-      for (const m of detailEntries(e)) t.msgs.push(m);
+    const entries = out.entries || [];
+    for (let i = 0; i < entries.length; i++)
+      for (const m of detailEntries(entries[i], i, id)) t.msgs.push(m);
     t.archives = out.archives || [];
     t.archivesFor = id;
     // 换了会话（或首次加载）→ 贴底；回合结束的原地重载不打扰阅读位置

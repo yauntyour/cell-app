@@ -4,10 +4,11 @@
    结构（全部由 ComposerUI.init() 建在骨架的 #composerInner 内）：
      #composerInner  ← 卡片本体（--elev-2 / --radius-xl / 1px --line2，
                         :focus-within 时 accent 边 + 外环）
-       #inputBox     ← 编辑区（textarea + 附件条 + 附件 chips），拖拽落点
+       #inputBox     ← 编辑区（附件区 + textarea），拖拽落点
+         #attachWrap ← 附件区（在编辑区上方，可多行折行，卡片随之变高）
+           #attachBar（#btnPickFile）
+           #chips
          #ta
-         #attachBar（#btnPickFile）
-         #chips
          #fileInput
        #teamEditor   ← Teamwork 工作流编辑器（team 模式显示）
        .cmp-bar      ← 底部工具条：
@@ -88,16 +89,14 @@ function buildComposerDom() {
   host.classList.add('cmp-card');
   host.replaceChildren();
 
-  /* — 编辑区（#inputBox 同时是拖拽落点） — */
+  /* — 编辑区（#inputBox 同时是拖拽落点） —
+     附件区（提示条 + chips）在 textarea **上方**：附件多到折行时只会把卡片撑高，
+     不会像放在下方那样把编辑区挤成一条缝（历史布局会偶发出现一行空白灰块）。*/
   const box = el('div', 'cmp-box');
   box.id = 'inputBox';
-  const ta = el('textarea');
-  ta.id = 'ta';
-  ta.rows = 1;
-  ta.placeholder = CMP_PLACEHOLDER;
-  ta.setAttribute('aria-label', '输入消息');
-  ta.spellcheck = false;
-  box.appendChild(ta);
+
+  const attachWrap = el('div', 'cmp-attachwrap');
+  attachWrap.id = 'attachWrap';
 
   const attachBar = el('div', 'cmp-attach');
   attachBar.id = 'attachBar';
@@ -110,12 +109,21 @@ function buildComposerDom() {
   const hint = el('span', 'cmp-attach-hint', '也可把文件拖进输入框，或直接粘贴');
   attachBar.appendChild(pick);
   attachBar.appendChild(hint);
-  box.appendChild(attachBar);
+  attachWrap.appendChild(attachBar);
 
   const chips = el('div', 'cmp-chips');
   chips.id = 'chips';
   chips.hidden = true;
-  box.appendChild(chips);
+  attachWrap.appendChild(chips);
+  box.appendChild(attachWrap);
+
+  const ta = el('textarea');
+  ta.id = 'ta';
+  ta.rows = 1;
+  ta.placeholder = CMP_PLACEHOLDER;
+  ta.setAttribute('aria-label', '输入消息');
+  ta.spellcheck = false;
+  box.appendChild(ta);
 
   const fin = el('input');
   fin.type = 'file';
@@ -296,14 +304,22 @@ function bindComposer() {
 
   /* 宽度自适应：主区变窄（分栏/窗口）时把 chip 收成图标，避免文字挤成「文…」 */
   applyComposerWidthClass();
+  paintComposerMetrics();
   if (typeof ResizeObserver !== 'undefined') {
     // 回调里同步改类名会再次改变被观察元素的大小，Chromium 因此报
     // "ResizeObserver loop completed with undelivered notifications"；
     // 延到下一帧处理即可（终端面板改变宽度时会命中这条路）
-    const ro = new ResizeObserver(() => window.requestAnimationFrame(applyComposerWidthClass));
+    const ro = new ResizeObserver(() => window.requestAnimationFrame(() => {
+      applyComposerWidthClass();
+      paintComposerMetrics();
+    }));
     ro.observe(host);
     host.__cmpRO = ro;
   }
+
+  /* 附件预览小窗：任何点击/缩放都先收起，避免残留在半空 */
+  document.addEventListener('pointerdown', hideAttachPreview, true);
+  window.addEventListener('resize', hideAttachPreview);
 
   /* 拖动 --composer-h 的手柄后重新自适配高度（布局本身由 03-layout.js 负责） */
   const rz = $('#rzComposer');
@@ -320,6 +336,23 @@ function applyComposerWidthClass() {
   const w = host.getBoundingClientRect().width || 0;
   host.classList.toggle('cmp-narrow', w > 0 && w < 650);
   host.classList.toggle('cmp-tiny', w > 0 && w < 520);
+}
+
+/* 量一次卡片的真实高度，写进两个 CSS 变量（纯 CSS 取不到「元素自然高度」）：
+     --cmp-card-h    整个 .composer-stack 的高度 → 消息流底部留白 /「回到底部」按钮
+                     跟着卡片走，附件折行把卡片撑高时消息流不会被盖住
+     --cmp-attach-h  附件区的高度 → 卡片 max-height 允许超出拖拽高度的部分，
+                     保证多行附件始终有位置，不会把编辑区挤扁 */
+function paintComposerMetrics() {
+  const host = $('#composerInner');
+  if (!host) return;
+  const root = document.documentElement;
+  const stack = cmpStack(host);
+  const cardH = Math.round((stack || host).getBoundingClientRect().height);
+  root.style.setProperty('--cmp-card-h', cardH + 'px');
+  const wrap = $('#attachWrap');
+  const attachH = wrap ? Math.round(wrap.getBoundingClientRect().height) : 0;
+  root.style.setProperty('--cmp-attach-h', Math.max(0, attachH) + 'px');
 }
 
 function hasFileDrag(ev) {
@@ -472,6 +505,7 @@ function renderComposer() {
     closeComposerMenu();
     closeSlash();
     paintStatRight(null);
+    paintComposerMetrics();
     // 状态行左侧（#statLeft）归 Lead 的 renderStatLine；这里顺带刷新，
     // 避免 composer 重建后左侧还停在上一次（如「没有打开的工作区」）的文案
     if (typeof renderStatLine === 'function') renderStatLine();
@@ -504,7 +538,7 @@ function renderComposer() {
     }
   }
 
-  renderChips(t);
+  renderChips(t); // 内部会重算 --cmp-card-h / --cmp-attach-h
   paintSendState(t);
   paintStatRight(t);
   if (typeof renderStatLine === 'function') renderStatLine();
@@ -566,7 +600,8 @@ function renderChips(t) {
   if (!wrap) return;
   const list = (t && t.composer && t.composer.attachments) || [];
   wrap.replaceChildren();
-  if (!list.length) { wrap.hidden = true; return; }
+  hideAttachPreview();
+  if (!list.length) { wrap.hidden = true; paintComposerMetrics(); return; }
   wrap.hidden = false;
   list.forEach((a, i) => {
     const c = el('div', 'cf-chip' + (a.uploading ? ' up' : '') + (a.error ? ' err' : ''));
@@ -583,23 +618,111 @@ function renderChips(t) {
     x.innerHTML = iconHtml('x');
     x.onclick = ev => {
       ev.stopPropagation();
+      dropAttachPreview(a);
       list.splice(i, 1);
       renderChips(t);
       if (t === curTab()) paintSendState(t);
     };
     c.appendChild(x);
+    c.addEventListener('mouseenter', () => scheduleAttachPreview(c, a));
+    c.addEventListener('mouseleave', hideAttachPreview);
     wrap.appendChild(c);
   });
+  paintComposerMetrics();
+}
+
+/* 附件预览数据：图片给 object URL，文本给前 4k 字符（都只在内存里，发送/移除即释放）。
+   仅用于「这是哪个附件」的辨识，跟上传走的是同一次本地读取之外的最小代价。 */
+const CMP_PREV_IMG_MAX = 12 * 1024 * 1024;
+const CMP_PREV_TXT_MAX = 512 * 1024;
+const CMP_PREV_TEXT_EXT = /\.(txt|md|markdown|jsonl?|csv|tsv|log|xml|ya?ml|ini|toml|cfg|conf|c|h|hpp|cc|cpp|cxx|js|mjs|cjs|ts|tsx|jsx|py|rs|go|java|kt|rb|php|lua|sh|bash|ps1|bat|html?|css|scss|sql)$/i;
+
+function loadAttachPreview(item, file) {
+  if (!item || !file) return;
+  try {
+    if (/^image\//i.test(file.type || '') && file.size <= CMP_PREV_IMG_MAX) {
+      item._url = URL.createObjectURL(file);
+      return;
+    }
+    if (file.size > CMP_PREV_TXT_MAX) return;
+    if (!(/^text\//i.test(file.type || '') || CMP_PREV_TEXT_EXT.test(item.name || ''))) return;
+    const rd = new FileReader();
+    rd.onload = () => { item._text = String(rd.result == null ? '' : rd.result).slice(0, 4000); };
+    rd.readAsText(file);
+  } catch (e) {}
+}
+function dropAttachPreview(item) {
+  if (!item) return;
+  if (item._url) { try { URL.revokeObjectURL(item._url); } catch (e) {} item._url = ''; }
+  item._text = '';
+}
+
+/* 悬浮预览小窗：贴在被悬浮的 chip 上方（上方放不下就翻到下方），
+   pointer-events:none，永远不抢鼠标。延迟 160ms 再出，扫过一排 chip 时不闪。 */
+let cmpPrev = null;        // { el, item }
+let cmpPrevTimer = 0;
+
+function hideAttachPreview() {
+  if (cmpPrevTimer) { clearTimeout(cmpPrevTimer); cmpPrevTimer = 0; }
+  if (cmpPrev) { cmpPrev.el.remove(); cmpPrev = null; }
+}
+function scheduleAttachPreview(chip, item) {
+  if (cmpPrevTimer) { clearTimeout(cmpPrevTimer); cmpPrevTimer = 0; }
+  if (cmpPrev && cmpPrev.item === item) return; // 已经显示这一个
+  cmpPrevTimer = setTimeout(() => { cmpPrevTimer = 0; paintAttachPreview(chip, item); }, 160);
+}
+function paintAttachPreview(chip, item) {
+  hideAttachPreview();
+  if (!chip || !chip.isConnected || !item) return;
+  const card = el('div', 'cmp-prev');
+  const head = el('div', 'cmp-prev-head');
+  head.appendChild(el('span', 'cmp-prev-name trunc', item.name || '文件'));
+  head.appendChild(el('span', 'cmp-prev-meta', fmtBytes(item.size)));
+  card.appendChild(head);
+
+  if (item._url) {
+    const img = el('img', 'cmp-prev-img');
+    img.alt = item.name || '';
+    // 图片解码完才知道真实高度：定位要跟着重算，否则「上方贴边」的小窗会
+    // 一边长高一边盖住 chip（首次渲染时 img 高度为 0）
+    img.addEventListener('load', () => { if (cmpPrev && cmpPrev.el === card) placeAttachPreview(card, chip); });
+    img.src = item._url;
+    card.appendChild(img);
+  } else if (item._text) {
+    const pre = el('pre', 'cmp-prev-txt');
+    pre.textContent = item._text;
+    card.appendChild(pre);
+  } else {
+    card.appendChild(el('div', 'cmp-prev-none', item.uploading ? '上传中…' : '（该类型没有预览）'));
+  }
+
+  document.body.appendChild(card);
+  placeAttachPreview(card, chip);
+  cmpPrev = { el: card, item: item };
+}
+
+/* 贴在被悬浮的 chip 上方 8px；上方放不下就翻到下方，左右都夹在视口内 */
+function placeAttachPreview(card, chip) {
+  if (!card || !chip || !chip.isConnected) return;
+  const r = chip.getBoundingClientRect();
+  const w = card.offsetWidth || 200;
+  const h = card.offsetHeight || 80;
+  let top = r.top - h - 8;
+  if (top < 8) top = Math.min(window.innerHeight - h - 8, r.bottom + 8);
+  const left = Math.max(8, Math.min(r.left, window.innerWidth - w - 8));
+  card.style.top = Math.round(Math.max(8, top)) + 'px';
+  card.style.left = Math.round(left) + 'px';
 }
 
 async function addFiles(files) {
   const t = curTab();
   if (!t || !files || !files.length) return;
   for (const f of Array.from(files)) {
-    const item = { name: f.name, size: f.size, uploading: true, path: '' };
+    const item = { name: f.name || '文件', size: f.size, uploading: true, path: '' };
     t.composer.attachments.push(item);
     renderChips(t);
     paintSendState(t);
+    loadAttachPreview(item, f);
     try {
       const b64 = await fileToB64(f);
       const out = await cmd('upload', { ws: t.ws, name: f.name, data_b64: b64 });
@@ -648,6 +771,7 @@ async function sendCurrent() {
   closeSlash();
   const optimistic = { id: uid(), role: 'user', text: text, ts: nowSec() };
   t.msgs.push(optimistic);
+  for (const a of (t.composer.attachments || [])) dropAttachPreview(a); // 释放预览用的 object URL
   t.composer.text = '';
   t.composer.attachments = [];
   const ta = $('#ta');
