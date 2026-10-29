@@ -201,7 +201,10 @@ var PNL = {
   inited: false,
   files: { path: '', stack: [], data: null, err: '', loading: false, loadedCwd: '' },
   git: { status: null, worktrees: [], commits: [], err: '', loading: false, nonRepo: false, loadedCwd: '', root: '', repoName: '' },
-  term: { views: new Map() } // 终端：每个工作区一个 CellTerm view（会话由 08c-term.js 持有）
+  // 终端：items 是跨工作区共享的终端列表（每个 item 绑定一个 CellTerm view
+  // = 一个独立后端会话）；active 记每个工作区当前选中的终端；attached 是
+  // 此刻挂在文档里的那个 view（其余 detach 在后台继续跑）。
+  term: { seq: 0, items: [], active: {}, listed: {}, attached: null, ui: null }
 };
 
 function pnlResetCwd(cwd) {
@@ -1971,21 +1974,70 @@ function pnlPaintGit(wrap, ctx) {
    终端不再是"命令表单 + 执行按钮"：08c-term.js 提供 window.CellTerm
    （VT 解析/渲染 + 会话控制器 + 演示模式假 shell），这一节只负责面板外壳
    与会话生命周期：
-     · 每个工作区一个真实 shell 会话（view 按 ws 缓存），切页签不重启；
-     · 面板重绘时把 view.root 重新挂到新容器，不重放 backlog、不闪屏；
+     · 面板默认是空的（没有 shell，也没有请求）：点「新建终端」才有；
+     · 一个工作区可以有多个终端，每个 = 一个后端会话（独立读线程）。切终端
+       只是把旧 view detach 出文档，会话继续跑，切回来整屏重绘；
+     · 页面刷新用 term.list 把仍在跑的 shell 接管成页签（term.open {id} +
+       backlog 重放）；终止走 term.close（pty 与读线程一起收掉）；
+     · 面板重绘时复用同一个 .ct-root，不重放 backlog、不闪屏、不丢焦点；
      · 后端由 08c-term.js 通过 term.open / term.input / term.resize /
        term.close 驱动，输出走 SSE 的 term.out / term.exit 事件。
    ===================================================================== */
 
-// 从容器里找回对应的 CellTerm view（按钮闭包用，不依赖渲染顺序）
-function pnlTermViewOf(host) {
-  var node = host && host.querySelector ? host.querySelector('.ct-root') : null;
-  if (!node) return null;
-  var it = PNL.term.views.values();
-  for (var r = it.next(); !r.done; r = it.next()) {
-    if (r.value && r.value.root === node) return r.value;
-  }
+// ---- 多终端状态 ------------------------------------------------------
+// 终端面板默认是空的：用户点「新建终端」才有 shell。一个工作区可以有多个
+// 终端（各自一个后端会话 + 独立读线程，见 cell-app-term.hpp），面板顶部
+// 下拉切换；切走的终端只是从文档里 detach，会话照常在后台跑。
+function pnlTermWsKey(ctx) {
+  return (ctx && (ctx.ws || ctx.cwd)) || '';
+}
+
+function pnlTermItems(wsKey) {
+  var out = [];
+  var list = (PNL.term && PNL.term.items) || [];
+  for (var i = 0; i < list.length; i++) if (list[i].ws === wsKey) out.push(list[i]);
+  return out;
+}
+
+function pnlTermItem(key) {
+  var list = (PNL.term && PNL.term.items) || [];
+  for (var i = 0; i < list.length; i++) if (list[i].key === key) return list[i];
   return null;
+}
+
+function pnlTermActiveItem(wsKey) {
+  var items = pnlTermItems(wsKey);
+  if (!items.length) return null;
+  var key = PNL.term.active[wsKey];
+  for (var i = 0; i < items.length; i++) if (items[i].key === key) return items[i];
+  // 当前项被关掉了（或首次渲染）：落到最后一个
+  PNL.term.active[wsKey] = items[items.length - 1].key;
+  return items[items.length - 1];
+}
+
+// 显示名：后端给的 shell 名（powershell / bash / cmd）；同名多个时补序号
+function pnlTermLabel(item) {
+  if (!item) return '';
+  var base = String(item.name || '').trim() || '终端';
+  var items = pnlTermItems(item.ws);
+  var idx = items.indexOf(item);
+  var dup = false;
+  for (var i = 0; i < items.length; i++) {
+    if (items[i] === item) continue;
+    if ((String(items[i].name || '').trim() || '终端') === base) { dup = true; break; }
+  }
+  return dup ? base + ' ' + (idx + 1) : base;
+}
+
+function pnlTermIsDemo() {
+  try { return typeof S !== 'undefined' && S.mode === 'demo'; } catch (e) {}
+  try { return typeof MOCK !== 'undefined' && !!MOCK; } catch (e) {}
+  return false;
+}
+
+// 当前挂在文档里的 view（切换终端时用来先 detach 旧的）
+function pnlTermAttached() {
+  return (PNL.term && PNL.term.attached) || null;
 }
 
 function pnlTermStateText(st) {
@@ -2011,141 +2063,417 @@ function pnlTermApplyState(el, st) {
   else el.removeAttribute('title');
 }
 
-function pnlTermNotice(icon, title, desc) {
+function pnlTermNotice(icon, title, desc, actionLabel, actionFn) {
   var box = pnlEl('div', 'tp-notice');
   var ic = pnlEl('div', 'tp-notice-ico');
   ic.innerHTML = pnlIcon(icon);
   box.appendChild(ic);
   box.appendChild(pnlEl('div', 'tp-notice-title', title));
   if (desc) box.appendChild(pnlEl('div', 'tp-notice-desc', desc));
+  if (actionLabel && actionFn) {
+    var b = pnlEl('button', 'btn sm', actionLabel);
+    b.type = 'button';
+    b.onclick = actionFn;
+    box.appendChild(b);
+  }
   return box;
 }
 
-// 终端面板外壳（head / host / foot + 工具按钮）。构建与更新分开：
-// dock 的重复重绘走 pnlTermUpdateInPlace，绝不摘掉 .ct-root——摘掉会让
-// .ct-ime 失焦，用户后续按键全部丢失。
+// 终端面板外壳（head / host / foot + 工具按钮）。构建与更新分开：dock 的
+// 重复重绘走 pnlTermUpdateInPlace，绝不摘掉 .ct-root——摘掉会让 .ct-ime
+// 失焦，用户后续按键全部丢失。
 function pnlTermChrome(wrap, ctx) {
+  // 重新建外观时把上一个外壳（可能还开着的下拉）收起，别留着 document 监听
+  if (PNL.term.ui) pnlTermMenuClose(PNL.term.ui);
   var head = pnlEl('div', 'pnl-head tp-head');
   var ic = pnlEl('span', 'tp-head-ico');
   ic.innerHTML = pnlIcon('squareTerminal');
   var title = pnlEl('span', 'tp-title', '终端');
+
+  // 终端切换器：标题就是下拉按钮（终端名 + 数量 + caret）
+  var picker = pnlEl('button', 'tp-picker');
+  picker.type = 'button';
+  picker.title = '切换终端';
+  picker.setAttribute('aria-haspopup', 'menu');
+  picker.hidden = true;
+  var pickerIco = pnlEl('span', 'tp-picker-ico');
+  pickerIco.innerHTML = pnlIcon('squareTerminal');
+  var pickerName = pnlEl('span', 'tp-picker-name trunc', '终端');
+  var pickerCount = pnlEl('span', 'tp-picker-count', '');
+  pickerCount.hidden = true;
+  var pickerCaret = pnlEl('span', 'tp-picker-caret');
+  pickerCaret.innerHTML = pnlIcon('chevronDown');
+  picker.append(pickerIco, pickerName, pickerCount, pickerCaret);
+
   var cwdEl = pnlEl('span', 'tp-cwd mono trunc grow', ctx.cwd || '没有工作区');
   cwdEl.title = ctx.cwd || '';
   var stateEl = pnlEl('span', 'tp-state', '');
   var host = pnlEl('div', 'tp-host');
+  var menu = pnlEl('div', 'tp-menu');
+  menu.hidden = true;
+  menu.setAttribute('role', 'menu');
+  head.appendChild(menu); // 绝对定位在头部下方
 
+  var ui = {
+    wrap: wrap, head: head, host: host, menu: menu, ctx: ctx,
+    wsKey: pnlTermWsKey(ctx), title: title, picker: picker,
+    pickerName: pickerName, pickerCount: pickerCount, cwdEl: cwdEl, stateEl: stateEl
+  };
+
+  var addBtn = pnlIconBtn('plus', '新建终端', function () { pnlTermNew(ui); });
+  addBtn.classList.add('tp-add');
   var copyBtn = pnlIconBtn('copy', '复制选中内容（Ctrl+Shift+C）', function () {
-    var v = pnlTermViewOf(host);
+    var v = pnlTermAttached();
     if (!v || !window.CellTerm || !CellTerm.copySelection) return;
     Promise.resolve(CellTerm.copySelection(v)).then(function (ok) {
       pnlToast(ok ? '已复制选中内容' : '没有选中内容', ok ? 'ok' : 'warn');
     }).catch(function () {});
   });
-  var clearBtn = pnlIconBtn('trash', '清屏（保留回看历史）', function () {
-    var v = pnlTermViewOf(host);
-    if (v && window.CellTerm && CellTerm.clearBuffer) CellTerm.clearBuffer(v);
+  var killBtn = pnlIconBtn('stop', '终止当前终端（关闭这个 shell）', function () {
+    var item = pnlTermActiveItem(ui.wsKey);
+    if (item) pnlTermKill(ui, item);
   });
-  var restartBtn = pnlIconBtn('rotate', '重启终端会话', function () {
-    var v = pnlTermViewOf(host);
-    if (!v || !window.CellTerm || !CellTerm.restart) return;
-    pnlTermApplyState(stateEl, { kind: 'connecting', text: '正在重启…' });
-    Promise.resolve(CellTerm.restart(v)).catch(function () {});
-  });
-  head.append(ic, title, cwdEl, stateEl, copyBtn, clearBtn, restartBtn);
+  killBtn.classList.add('tp-kill');
+  // 头部只留最常用的三个：新建 / 复制选中 / 终止（右栏宽度有限，清屏交给
+  // shell 的 cls，重启交给状态条上的「重试」→ CellTerm.restart）
+  ui.btns = { add: addBtn, copy: copyBtn, kill: killBtn };
+
+  picker.onclick = function (ev) {
+    ev.stopPropagation();
+    pnlTermToggleMenu(ui);
+  };
+
+  head.append(ic, title, picker, cwdEl, stateEl, addBtn, copyBtn, killBtn);
 
   var foot = pnlEl('div', 'tp-foot');
   foot.appendChild(pnlEl('span', 'tp-foot-txt',
-    'Tab 补全 · ↑↓ 历史 · Ctrl+Shift+C/V 复制粘贴 · Shift+PgUp/PgDn 回看'));
+    '终端各自独立运行 · Tab 补全 · ↑↓ 历史 · Ctrl+Shift+C/V 复制粘贴 · Shift+PgUp/PgDn 回看'));
   wrap.append(head, host, foot);
-  return { wrap: wrap, head: head, host: host, cwdEl: cwdEl, stateEl: stateEl, foot: foot };
+  wrap.__pnlUi = ui;
+  PNL.term.ui = ui;
+  return ui;
 }
 
 function pnlTermBuild(body, ctx) {
   var wrap = pnlEl('div', 'pnl pnl-term');
   pnlFit(wrap, body);
+  wrap.dataset.pnlKey = pnlTermWsKey(ctx);
   var ui = pnlTermChrome(wrap, ctx);
   body.appendChild(wrap);
   return ui;
 }
 
-// 只改外壳里的可变内容（cwd / 状态徽标 / onStatus 闭包），不动 DOM 结构。
-function pnlTermUpdate(ui, ctx) {
-  if (!ui) return null;
-  var cwd = ctx.cwd || '没有工作区';
-  if (ui.cwdEl) {
-    if (ui.cwdEl.textContent !== cwd) ui.cwdEl.textContent = cwd;
-    if (ui.cwdEl.title !== (ctx.cwd || '')) ui.cwdEl.title = ctx.cwd || '';
+/* ---- 终端下拉：列出本工作区的所有终端，可切换 / 单个终止 / 新建 ---- */
+function pnlTermMenuClose(ui) {
+  if (!ui || !ui.menu) return;
+  ui.menu.hidden = true;
+  if (ui.menuDocHandler) {
+    document.removeEventListener('mousedown', ui.menuDocHandler, true);
+    ui.menuDocHandler = null;
   }
-  var view = pnlTermViewOf(ui.host);
-  if (view) {
-    view.onStatus = function (st) { view.status = st; pnlTermApplyState(ui.stateEl, st); };
-    pnlTermApplyState(ui.stateEl, view.status || null);
+  if (ui.menuKeyHandler) {
+    document.removeEventListener('keydown', ui.menuKeyHandler, true);
+    ui.menuKeyHandler = null;
   }
+  if (ui.picker) ui.picker.classList.remove('open');
+}
+
+function pnlTermToggleMenu(ui) {
+  if (!ui || !ui.menu) return;
+  if (!ui.menu.hidden) { pnlTermMenuClose(ui); return; }
+  pnlTermPaintMenu(ui);
+  ui.menu.hidden = false;
+  if (ui.picker) ui.picker.classList.add('open');
+  // 点面板别处 / 别的地方就收起（capture：先于行上的 click 生效，但不影响行）
+  ui.menuDocHandler = function (ev) {
+    if (ui.menu.contains(ev.target)) return;
+    if (ui.picker && ui.picker.contains(ev.target)) return;
+    pnlTermMenuClose(ui);
+  };
+  document.addEventListener('mousedown', ui.menuDocHandler, true);
+  ui.menuKeyHandler = function (ev) {
+    if (ev.key !== 'Escape') return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    pnlTermMenuClose(ui);
+    if (ui.picker) { try { ui.picker.focus(); } catch (e) {} }
+  };
+  document.addEventListener('keydown', ui.menuKeyHandler, true);
+}
+
+function pnlTermPaintMenu(ui) {
+  var menu = ui.menu;
+  if (!menu) return;
+  var items = pnlTermItems(ui.wsKey);
+  var active = pnlTermActiveItem(ui.wsKey);
+  menu.replaceChildren();
+  for (var i = 0; i < items.length; i++) {
+    (function (item) {
+      var row = pnlEl('div', 'tp-menu-row' + (item === active ? ' on' : ''));
+      row.tabIndex = 0;
+      row.setAttribute('role', 'menuitem');
+      row.title = pnlTermLabel(item) + (item.cwd ? '\n' + item.cwd : '');
+      var ic = pnlEl('span', 'tp-menu-ico');
+      ic.innerHTML = pnlIcon('squareTerminal');
+      var mid = pnlEl('span', 'tp-menu-mid');
+      mid.appendChild(pnlEl('span', 'tp-menu-name trunc', pnlTermLabel(item)));
+      var sub = [];
+      var stTxt = pnlTermStateText(item.status);
+      if (stTxt) sub.push(stTxt);
+      if (item.cwd) sub.push(pnlBase(item.cwd) || item.cwd);
+      mid.appendChild(pnlEl('span', 'tp-menu-sub trunc', sub.join(' · ') || '终端'));
+      var kill = pnlEl('button', 'tp-menu-kill');
+      kill.type = 'button';
+      kill.title = '终止这个终端';
+      kill.setAttribute('aria-label', '终止终端');
+      kill.innerHTML = pnlIcon('stop');
+      kill.onclick = function (ev) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        pnlTermKill(ui, item);
+      };
+      row.append(ic, mid, kill);
+      row.onclick = function () { pnlTermSelect(ui, item.key); };
+      row.onkeydown = function (ev) {
+        if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); pnlTermSelect(ui, item.key); }
+      };
+      menu.appendChild(row);
+    })(items[i]);
+  }
+  var add = pnlEl('div', 'tp-menu-row tp-menu-add');
+  add.tabIndex = 0;
+  add.setAttribute('role', 'menuitem');
+  var aic = pnlEl('span', 'tp-menu-ico');
+  aic.innerHTML = pnlIcon('plus');
+  add.append(aic, pnlEl('span', 'tp-menu-add-txt', '新建终端'));
+  add.onclick = function () { pnlTermNew(ui); };
+  add.onkeydown = function (ev) {
+    if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); pnlTermNew(ui); }
+  };
+  menu.appendChild(add);
+}
+
+/* ---- 视图 <-> 状态 ---- */
+function pnlTermBindView(ui, item, view) {
+  view.onStatus = function (st) {
+    item.status = st || null;
+    if (st && st.name && !item.name) item.name = st.name;
+    if (st && st.id) item.attachId = null;
+    var act = pnlTermActiveItem(ui.wsKey);
+    if (act === item) pnlTermPaintChrome(ui);
+    if (ui.menu && !ui.menu.hidden) pnlTermPaintMenu(ui);
+  };
+  if (view.status) item.status = view.status;
+}
+
+function pnlTermMakeView(ui, item) {
+  if (!window.CellTerm || typeof CellTerm.mount !== 'function') return null;
+  var view = CellTerm.mount(ui.host, {
+    ws: ui.ctx.ws,
+    cwd: item.cwd || ui.ctx.cwd,
+    id: item.attachId || null,
+    name: item.name || ''
+  });
+  if (!view) return null;
+  item.view = view;
+  pnlTermBindView(ui, item, view);
   return view;
+}
+
+function pnlTermFocusSoon() {
+  if (typeof window === 'undefined' || !window.requestAnimationFrame) return;
+  window.requestAnimationFrame(function () {
+    var v = pnlTermAttached();
+    if (v && v.root && v.root.isConnected && window.CellTerm && CellTerm.focus) {
+      try { CellTerm.focus(v); } catch (e) {}
+    }
+  });
+}
+
+// host 里只放「空态提示」或「当前终端的 .ct-root」；后台终端 detach 掉，
+// 会话继续跑（输出照常写进它自己的 VT 历史）。
+function pnlTermPaintHost(ui) {
+  var host = ui.host;
+  if (!host) return;
+  var item = pnlTermActiveItem(ui.wsKey);
+  var prev = pnlTermAttached();
+
+  if (!item) {
+    if (prev && window.CellTerm && CellTerm.detach) { try { CellTerm.detach(prev); } catch (e) {} }
+    PNL.term.attached = null;
+    host.replaceChildren();
+    host.appendChild(pnlTermNotice('squareTerminal', '还没有终端',
+      '终端默认是空的：新建一个 shell 开始使用。可以同时开多个（各自独立运行），用标题栏的下拉切换。',
+      '新建终端', function () { pnlTermNew(ui); }));
+    return;
+  }
+
+  if (!item.view) {
+    if (prev && window.CellTerm && CellTerm.detach) { try { CellTerm.detach(prev); } catch (e) {} }
+    PNL.term.attached = null;
+    host.replaceChildren(); // 清掉空态提示
+    pnlTermMakeView(ui, item);
+  } else if (prev && prev !== item.view && window.CellTerm && CellTerm.detach) {
+    try { CellTerm.detach(prev); } catch (e) {}
+    PNL.term.attached = null;
+  }
+
+  var view = item.view;
+  if (!view || !view.root) {
+    host.replaceChildren();
+    host.appendChild(pnlTermNotice('alert', '终端组件未加载',
+      '缺少 src/ui/src/js/08c-term.js：运行 python build_ui.py 重新生成页面后刷新。'));
+    PNL.term.attached = null;
+    return;
+  }
+  var kids = Array.prototype.slice.call(host.children);
+  for (var i = 0; i < kids.length; i++) if (kids[i] !== view.root) kids[i].remove();
+  PNL.term.attached = view;
+  if (view.root.parentNode !== host) {
+    if (window.CellTerm && CellTerm.attach) CellTerm.attach(view, host);
+    else host.appendChild(view.root);
+  } else if (window.CellTerm && CellTerm.refit) {
+    try { CellTerm.refit(view); } catch (e) {}
+  }
+}
+
+function pnlTermPaintChrome(ui) {
+  if (!ui) return;
+  var items = pnlTermItems(ui.wsKey);
+  var item = pnlTermActiveItem(ui.wsKey);
+  if (!item) pnlTermMenuClose(ui); // 没有终端了：下拉连同菜单一起收起
+  if (ui.title) ui.title.hidden = !!item;
+  if (ui.picker) {
+    ui.picker.hidden = !item;
+    if (ui.pickerName) ui.pickerName.textContent = item ? pnlTermLabel(item) : '';
+    if (ui.pickerCount) {
+      ui.pickerCount.hidden = items.length < 2;
+      ui.pickerCount.textContent = items.length > 1 ? String(items.length) : '';
+    }
+  }
+  var cwd = (item && item.cwd) || ui.ctx.cwd || '';
+  if (ui.cwdEl) {
+    var txt = cwd || '没有工作区';
+    if (ui.cwdEl.textContent !== txt) ui.cwdEl.textContent = txt;
+    if (ui.cwdEl.title !== cwd) ui.cwdEl.title = cwd;
+  }
+  pnlTermApplyState(ui.stateEl, item ? item.status : null);
+  var has = !!item;
+  var b = ui.btns || {};
+  if (b.copy) b.copy.disabled = !has;
+  if (b.kill) b.kill.disabled = !has;
+  if (ui.menu && !ui.menu.hidden) pnlTermPaintMenu(ui);
+}
+
+function pnlTermSync(ui) {
+  if (!ui || !ui.host) return;
+  pnlTermPaintHost(ui);
+  pnlTermPaintChrome(ui);
+}
+
+/* ---- 新建 / 切换 / 终止 ---- */
+function pnlTermNew(ui) {
+  if (!ui || !ui.ctx || !ui.ctx.cwd) return;
+  var item = {
+    key: 'tk' + (++PNL.term.seq), ws: ui.wsKey, cwd: ui.ctx.cwd || '',
+    name: '', attachId: null, view: null, status: null
+  };
+  PNL.term.items.push(item);
+  PNL.term.active[ui.wsKey] = item.key;
+  pnlTermMenuClose(ui);
+  pnlTermSync(ui);
+  pnlTermFocusSoon();
+}
+
+function pnlTermSelect(ui, key) {
+  if (!ui) return;
+  var item = pnlTermItem(key);
+  if (!item) return;
+  pnlTermMenuClose(ui);
+  PNL.term.active[ui.wsKey] = item.key;
+  pnlTermSync(ui);
+  pnlTermFocusSoon();
+}
+
+function pnlTermKill(ui, item) {
+  if (!ui || !item) return Promise.resolve(false);
+  var items = pnlTermItems(ui.wsKey);
+  var idx = items.indexOf(item);
+  var wasActive = (PNL.term.active[ui.wsKey] === item.key);
+  var view = item.view;
+  if (view && pnlTermAttached() === view) PNL.term.attached = null;
+  item.view = null;
+  var at = PNL.term.items.indexOf(item);
+  if (at >= 0) PNL.term.items.splice(at, 1);
+  if (wasActive) {
+    var rest = pnlTermItems(ui.wsKey);
+    PNL.term.active[ui.wsKey] = rest.length ? rest[Math.min(idx, rest.length - 1)].key : '';
+  }
+  var p = Promise.resolve(true);
+  if (view && window.CellTerm && CellTerm.close) {
+    try { p = Promise.resolve(CellTerm.close(view)).catch(function () { return false; }); } catch (e) {}
+  }
+  pnlTermSync(ui);
+  pnlTermFocusSoon();
+  return p;
+}
+
+// 页面刷新 / 换客户端后，后端可能还有这个工作区的 shell：接管成页签
+// （term.list 拿到会话列表，点开时按 id 重新 attach + backlog 重放）。
+function pnlTermAdopt(ui) {
+  if (!ui) return;
+  var wsKey = ui.wsKey;
+  if (!wsKey || PNL.term.listed[wsKey]) return;
+  PNL.term.listed[wsKey] = true;
+  if (pnlTermIsDemo()) return; // 演示模式的终端是本地的，没有后端会话可接管
+  if (!window.CellTerm || typeof CellTerm.mount !== 'function') return;
+  var args = { ws: ui.ctx.ws || '' };
+  if (ui.ctx.cwd) args.cwd = ui.ctx.cwd;
+  pnlApi('term.list', args).then(function (out) {
+    if (!out || out.ok === false || !Array.isArray(out.sessions) || !out.sessions.length) return;
+    var seen = {};
+    var list = PNL.term.items;
+    for (var i = 0; i < list.length; i++) if (list[i].ws === wsKey && list[i].attachId) seen[list[i].attachId] = 1;
+    var added = 0;
+    for (var k = 0; k < out.sessions.length; k++) {
+      var s = out.sessions[k];
+      if (!s || !s.id || s.alive === false || seen[s.id]) continue;
+      PNL.term.items.push({
+        key: 'tk' + (++PNL.term.seq), ws: wsKey, cwd: s.cwd || ui.ctx.cwd || '',
+        name: s.name || pnlBase(s.shell || '') || '', attachId: s.id, view: null, status: null
+      });
+      added++;
+    }
+    if (!added) return;
+    if (ui.wrap && ui.wrap.isConnected && ui.wrap.__pnlUi === ui) pnlTermSync(ui);
+  });
 }
 
 function pnlRenderTerm(body, ctx) {
   var ui = pnlTermBuild(body, ctx);
-  var host = ui.host, stateEl = ui.stateEl;
-
+  body.dataset.pnl = 'terminal';
   if (!ctx.cwd) {
-    host.appendChild(pnlTermNotice('squareTerminal', '先打开一个工作区',
-      '终端需要一个工作目录：用左侧「打开工作区」选一个目录后即可使用真实 shell。'));
+    ui.host.appendChild(pnlTermNotice('squareTerminal', '先打开一个工作区',
+      '终端需要一个工作目录：用左侧「打开工作区」选一个目录后即可新建 shell。'));
+    pnlTermPaintChrome(ui);
     return;
   }
-  if (!window.CellTerm || typeof CellTerm.mount !== 'function') {
-    host.appendChild(pnlTermNotice('alert', '终端组件未加载',
-      '缺少 src/ui/src/js/08c-term.js：运行 python build_ui.py 重新生成页面后刷新。'));
-    pnlTermApplyState(stateEl, { kind: 'error', text: '终端组件缺失' });
-    return;
-  }
-
-  var key = ctx.ws || ctx.cwd;
-  ui.wrap.dataset.pnlKey = key;
-  var view = PNL.term.views.get(key);
-  if (view && view.root) {
-    // 复用：把终端根节点重新挂进新容器（不重启 shell、不重放 backlog），
-    // 并把状态回调重新绑到本次渲染的徽标上（旧闭包指向已丢弃的节点）
-    host.appendChild(view.root);
-    view.onStatus = function (st) { view.status = st; pnlTermApplyState(stateEl, st); };
-    if (CellTerm.refit) { try { CellTerm.refit(view); } catch (e) {} }
-    pnlTermApplyState(stateEl, view.status || null);
-  } else {
-    if (view) { try { CellTerm.unmount(view); } catch (e) {} }
-    view = CellTerm.mount(host, {
-      ws: ctx.ws,
-      cwd: ctx.cwd,
-      onStatus: function (st) {
-        view.status = st;
-        pnlTermApplyState(stateEl, st);
-      },
-    });
-    if (view) {
-      view.__pnlKey = key;
-      PNL.term.views.set(key, view);
-    }
-  }
-  pnlTermApplyState(stateEl, (view && view.status) || null);
+  pnlTermAdopt(ui);
+  pnlTermSync(ui);
 }
 
 // dock 原地重绘（SSE / 状态变化触发的 Panels.render('terminal')）：容器与
-// .ct-root 都不动，只刷新 cwd / 状态徽标并 refit，键盘焦点不会被打断。
+// 当前 .ct-root 都不动，只刷新头部与状态，键盘焦点不会被打断。
 function pnlTermUpdateInPlace(body, ctx) {
   if (!body || body.dataset.pnl !== 'terminal') return false;
   if (!ctx.cwd) return false;
   var wrap = body.firstElementChild;
   if (!wrap || !wrap.classList || !wrap.classList.contains('pnl-term')) return false;
-  if (wrap.dataset.pnlKey !== (ctx.ws || ctx.cwd)) return false;
-  var ui = {
-    wrap: wrap,
-    host: wrap.querySelector('.tp-host'),
-    cwdEl: wrap.querySelector('.tp-cwd'),
-    stateEl: wrap.querySelector('.tp-state'),
-  };
-  if (!ui.host) return false;
-  var view = pnlTermUpdate(ui, ctx);
-  if (!view || !view.root) return false;
-  if (window.CellTerm && CellTerm.refit) { try { CellTerm.refit(view); } catch (e) {} }
+  if (wrap.dataset.pnlKey !== pnlTermWsKey(ctx)) return false;
+  var ui = wrap.__pnlUi;
+  if (!ui || !ui.host) return false;
+  ui.ctx = ctx;
+  pnlTermSync(ui);
   return true;
 }
 
@@ -2163,7 +2491,7 @@ function pnlTermFocusInBody(body) {
 function pnlTermFocusRestore(body) {
   var host = body && body.querySelector ? body.querySelector('.tp-host') : null;
   if (!host) return false;
-  var view = pnlTermViewOf(host);
+  var view = pnlTermAttached();
   if (!view || !view.imeEl) return false;
   // 等一帧：让 CellTerm.refit 的 measure/applyResize 先跑完再接管焦点
   window.requestAnimationFrame(function () {

@@ -7,11 +7,14 @@
 // the page over the existing event bus, with input, resize and lifecycle
 // commands. The page renders the VT stream itself (src/ui/src/js/08c-term.js).
 //
-//      term.open    {ws?, cwd?, cols?, rows?, shell?, force?}
-//                   -> {ok,id,ws,cwd,shell,cols,rows,pid,alive,seq,backlog}
-//                   one live session per workspace: an existing one is reused
-//                   and its recent output (<=512 KiB, base64) is replayed, so a
-//                   refreshed page reattaches to the same shell.
+//      term.open    {ws?, cwd?, cols?, rows?, shell?, force?, new?, id?, name?}
+//                   -> {ok,id,ws,cwd,shell,name,cols,rows,pid,alive,seq,backlog}
+//                   A workspace can own several shells at once (the terminal
+//                   panel keeps one tab per shell). `new:true` always spawns a
+//                   fresh one, `id` attaches to one that is already running
+//                   (page refresh / tab switch: recent output <=512 KiB base64
+//                   is replayed), and without either the newest live shell of
+//                   the workspace is reused as before.
 //      term.input   {ws?,id,data|text}  data = base64(bytes), text = raw UTF-8
 //      term.resize  {ws?,id,cols,rows}
 //      term.close   {ws?,id}            (id may be omitted inside a ws)
@@ -246,6 +249,22 @@ namespace app::term
         return s.substr(b, e - b);
     }
 
+    // display name for a shell: "C:\Windows\System32\windowspowershell\...\powershell.exe" -> "powershell"
+    inline std::string shell_label(const std::string &s)
+    {
+        size_t i = s.find_last_of("/\\");
+        std::string b = (i == std::string::npos) ? s : s.substr(i + 1);
+        if (b.size() > 4)
+        {
+            std::string ext = b.substr(b.size() - 4);
+            for (char &c : ext)
+                c = (char)std::tolower((unsigned char)c);
+            if (ext == ".exe")
+                b = b.substr(0, b.size() - 4);
+        }
+        return b.empty() ? std::string("shell") : b;
+    }
+
     // =====================================================================
     //  session — one shell attached to a pty
     // =====================================================================
@@ -255,6 +274,9 @@ namespace app::term
         static constexpr size_t kReadBuf = 32 * 1024;
 
         std::string id, ws, cwd, shell;
+        std::string name;   // display label ("powershell"), set once the shell is spawned
+        std::string reg_key; // registry key of the ws this session belongs to (ws or cwd)
+        long long ord = 0;  // creation order (monotonic): "newest shell of the ws"
         int cols = 80, rows = 24;
         long long pid = 0;
 
@@ -885,6 +907,7 @@ namespace app::term
             r["ws"] = ws;
             r["cwd"] = cwd;
             r["shell"] = shell;
+            r["name"] = name;
             r["cols"] = cols;
             r["rows"] = rows;
             r["pid"] = pid;
@@ -894,7 +917,11 @@ namespace app::term
     };
 
     // =====================================================================
-    //  registry — one live session per workspace, addressable by id
+    //  registry — live sessions, addressable by id
+    //  ---------------------------------------------------------------------
+    //  by_id holds every running shell (a workspace may own several).
+    //  ws_to_id remembers the newest shell of a workspace: plain term.open
+    //  without `id` / `new` still reattaches to it (old single-tab clients).
     // =====================================================================
     struct registry
     {
@@ -923,13 +950,30 @@ namespace app::term
         int rows = clamp_int(jint(args, "rows", 24), 2, 500);
         bool force = jbool(args, "force", false);
         std::string shell_arg = trim_shell(jstr(args, "shell"));
-        // one live shell per workspace; with no workspace selected the resolved
-        // directory is the key, so a client that only passes cwd still reattaches
+        // A workspace may own several shells (the panel keeps one tab per
+        // shell). `new` always spawns a fresh one; `id` attaches to a running
+        // one (refresh / tab switch); neither given = old behaviour: reuse the
+        // newest live shell of the workspace, with $cwd as the fallback key so
+        // a client that only passes cwd still reattaches.
+        bool spawn_new = jbool(args, "new", false);
+        std::string attach_id = jstr(args, "id");
+        std::string want_name = jstr(args, "name");
         std::string key = ws.empty() ? cwd : ws;
 
         registry &r = reg();
         std::shared_ptr<session> s, dead;
         bool announce_dead = false;
+        if (!attach_id.empty())
+        {
+            std::lock_guard<std::mutex> lk(r.mx);
+            auto it = r.by_id.find(attach_id);
+            if (it == r.by_id.end())
+                return terr("unknown terminal session: " + attach_id);
+            if (!it->second->alive.load())
+                return terr("terminal session has exited: " + attach_id);
+            s = it->second;
+        }
+        else if (!spawn_new)
         {
             std::lock_guard<std::mutex> lk(r.mx);
             if (!key.empty())
@@ -971,21 +1015,26 @@ namespace app::term
             fresh->cols = cols;
             fresh->rows = rows;
             fresh->set_post(post);
+            fresh->reg_key = key;
             {
                 std::lock_guard<std::mutex> lk(r.mx);
-                fresh->id = "t" + std::to_string(++r.seq);
+                fresh->ord = ++r.seq;
+                fresh->id = "t" + std::to_string(fresh->ord);
             }
             std::string err;
             if (!fresh->start(shell_arg, err))
                 return terr(err);
+            fresh->name = want_name.empty() ? shell_label(fresh->shell) : want_name;
 
             // Two clients can race term.open for the same workspace while the
             // shell above is being spawned. The registry has the final word:
             // whoever registered first wins and the loser's shell is dropped.
+            // `new:true` opts out of that arbitration — every tab is its own
+            // shell, so it is always registered (and becomes the ws default).
             std::shared_ptr<session> winner;
             {
                 std::lock_guard<std::mutex> lk(r.mx);
-                if (!key.empty())
+                if (!spawn_new && !key.empty())
                 {
                     auto wit = r.ws_to_id.find(key);
                     if (wit != r.ws_to_id.end())
@@ -1101,6 +1150,19 @@ namespace app::term
                 r.by_id.erase(id);
                 for (auto it = r.ws_to_id.begin(); it != r.ws_to_id.end();)
                     it = (it->second == id) ? r.ws_to_id.erase(it) : std::next(it);
+                // The workspace keeps other shells (multi-terminal): the "default"
+                // session of the ws must fall back to the newest one still alive,
+                // otherwise a plain term.open would silently spawn a third shell.
+                if (!s->reg_key.empty() && r.ws_to_id.find(s->reg_key) == r.ws_to_id.end())
+                {
+                    std::shared_ptr<session> best;
+                    for (auto &kv : r.by_id)
+                        if (kv.second->reg_key == s->reg_key && kv.second->alive.load() &&
+                            (!best || kv.second->ord > best->ord))
+                            best = kv.second;
+                    if (best)
+                        r.ws_to_id[s->reg_key] = best->id;
+                }
             }
         }
         if (!s)

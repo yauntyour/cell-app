@@ -139,9 +139,19 @@
 - 最近提交：5 条（短 hash + subject + 相对时间）。
 - 验收：mock 数据下能列出 worktrees、创建流程对话框可打开、点「打开」调用 workspace.open 并切到新工作区。
 
-### 5.4 终端面板（terminal）—— 真实终端（2026-10 重做）
-- 头部：「终端」+ 当前工作区路径（trunc）+ 会话状态徽标（连接中/就绪/已退出(exit N)/不可用）
-  + 复制选中 / 清屏 / 重启三个图标按钮；底部一行快捷键提示。
+### 5.4 终端面板（terminal）—— 真实终端 · 多终端（2026-10 重做）
+- **默认是空的**：面板打开时不自动起 shell，正文是「还没有终端 + 新建终端」空态；
+  用户点按钮（或标题栏 `+`）才有第一个终端。
+- 头部：`▣` + **终端下拉**（当前终端名 + 终端数量徽标 + caret；点开列出本工作区的
+  所有终端，行内可切换、行尾 `■` 单独终止，底部一行「新建终端」）+ 当前工作区路径
+  （trunc）+ 会话状态徽标（连接中/就绪/已退出(exit N)/不可用）+ `+` 新建 / 复制选中 /
+  清屏 / 重启 / **终止**（`■`，danger）图标按钮；底部一行快捷键提示。
+- 多终端：每个页签 = 一个后端会话（`term.open {new:true}`，各自一个读线程），互相
+  独立运行；**切换只是 detach**——非当前终端的 `.ct-root` 从文档里摘掉，输出照常写进
+  它自己的 VT 历史，切回来立刻整屏重绘（不重放 backlog、不重启 shell）。
+  同名终端自动补序号（powershell 1 / powershell 2）。
+- **终止**：头部 `■` 或下拉行尾 `■` → `term.close {id}`，后端关掉 pty 并 join 读线程
+  （整棵进程树一起结束），页签消失、焦点落到相邻终端；关掉最后一个回到空态。
 - 正文不再是「命令表单 + 执行按钮」，而是**真终端**：后端在伪终端（Windows ConPTY /
   POSIX forkpty）上跑常驻 shell，输出以 `term.out`（base64 字节）流式送到页面，
   由 `src/ui/src/js/08c-term.js` 的 VT 模拟器渲染（VT100/xterm 子集：CSI 光标/擦除/
@@ -150,15 +160,17 @@
   ≥2000 行回看（Shift+PgUp/PgDn、滚轮）、Tab 发 0x09 交由 shell 补全、方向键 CSI/SS3、
   Home/End/PgUp/PgDn/Ins/Del/F1-F12、Ctrl+字母、Alt 前缀、Ctrl+Shift+C/V 复制粘贴
   （bracketed paste）、中文 IME（隐藏 textarea 承接 composition）。
-- 生命周期：一个工作区一个会话，切页签/切工作区不重启 shell；面板重绘（包括流式事件
-  触发的 renderDock）就地更新头部、复用同一 DOM 根，不重建终端本体，键盘焦点与选区
-  不丢；页面刷新重新 `term.open`（reused + backlog 重放，seq 去重）；面板宽度变化同步
-  `term.resize` 到 pty。首次挂载时右栏可能还没布局（宽度 0），终端等尺寸就绪后再
-  测量格宽 / 启动 shell，第一帧就按真实 cols 渲染，不会出现 20 列硬折行。
+- 生命周期：切页签/切工作区不重启 shell（终端按 ws 分组，别的 ws 的后台终端也在跑）；
+  面板重绘（包括流式事件触发的 renderDock）就地更新头部、复用同一个 `.ct-root`，
+  不重建终端本体，键盘焦点与选区不丢；页面刷新时先 `term.list` 把该 ws 仍在跑的
+  shell 接管成页签，按 id `term.open {id}`（reused + backlog 重放，seq 去重）；
+  面板宽度变化同步 `term.resize` 到 pty。首次挂载时右栏可能还没布局（宽度 0），终端
+  等尺寸就绪后再测量格宽 / 启动 shell，第一帧就按真实 cols 渲染，不会出现 20 列硬折行。
 - 演示模式（`?mock=1` / file://）：08c-term.js 自带本地假 shell（echo/ls/dir/cd/pwd/
-  date/clear/color + Tab 补全 + ↑↓ 历史 + Ctrl+C），不依赖后端；与真实终端共用完全
-  相同的键盘/渲染路径（Enter 执行、Tab 补全、焦点稳定）。
-- 验收：见 `_scratch/term/CONTRACT.md` §6（15 项后端 + 12 项真浏览器断言）。
+  date/clear/color + Tab 补全 + ↑↓ 历史 + Ctrl+C），不依赖后端；多终端同样成立
+  （每个页签一个假 shell），与真实终端共用完全相同的键盘/渲染路径。
+- 验收：`_scratch/tmp/term-multi.py`（42 项：默认空 / 新建 / 切换 / 后台继续跑 /
+  原地重绘保焦点 / 终止 / 回到空态），另有 `_scratch/term/*` 的后端与浏览器用例。
 
 ### 5.5 回合产物与用量（消息流）
 - 每轮结束后：若本回合有文件改动，在消息流末尾（回合状态行之前）插入「已编辑 N 个文件」卡：头部 </> 图标砖 + 标题 + 汇总 +A -D；分隔线；每行文件名 + 右侧 +A -D（绿/红）；点击行打开 diff 预览（有 git.diff 时）。样式对齐 `_scratch/ref/edited-files.png`。
@@ -236,11 +248,11 @@ fs.list       {cwd?, path?=""} -> {ok, path, entries:[{name,path,dir,size,mtime}
 fs.read       {cwd?, path} -> {ok, path, size, text, binary, truncated, lines}
 fs.find       {cwd?, q, limit?=80} -> {ok, files:[{name,path}]}
 term.exec     {cwd?, cmd, timeout_s?=120} -> {ok, exit_code, output, stderr, duration_ms, truncated}
-term.open     {cwd?, cols?=80, rows?=24, shell?, force?} -> {ok, id, ws, cwd, shell, cols, rows, pid, alive, reused, seq, backlog}
+term.open     {cwd?, cols?=80, rows?=24, shell?, force?, new?, id?, name?} -> {ok, id, ws, cwd, shell, name, cols, rows, pid, alive, reused, seq, backlog}
 term.input    {id, data|text}         -> {ok}          # data = base64 字节
 term.resize   {id, cols, rows}        -> {ok, cols, rows}
 term.close    {id?|ws?}               -> {ok, closed}
-term.list     {ws?}                   -> {ok, sessions:[…]}
+term.list     {ws?}                   -> {ok, sessions:[{id, ws, cwd, shell, name, cols, rows, pid, alive}]}
 # 事件（SSE /api/events）：term.out {ws,id,seq,d:base64} / term.exit {ws,id,code} / term.error {ws,id,error}
 ```
 

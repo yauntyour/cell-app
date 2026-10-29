@@ -154,18 +154,24 @@
 - q 为路径子串（不区分大小写，空串 = 列出前 limit 个文件）；最多扫描 3000 个文件
 - limit 取值 1..500；path 为 cwd 相对 generic 路径
 
-### term.open {cwd?, cols?=80, rows?=24, shell?, force?, ws?}
+### term.open {cwd?, cols?=80, rows?=24, shell?, force?, new?, id?, name?, ws?}
 
 ~~~
--> {ok, id, ws, cwd, shell, cols, rows, pid, alive, reused, seq, backlog}
+-> {ok, id, ws, cwd, shell, name, cols, rows, pid, alive, reused, seq, backlog}
 ~~~
 
-- 启动（或复用）一个**真实终端会话**：常驻 shell 跑在伪终端上（Windows ConPTY /
-  POSIX forkpty），Windows 缺省用 `%COMSPEC%`（cmd.exe），可用 `shell` 覆盖
-- 同一 ws（未传 ws 时以 cwd 为键）已有存活会话且 force!=true 时**复用**，返回
-  `reused:true` 与 `backlog`（最近 ≤512 KiB 原始输出字节的 base64，可为 ""）：
-  页面刷新后靠它重放画面、接到同一个 shell。并发 open 同一个 ws 时注册表只保留一个
-  shell，后到者拿到同一 id（被丢弃的候选进程会被关闭）
+- 启动（或复用/接管）一个**真实终端会话**：常驻 shell 跑在伪终端上（Windows ConPTY /
+  POSIX forkpty），Windows 缺省用 `%COMSPEC%`（cmd.exe），可用 `shell` 覆盖；
+  `name` 是该会话的显示名（缺省取 shell 文件名，如 `powershell`）
+- **一个 ws 可以同时拥有多个 shell**（终端面板每个页签一个，各自一个读线程）：
+  - `new:true` → 一定新开一个（并成为该 ws 的「最新」会话），页签「+」用这个
+  - `id:"t3"` → 接管已在运行的会话：登记新的监听者、必要时 resize，返回
+    `reused:true` 与 `backlog`（页面刷新 / 切页签靠它重放画面）。id 不存在或已退出
+    返回 `{"ok":false,"error":"unknown terminal session: t3"}`
+  - 两者都不传 → 老行为：复用该 ws 最新存活会话（未传 ws 时以 cwd 为键），
+    返回 `reused:true` 与 `backlog`（最近 ≤512 KiB 原始输出字节的 base64，可为 ""）
+- 并发 open 同一个 ws 且都用缺省复用语义时，注册表只保留一个 shell，后到者拿到同一
+  id（被丢弃的候选进程会被关闭）；`new:true` 不参与这个仲裁
 - `force:true` 表示强制换新 shell：旧会话先从注册表移除并关闭，它的订阅者会收到一条
   `term.exit (code 0)`；之后输入旧 id 返回 `unknown terminal session`
 - cols 取值 2..1000（缺省 80；数字字符串也接受），rows 2..500（缺省 24）
@@ -186,7 +192,9 @@
 ### term.close {id?|ws?, ws?} → {ok, closed:true}
 - 关闭是显式结束会话：其它仍连着该会话的客户端会收到一条 `term.exit (code 0)`；
   同一会话的 exit 事件最多一条（子进程自然退出与 close 竞争时不会重复）
-### term.list {ws?} → {ok, sessions:[{id, ws, cwd, shell, cols, rows, pid, alive}]}
+### term.list {ws?} → {ok, sessions:[{id, ws, cwd, shell, name, cols, rows, pid, alive}]}
+- 列出会话（`ws` 相同才返回；可能包含已退出但尚未关闭的会话，`alive:false`）：
+  页面刷新后前端用它把同一工作区的 shell 接管成页签
 
 会话输出**不**通过命令响应返回，而是走既有事件流（`GET /api/events`，即
 core.bus）：前端 `handleEvent` 把 `term.*` 交给 `window.CellTerm.onEvent`。

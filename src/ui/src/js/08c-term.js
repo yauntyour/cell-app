@@ -2,9 +2,12 @@
    08c · 真实终端：VT/xterm 子集模拟器 + 视图 + 会话控制器
    ---------------------------------------------------------------------
    window.CellTerm 是面板（08b-panels.js）唯一入口：
-     mount(rootEl, {ws, cwd, onStatus}) -> view
-     unmount / restart / clearBuffer / focus / refit / copySelection /
-     pasteText / debug / onEvent
+     mount(rootEl, {ws, cwd, onStatus, id?, name?}) -> view
+     unmount / attach / detach / close / restart / clearBuffer / focus /
+     refit / copySelection / pasteText / debug / onEvent
+   一个 view = 一个后端会话（一个独立读线程的 shell）。面板里可以并存多个
+   view：只有当前页签的 view 挂在文档里，其余 detach() 后继续吃输出与回看
+   历史（VT 模型照常更新，只是不渲染），attach() 回来立刻整屏重绘。
    后端（src/cell-app-term.hpp）提供 term.open/input/resize/close 与
    term.out/term.exit/term.error 事件；输出是 base64 字节流，这里用
    TextDecoder(stream) 流式解码，跨 chunk 的 UTF-8 边界不会断字。
@@ -769,6 +772,9 @@
 
   function schedule(view, force) {
     if (force) view.forceRender = true;
+    // 已 detach 的 view（后台页签）继续解析输出，但不画：挂回来时 attach()
+    // 用 schedule(view, true) 整屏重绘一次。
+    if (view.hidden) return;
     if (view.raf) return;
     view.raf = window.requestAnimationFrame(function () {
       view.raf = 0;
@@ -833,7 +839,7 @@
     view.alive = false;
     view.vt.write('\r\n\u001b[90m[进程已退出，exit ' + (e.code == null ? '?' : e.code) + ']\u001b[0m\r\n');
     notify(view, { kind: 'exited', text: '已退出', code: e.code });
-    setStatusBar(view, 'shell 已退出（exit ' + (e.code == null ? '?' : e.code) + '）—— 点右上角 ↻ 重启', false);
+    setStatusBar(view, 'shell 已退出（exit ' + (e.code == null ? '?' : e.code) + '）—— 点“重试”重启', false);
     schedule(view);
   }
   function applyError(view, e) {
@@ -847,7 +853,11 @@
     var geo = geometry(view);
     view.cols = geo.cols; view.rows = geo.rows;
     view.vt.resize(geo.cols, geo.rows);
-    api('term.open', { ws: view.ws, cwd: view.cwd, cols: geo.cols, rows: geo.rows })
+    var payload = { ws: view.ws, cwd: view.cwd, cols: geo.cols, rows: geo.rows };
+    if (view.attachId) payload.id = view.attachId;         // 接管已有会话（刷新 / 切页签）
+    else payload.new = true;                               // 每次新建都是独立 shell
+    if (view.wantName) payload.name = view.wantName;
+    api('term.open', payload)
       .then(function (res) {
         if (!view.removed && view.root) {
           if (!res || res.ok === false) {
@@ -856,14 +866,16 @@
             return;
           }
           view.id = res.id;
+          view.attachId = null;
           view.shellPath = res.shell || '';
+          view.name = res.name || view.wantName || '';
           view.alive = res.alive !== false;
           view.pid = res.pid;
           view.lastSeq = res.seq == null ? 0 : Number(res.seq) || 0;
           views[res.id] = view;
           if (res.backlog) feedBytes(view, b64ToBytes(res.backlog));
           drainPending(view);
-          notify(view, { kind: res.alive === false ? 'exited' : 'ready', text: res.alive === false ? '已退出' : '就绪' });
+          notify(view, { kind: res.alive === false ? 'exited' : 'ready', text: res.alive === false ? '已退出' : '就绪', name: view.name, id: view.id });
           setStatusBar(view, '', false);
           schedule(view, true);
         }
@@ -875,6 +887,7 @@
   }
 
   function applyResize(view) {
+    if (view.hidden) return; // detach 的后台页签：等 attach 时再对齐
     if (!laidOut(view)) return; // 收起 / 重建动画中：先不缩 VT，等 refit / RO 下一次
     var geo = geometry(view);
     if (geo.pending) return;
@@ -977,6 +990,8 @@
       root.classList.remove('focused');
       // 被面板重建摘出文档导致的 blur 记为"想保持焦点"，重新挂载后由
       // CellTerm.refit -> restoreFocus 抢回；用户点别处（节点还连着）则清掉。
+      // detach() 的后台页签（切到别的终端）不算：不要抢用户刚给的焦点。
+      if (view.hidden) { view.wantFocus = false; return; }
       view.wantFocus = !root.isConnected;
     });
     function onKeyDown(ev) {
@@ -1210,7 +1225,11 @@
       id: null, alive: true, removed: false, scrollOffset: 0, onStatus: opts.onStatus,
       decoder: new TextDecoder('utf-8'), status: null, started: false,
       wantFocus: false, cellW: 0, cellH: 0, lastW: 0, lastH: 0,
-      stableRaf: 0, refitRaf: 0,
+      stableRaf: 0, refitRaf: 0, hidden: false,
+      // attachId: 接管一个已在运行的会话（刷新后的重启 / 面板重挂）；
+      // wantName: 交给后端做显示名（默认取 shell 文件名）
+      attachId: opts.id ? String(opts.id) : null, wantName: opts.name ? String(opts.name) : '',
+      name: '', shellPath: '', pid: 0,
     };
     buildDom(view, rootEl);
     view.vt = new Vt(80, 24);
@@ -1244,6 +1263,7 @@
     },
     refit: function (view) {
       if (!view) return;
+      if (view.hidden) return; // detach 的页签不测量（不在文档里，量到 0）
       view.removed = false;
       if (!view.started) return; // 首次测量 / 启动由 mount 的 whenStable 负责
       if (!view.root || !view.root.isConnected) return; // 已脱离：等面板重新挂载时再 refit
@@ -1261,6 +1281,42 @@
       }
       // 换过容器 / 刚重新挂载 / 窗口尺寸变化：等宽度稳定再测量
       whenStable(view, function () { refitNow(view); });
+    },
+    // 多终端切换：把 view 的 DOM 挂进新容器并恢复渲染（不重放 backlog，
+    // VT 历史一直在内存里，挂回来整屏重绘一次即可）。
+    attach: function (view, hostEl) {
+      if (!view || !view.root) return view;
+      if (hostEl && view.root.parentNode !== hostEl) hostEl.appendChild(view.root);
+      view.hidden = false;
+      view.removed = false;
+      if (view.root && view.root.isConnected) {
+        schedule(view, true);
+        CellTerm.refit(view);
+      }
+      return view;
+    },
+    // 切走时只摘 DOM：会话（后端 shell + 读线程）照常跑，输出继续写进 VT。
+    detach: function (view) {
+      if (!view) return;
+      view.hidden = true;
+      view.wantFocus = false;
+      if (view.raf) { try { cancelAnimationFrame(view.raf); } catch (e) {} view.raf = 0; }
+      if (view.ro && view.roT) { clearTimeout(view.roT); view.roT = 0; }
+      try { if (view.root && view.root.parentNode) view.root.parentNode.removeChild(view.root); } catch (e) {}
+    },
+    // 终止会话：关掉后端 shell（读线程随 join 退出）并卸载视图。
+    close: function (view) {
+      if (!view) return Promise.resolve(false);
+      var id = view.id, ws = view.ws, demo = view.demo;
+      view.hidden = false;
+      view.wantFocus = false;
+      view.alive = false;
+      var p = (demo || !id) ? Promise.resolve(true)
+        : api('term.close', { ws: ws, id: id }).then(function () { return true; }, function () { return false; });
+      CellTerm.unmount(view);
+      if (id) delete views[id];
+      view.id = null;
+      return p;
     },
     restart: function (view) {
       if (!view) return Promise.resolve(false);
@@ -1336,7 +1392,8 @@
     },
     debug: function (view) {
       if (!view) {
-        var it = mounted.filter(function (v) { return !v.removed; });
+        var it = mounted.filter(function (v) { return !v.removed && !v.hidden; });
+        if (!it.length) it = mounted.filter(function (v) { return !v.removed; });
         view = it.length ? it[it.length - 1] : null;
       }
       if (!view) return { ok: false, error: 'no mounted terminal' };
@@ -1362,7 +1419,7 @@
     if (winT) clearTimeout(winT);
     winT = setTimeout(function () {
       winT = 0;
-      mounted.forEach(function (v) { if (!v.removed && v.root) CellTerm.refit(v); });
+      mounted.forEach(function (v) { if (!v.removed && !v.hidden && v.root) CellTerm.refit(v); });
     }, 180);
   });
 })();
