@@ -1972,11 +1972,25 @@ namespace app
                 }
                 if (name == "stop")
                 {
-                    std::lock_guard<std::mutex> lk(cmd_mx);
-                    workspace_ctx *c = target_ctx(args);
+                    // 「立刻停止」走快速通道：**不**吃 cmd_mx —— 那把锁可能正被
+                    // models.fetch / workspace.open 这类慢命令占着，而停止必须
+                    // 在毫秒级送达（引擎每 50ms 轮询一次这个标志）。
+                    // ctx_life_mx 只短暂持有：保证 ctx 不会在 request_stop 期间
+                    // 被 workspace.close/delete 删掉（删路径也持这把锁）。
+                    workspace_ctx *c = nullptr;
+                    {
+                        std::lock_guard<std::mutex> life(ctx_life_mx);
+                        c = target_ctx(args);
+                        if (c)
+                        {
+                            c->request_stop();
+                            // 回合可能正卡在审批等待上：连它一起断，否则「停止」
+                            // 要等到用户点掉审批卡才生效
+                            deny_pending_approvals(*c);
+                        }
+                    }
                     if (!c)
                         return ok_error("no workspace open");
-                    c->request_stop();
                     return ok();
                 }
                 if (name == "approve")
@@ -2839,15 +2853,20 @@ namespace app
                 }
                 if (name == "teamwork.stop")
                 {
-                    std::lock_guard<std::mutex> lk(cmd_mx);
-                    workspace_ctx *c = target_ctx(args);
-                    if (!c)
-                        return ok_error("no workspace open");
-                    std::string job_id = args.value("id", "");
+                    // 与 stop 同理：停团队任务也要立刻送达，不排 cmd_mx 的队。
+                    // request_stop 按 job id 操作、bus.post 自带锁，都不需要 ctx
+                    std::string ws_key, job_id = args.value("id", "");
+                    {
+                        std::lock_guard<std::mutex> life(ctx_life_mx);
+                        workspace_ctx *c = target_ctx(args);
+                        if (!c)
+                            return ok_error("no workspace open");
+                        ws_key = c->cwd_key;
+                    }
                     if (job_id.empty())
                         return ok_error("id is required");
                     cell::teamwork::request_stop(job_id);
-                    bus.post({{"t", "teamwork_changed"}, {"ws", c->cwd_key}});
+                    bus.post({{"t", "teamwork_changed"}, {"ws", ws_key}});
                     nlohmann::json r = ok();
                     r["message"] = "stop requested";
                     return r;

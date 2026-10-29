@@ -89,6 +89,20 @@ function ensurePane(ws) {
   const ctitle = el('span', 'cht-title trunc', ''); ctitle.title = ws;
   head.appendChild(ctitle);
   head.appendChild(el('span', 'grow'));
+  // 会话顶栏快捷动作（与 /export、/save、/compact 同源）：都只作用于本工作区，
+  // 危险动作（清空上下文）留在最右边单独一档
+  for (const [icon, tip, act] of [
+    ['download', '导出会话为 HTML（/export）', () => exportSession(tab(ws))],
+    ['archive', '立刻把当前会话写盘（/save）', () => saveSession(ws)],
+    ['layers', '立刻压缩上下文（/compact）', () => compactNow(ws)],
+  ]) {
+    const b = el('button', 'icon-btn sm');
+    b.type = 'button';
+    b.appendChild(iconEl(icon, 'sm'));
+    b.title = tip;
+    b.onclick = ev => { ev.stopPropagation(); act(); };
+    head.appendChild(b);
+  }
   const clearBtn = el('button', 'icon-btn sm', '');
   clearBtn.appendChild(iconEl('trash', 'sm'));
   clearBtn.title = '清空当前会话上下文（/clear，会中断正在进行的回合）';

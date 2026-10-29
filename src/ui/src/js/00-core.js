@@ -408,6 +408,17 @@ function exportSession(t, path) {
     toast('已导出 ' + out.msgs + ' 条消息 → ' + out.path, 'ok', 7000);
   });
 }
+// 立刻压缩上下文（/compact 与顶栏按钮共用）；压缩在 worker 里跑，进度走
+// compact_begin / compact_end 事件，这里只负责投递
+function compactNow(ws) {
+  ws = ws || S.active;
+  return cmd('compact.now', { ws: ws }).then(out => {
+    if (!out || out.ok === false) {
+      const err = String((out && out.error) || '');
+      toast(err.indexOf('a turn is running') >= 0 ? '回合进行中，结束后再压缩' : (err || '压缩启动失败'), 'bad');
+    }
+  });
+}
 function resumeTurn(t) {
   const ws = (t && t.ws) || S.active;
   return cmd('turn.resume', { ws: ws }).then(out => {

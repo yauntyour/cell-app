@@ -864,16 +864,20 @@ async function sendCurrent() {
   focusInput();
 }
 
-// 「停止」= 终止该工作区的全部活动：进行中的回合 + 所有 run 状态的 Teamwork
-// 任务（此前只停回合，后台团队任务会继续跑）。列表现场拉一次为准，t.jobs
-// 可能还没刷新到最新状态。
+// 「停止」= 终止该工作区的全部活动：进行中的回合（含正在跑的工具调用）+
+// 所有处于 run 状态的 Teamwork 任务。回合停止走引擎的取消标志，50ms 内生效；
+// 团队任务并发停，别再一条条串行 await —— 那正是「点了停止还要等一会儿」。
 async function stopAllActivity(t) {
   cmd('stop', { ws: t.ws });
+  // 缓存里已知在跑的先立刻发出去，同时按最新列表校准（这期间可能刚起了新任务）
+  const cached = (t.jobs || []).filter(j => jobStatusClass(j.status) === 'run');
+  const first = Promise.all(cached.map(j => cmd('teamwork.stop', { ws: t.ws, id: j.id })));
   let jobs = t.jobs || [];
   try { const out = await api('teamwork.list', { ws: t.ws }); if (out && out.jobs) jobs = out.jobs; } catch (e) {}
   const running = jobs.filter(j => jobStatusClass(j.status) === 'run');
+  await first;
   if (!running.length) { await refreshTeamworkNow(t.ws, true); return; }
-  for (const j of running) await cmd('teamwork.stop', { ws: t.ws, id: j.id });
+  await Promise.all(running.map(j => cmd('teamwork.stop', { ws: t.ws, id: j.id })));
   toast('已停止 ' + running.length + ' 个团队任务', 'ok');
   // 停止是异步的（runner 下一轮才翻状态）：先立即刷一次，+600ms 再对一次
   await refreshTeamworkNow(t.ws, false, true);
@@ -1881,12 +1885,7 @@ async function execSlash(t, name, arg) {
     case '/compact': {
       // 裸 /compact = 立即压缩当前会话（与 CLI 一致）。压缩在 worker 里跑，
       // 这里只负责投递；进度与结果走 compact_begin / compact_end 事件。
-      if (!arg) return cmd('compact.now', { ws: t.ws }).then(out => {
-        if (!out || out.ok === false) {
-          const err = String((out && out.error) || '');
-          toast(err.indexOf('a turn is running') >= 0 ? '回合进行中，结束后再压缩' : (err || '压缩启动失败'), 'bad');
-        }
-      });
+      if (!arg) return compactNow(t.ws);
       // /compact auto [on|off] 与 /compact [on|off] 都是自动压缩开关
       const m = String(arg).split(/\s+/);
       if (m[0] === 'auto' && !m[1]) {
