@@ -36,6 +36,49 @@
 namespace app
 {
     // =====================================================================
+    //  prefs — the few preferences the SHELL owns. They live next to (not
+    //  inside) cell.cpp's config.json: that file belongs to the agent core,
+    //  which rewrites it wholesale on every save, and the CLI shares it — a
+    //  desktop-only switch must not leak into it. `.cell/cell-app.json` is
+    //  read before the window exists, so the tray behaviour is known by then.
+    // =====================================================================
+    namespace prefs
+    {
+        struct shell
+        {
+            bool tray = true;         // WM_CLOSE parks the window in the notification area
+            bool update_check = true; // ask GitHub for a newer release at startup
+        };
+#ifdef _WIN32
+        constexpr bool kTray = true; // this shell has a notification-area icon
+#else
+        constexpr bool kTray = false;
+#endif
+        inline std::filesystem::path path() { return cell::root / "cell-app.json"; }
+
+        inline shell load()
+        {
+            shell p;
+            std::ifstream f(path(), std::ios::binary);
+            if (!f)
+                return p;
+            auto j = nlohmann::json::parse(f, nullptr, false);
+            if (!j.is_object())
+                return p;
+            p.tray = j.value("tray", p.tray);
+            p.update_check = j.value("update_check", p.update_check);
+            return p;
+        }
+        inline bool save(const shell &p)
+        {
+            std::error_code ec;
+            std::filesystem::create_directories(cell::root, ec);
+            nlohmann::json j{{"tray", p.tray}, {"update_check", p.update_check}};
+            return cell::plat::write_file_atomic(path(), j.dump(2) + "\n");
+        }
+    } // namespace prefs
+
+    // =====================================================================
     //  update — is this exe the newest published build?
     //
     //  The binary carries the short commit hash it was built from
@@ -107,7 +150,10 @@ namespace app
             const std::vector<std::string> hdrs = {"User-Agent: cell-app/" + cur};
             std::string body, err, tag;
             long code = 0;
-            cell::net::CURL_get(c, kLatestUrl, hdrs, body, &code, &err, nullptr, 10);
+            // 8s cap: the app joins this thread on exit (curl must not outlive
+            // curl_global_shutdown), so a dead link may delay a quit by at most
+            // this much — the request is idempotent and silent when it fails
+            cell::net::CURL_get(c, kLatestUrl, hdrs, body, &code, &err, nullptr, 8);
             if (code == 301 || code == 302 || code == 307 || code == 308)
             {
                 char *loc = nullptr;
@@ -257,9 +303,13 @@ namespace app
         cell::config::settings cfg; // global (shared by every workspace)
         cell::encrypt::crypt vault; // global
         event_bus bus;              // global
+        prefs::shell prefs = prefs::load(); // shell switches (tray, update prompt)
         // optional observer for every incoming command name (the smoke tests
         // hook here to detect the page's boot sequence)
         std::function<void(const std::string &)> on_command;
+        // the shell installs the notification-area icon; called when the user
+        // flips the tray switch (empty in --headless: no window, no icon)
+        std::function<void(bool)> on_tray;
 
         // ---- workspace registry -----------------------------------------
         std::mutex ctx_mx;
@@ -487,6 +537,8 @@ namespace app
 
         void start_update_check()
         {
+            if (!prefs.update_check)
+                return; // the reminder is switched off: no request at all
             if (update_thread.joinable())
                 return; // one probe per process
             {
@@ -978,6 +1030,12 @@ namespace app
                                {"current", cur}});
             }
             return arr;
+        }
+        nlohmann::json prefs_json() const
+        {
+            return {{"tray", prefs.tray},
+                    {"update_check", prefs.update_check},
+                    {"tray_supported", prefs::kTray}};
         }
         nlohmann::json settings_json() const
         {
@@ -1553,6 +1611,7 @@ namespace app
             // global as well: the update prompt must show up on a zero-workspace
             // start (the usual launch state)
             st["update"] = update_snapshot();
+            st["prefs"] = prefs_json();
             if (!c)
             {
                 st["session"] = "";
@@ -2166,6 +2225,35 @@ namespace app
                         return ok_with(build_state_for(c, true));
                     }
                     return ok_with(build_state(true));
+                }
+                // ---- shell preferences -------------------------------------
+                // tray parking / update prompt: written to .cell/cell-app.json
+                // so the next launch knows before the window exists
+                if (name == "prefs.set")
+                {
+                    std::lock_guard<std::mutex> lk(cmd_mx);
+                    nlohmann::json patch = args.value("patch", nlohmann::json::object());
+                    if (!patch.is_object())
+                        return ok_error("patch must be an object");
+                    prefs::shell next = prefs;
+                    if (patch.contains("tray"))
+                        next.tray = patch["tray"].get<bool>();
+                    if (patch.contains("update_check"))
+                        next.update_check = patch["update_check"].get<bool>();
+                    if (!prefs::save(next))
+                        return ok_error("could not write cell-app.json");
+                    const bool tray_changed = next.tray != prefs.tray;
+                    const bool update_just_on = next.update_check && !prefs.update_check;
+                    prefs = next;
+                    cell::sys::logger::instance().info(
+                        "app", std::format("prefs: tray={} update_check={}", prefs.tray, prefs.update_check));
+                    if (tray_changed && on_tray)
+                        on_tray(prefs.tray);
+                    if (update_just_on)
+                        start_update_check(); // switched on mid-run: probe now
+                    nlohmann::json r = ok();
+                    r["prefs"] = prefs_json();
+                    return r;
                 }
                 if (name == "settings.get")
                 {

@@ -199,26 +199,29 @@ async function boot() {
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
 else boot();
 
-/* ---------- N. 更新提醒 ----------------------------------------------
+/* ---------- N. 更新提醒 / 桌面壳偏好 ---------------------------------
    后端在进程启动时只查一次（app_core::start_update_check）：本 exe 内置的
-   短提交号 vs GitHub 最新 release 页上的提交号。这里有新版本时把左侧栏
-   「用量」旁的 chip 点亮 —— 从托盘恢复窗口、页面重连都不会重新检查。
+   短提交号 vs GitHub 最新 release 上的 tag（tag 就是短哈希）。有新版本时把
+   左侧栏「用量」旁的 chip 点亮 —— 从托盘恢复窗口、页面重连都不会重新检查。
    结论有两条到达路径：boot 的 state 快照，或检查稍晚完成时的 update 事件。
-   是否显示属于界面偏好（与主题 / 动画等级同源，存 localStorage）。      */
-const UPDATE_REMINDER_KEY = 'cell.updateReminder';
-function updateReminderOn() {
-  try { return localStorage.getItem(UPDATE_REMINDER_KEY) !== 'off'; } catch (e) { return true; }
-}
-function setUpdateReminder(on) {
-  try { localStorage.setItem(UPDATE_REMINDER_KEY, on ? 'on' : 'off'); } catch (e) {}
+
+   开关属于「桌面壳偏好」（S.prefs，落盘 .cell/cell-app.json）：托盘驻留必须
+   在窗口创建前就读到，所以不能和主题那样放 localStorage。              */
+async function setShellPrefs(patch) {
+  const out = await cmd('prefs.set', { patch });
+  if (out && out.ok && out.prefs) {
+    S.prefs = out.prefs;
+    toast('已保存', 'ok');
+  }
   renderUpdateChip();
+  return out;
 }
 
 function renderUpdateChip() {
   const chip = $('#navUpdate');
   if (!chip) return;
   const u = S.update || {};
-  const show = u.state === 'available' && !!u.url && updateReminderOn();
+  const show = u.state === 'available' && !!u.url && (S.prefs || {}).update_check !== false;
   chip.classList.toggle('show', show);
   if (!show) return;
   const cur = u.current ? '当前构建 ' + u.current : '';

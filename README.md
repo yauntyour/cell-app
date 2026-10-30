@@ -8,6 +8,7 @@ One agent runtime, one web UI, several ways to open it:
   ending it — the tray icon restores it (单击) or offers 显示主窗口 / 退出 (右键),
   so running turns, the HTTP service and notice delivery survive; launching the
   exe again restores the hidden window through the single-instance check.
+  Settings → 关于 → 桌面 can turn it off, and then a close simply quits.
   `--headless` and the smoke runs are unaffected.
 - **Web service**: the UI and API exposed over HTTP on `127.0.0.1` only, so a
   browser, a script or another tool on the same machine can drive the same
@@ -47,8 +48,10 @@ The chip opens the release page in the OS default handler — a real browser
 window, never a window derived from the shell (`host_open_url` → `ShellExecuteW`;
 WebView2 has no `NewWindowRequested` handler, so `window.open` there would only
 spawn a child window of the app, hence that fallback is never used in the shell).
-Settings → 关于 → 更新 carries a switch for the reminder itself (on by default,
-stored in the browser profile like the theme / animation level).
+Settings → 关于 → 桌面 carries the shell's own switches (update reminder and tray
+parking, both on by default). They live in `.cell/cell-app.json` next to the exe
+rather than in the browser profile: the tray behaviour has to be known before
+the window exists, and turning the reminder off skips the request entirely.
 
 The check is a single GET against github.com — no token, no API rate limit, no
 HTML parsing: `/releases/latest` redirects to the newest tag and the tag already

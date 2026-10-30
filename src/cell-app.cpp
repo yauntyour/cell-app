@@ -129,6 +129,10 @@ namespace app
         static UINT g_taskbar_created = 0;    // broadcast when Explorer restarts
         static bool g_quitting = false;       // a real close is in flight
         static bool g_balloon = false;        // "still running" hint, shown once
+        // the "close parks in the tray" preference (.cell/cell-app.json). The
+        // window proc stays hooked either way and just consults this flag, so
+        // the setting can be flipped while the app runs.
+        static std::atomic<bool> g_enabled{true};
 
         static NOTIFYICONDATAW icon_data()
         {
@@ -230,7 +234,8 @@ namespace app
             }
             if (g_taskbar_created && msg == g_taskbar_created)
             {
-                add_icon(); // Explorer restarted and took the icon with it
+                if (g_enabled.load())
+                    add_icon(); // Explorer restarted and took the icon with it
                 return 0;
             }
             if (msg == WM_COMMAND)
@@ -250,7 +255,7 @@ namespace app
 
         static LRESULT CALLBACK main_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         {
-            if (msg == WM_CLOSE && !g_quitting)
+            if (msg == WM_CLOSE && !g_quitting && g_enabled.load())
             {
                 ShowWindow(hwnd, SW_HIDE);
                 balloon_once();
@@ -261,7 +266,9 @@ namespace app
 
         // Hook a live webview window: icon + close interception. Must run on
         // the UI thread (the one run() pumps messages on) before run().
-        static bool attach(HWND main)
+        // `enabled` is the persisted preference: off means the hook stays inert
+        // (WM_CLOSE quits) and no icon is installed.
+        static bool attach(HWND main, bool enabled)
         {
             if (!main || g_main)
                 return false;
@@ -288,9 +295,12 @@ namespace app
                                     0, 0, 0, 0, nullptr, nullptr, inst, nullptr);
             if (!g_msg)
                 return false;
+            g_enabled.store(enabled);
             g_taskbar_created = RegisterWindowMessageW(L"TaskbarCreated");
-            if (!add_icon())
+            if (enabled && !add_icon())
             {
+                // no icon means no way back from a hidden window: stay inert
+                g_enabled.store(false);
                 DestroyWindow(g_msg);
                 g_msg = nullptr;
                 return false;
@@ -306,6 +316,25 @@ namespace app
             }
             g_main = main;
             return true;
+        }
+
+        // runtime switch for the preference: the icon comes and goes, the
+        // window proc stays hooked. Turning it off while the window is parked
+        // must not strand it — bring it back before dropping the only way
+        // (the icon) to reach it.
+        static void set_enabled(bool on)
+        {
+            if (g_enabled.exchange(on) == on)
+                return;
+            if (on)
+            {
+                if (!add_icon())
+                    g_enabled.store(false); // no icon = nothing to restore the window with
+                return;
+            }
+            remove_icon();
+            if (g_main && IsWindow(g_main) && !IsWindowVisible(g_main))
+                restore();
         }
 
         static void detach()
@@ -768,10 +797,17 @@ namespace app
                     HWND hwnd = nullptr;
                     if (auto win = w.window(); win.ok())
                         hwnd = reinterpret_cast<HWND>(win.value());
-                    if (tray::attach(hwnd))
+                    // 设置 → 关于 → 桌面 → 关闭窗口后驻留托盘: on parks the app
+                    // in the notification area, off makes a close quit like any
+                    // other window. Flips at runtime dispatch to the UI thread.
+                    core.on_tray = [&w](bool on)
+                    { w.dispatch([on] { tray::set_enabled(on); }); };
+                    if (!tray::attach(hwnd, core.prefs.tray))
+                        log.warn("app", "tray: icon install failed - closing the window will quit");
+                    else if (core.prefs.tray)
                         log.info("app", "tray: closing the window parks the app in the notification area");
                     else
-                        log.warn("app", "tray: icon install failed - closing the window will quit");
+                        log.info("app", "tray: off - closing the window quits");
                 }
 #endif
                 w.run(); // blocks until the window is destroyed (tray → 退出)

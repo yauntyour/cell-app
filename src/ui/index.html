@@ -3545,6 +3545,7 @@ const S = {
   groupsClosed: new Set(),   // 侧栏里被折叠的工作区分组（见 02-render.js）
   pendingApprovals: 0,
   update: null,              // 启动时的更新检查结果（见 09-boot.js），后端只查一次
+  prefs: {},                 // 桌面壳偏好：tray / update_check（.cell/cell-app.json）
 };
 
 function tab(ws) {
@@ -3797,8 +3798,10 @@ function applyHello(st, rebuild, opts) {
   if (st.settings) S.settings = Object.assign({}, S.settings, st.settings);
   if (st.providers) S.providers = st.providers;
   if (Array.isArray(st.tools)) S.tools = true; else if (typeof st.tools === 'boolean') S.tools = st.tools;
-  // 更新检查的结论也是全局的（零工作区启动时唯一可能出现的提示）
-  if (st.update) { S.update = st.update; renderUpdateChip(); }
+  // 更新检查的结论与桌面壳偏好也是全局的（零工作区启动时唯一可能出现的提示）
+  if (st.update) S.update = st.update;
+  if (st.prefs) S.prefs = st.prefs;
+  if (st.update || st.prefs) renderUpdateChip();
 
   let noticesReset = false;
   if (Array.isArray(st.workspaces)) {
@@ -12142,12 +12145,15 @@ function buildAbout(st) {
   hero.appendChild(info);
   s.appendChild(card([hero]));
 
-  // 更新提醒：只是界面偏好（与主题 / 动画等级同源，存本机 localStorage）
-  const remindRow = switchRow('启动时提醒更新', updateReminderOn(), v => {
-    setUpdateReminder(v);
-    toast(v ? '已开启更新提醒' : '已关闭更新提醒', 'ok');
-  }, '启动时比对 GitHub 最新发布的提交短号，有新版本就在左侧栏「用量」旁显示入口');
-  s.appendChild(card([setCardHead('更新'), remindRow]));
+  // 桌面壳偏好（.cell/cell-app.json，随 exe 走，与浏览器 profile 无关）
+  const pf = S.prefs || {};
+  const deskRows = [];
+  if (pf.tray_supported)
+    deskRows.push(switchRow('关闭窗口后驻留托盘', pf.tray !== false, v => setShellPrefs({ tray: v }),
+      '关闭后点托盘图标恢复前台；关掉这个开关，关闭窗口就是退出程序（运行中的回合会中断）。'));
+  deskRows.push(switchRow('启动时提醒更新', pf.update_check !== false, v => setShellPrefs({ update_check: v }),
+    '启动时比对 GitHub 最新发布 tag 里的提交短号，有新版本就在左侧栏「用量」旁显示入口；关闭后不再联网检查。'));
+  if (deskRows.length) s.appendChild(card([setCardHead('桌面'), ...deskRows]));
 
   // 运行状态
   const kv = el('div', 'kv');
@@ -12225,7 +12231,9 @@ function buildAbout(st) {
   const note = el('div', 'themenote');
   note.appendChild(el('span', null, '配置、会话记录、凭据与主题都保存在 exe 目录的 '));
   note.appendChild(el('code', null, '.cell/'));
-  note.appendChild(el('span', null, ' 下（与导出的历史存档同源）。界面设置中的主题与动画等级保存在本机浏览器 localStorage。'));
+  note.appendChild(el('span', null, ' 下（与导出的历史存档同源）。主题与动画等级保存在本机浏览器 localStorage；桌面卡片里的开关存在 '));
+  note.appendChild(el('code', null, '.cell/cell-app.json'));
+  note.appendChild(el('span', null, '（随 exe 走，换浏览器 profile 也不会丢）。'));
   s.appendChild(note);
   return s;
 }
@@ -17734,26 +17742,29 @@ async function boot() {
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
 else boot();
 
-/* ---------- N. 更新提醒 ----------------------------------------------
+/* ---------- N. 更新提醒 / 桌面壳偏好 ---------------------------------
    后端在进程启动时只查一次（app_core::start_update_check）：本 exe 内置的
-   短提交号 vs GitHub 最新 release 页上的提交号。这里有新版本时把左侧栏
-   「用量」旁的 chip 点亮 —— 从托盘恢复窗口、页面重连都不会重新检查。
+   短提交号 vs GitHub 最新 release 上的 tag（tag 就是短哈希）。有新版本时把
+   左侧栏「用量」旁的 chip 点亮 —— 从托盘恢复窗口、页面重连都不会重新检查。
    结论有两条到达路径：boot 的 state 快照，或检查稍晚完成时的 update 事件。
-   是否显示属于界面偏好（与主题 / 动画等级同源，存 localStorage）。      */
-const UPDATE_REMINDER_KEY = 'cell.updateReminder';
-function updateReminderOn() {
-  try { return localStorage.getItem(UPDATE_REMINDER_KEY) !== 'off'; } catch (e) { return true; }
-}
-function setUpdateReminder(on) {
-  try { localStorage.setItem(UPDATE_REMINDER_KEY, on ? 'on' : 'off'); } catch (e) {}
+
+   开关属于「桌面壳偏好」（S.prefs，落盘 .cell/cell-app.json）：托盘驻留必须
+   在窗口创建前就读到，所以不能和主题那样放 localStorage。              */
+async function setShellPrefs(patch) {
+  const out = await cmd('prefs.set', { patch });
+  if (out && out.ok && out.prefs) {
+    S.prefs = out.prefs;
+    toast('已保存', 'ok');
+  }
   renderUpdateChip();
+  return out;
 }
 
 function renderUpdateChip() {
   const chip = $('#navUpdate');
   if (!chip) return;
   const u = S.update || {};
-  const show = u.state === 'available' && !!u.url && updateReminderOn();
+  const show = u.state === 'available' && !!u.url && (S.prefs || {}).update_check !== false;
   chip.classList.toggle('show', show);
   if (!show) return;
   const cur = u.current ? '当前构建 ' + u.current : '';

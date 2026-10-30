@@ -809,12 +809,15 @@ function buildAbout(st) {
   hero.appendChild(info);
   s.appendChild(card([hero]));
 
-  // 更新提醒：只是界面偏好（与主题 / 动画等级同源，存本机 localStorage）
-  const remindRow = switchRow('启动时提醒更新', updateReminderOn(), v => {
-    setUpdateReminder(v);
-    toast(v ? '已开启更新提醒' : '已关闭更新提醒', 'ok');
-  }, '启动时比对 GitHub 最新发布的提交短号，有新版本就在左侧栏「用量」旁显示入口');
-  s.appendChild(card([setCardHead('更新'), remindRow]));
+  // 桌面壳偏好（.cell/cell-app.json，随 exe 走，与浏览器 profile 无关）
+  const pf = S.prefs || {};
+  const deskRows = [];
+  if (pf.tray_supported)
+    deskRows.push(switchRow('关闭窗口后驻留托盘', pf.tray !== false, v => setShellPrefs({ tray: v }),
+      '关闭后点托盘图标恢复前台；关掉这个开关，关闭窗口就是退出程序（运行中的回合会中断）。'));
+  deskRows.push(switchRow('启动时提醒更新', pf.update_check !== false, v => setShellPrefs({ update_check: v }),
+    '启动时比对 GitHub 最新发布 tag 里的提交短号，有新版本就在左侧栏「用量」旁显示入口；关闭后不再联网检查。'));
+  if (deskRows.length) s.appendChild(card([setCardHead('桌面'), ...deskRows]));
 
   // 运行状态
   const kv = el('div', 'kv');
@@ -892,7 +895,9 @@ function buildAbout(st) {
   const note = el('div', 'themenote');
   note.appendChild(el('span', null, '配置、会话记录、凭据与主题都保存在 exe 目录的 '));
   note.appendChild(el('code', null, '.cell/'));
-  note.appendChild(el('span', null, ' 下（与导出的历史存档同源）。界面设置中的主题与动画等级保存在本机浏览器 localStorage。'));
+  note.appendChild(el('span', null, ' 下（与导出的历史存档同源）。主题与动画等级保存在本机浏览器 localStorage；桌面卡片里的开关存在 '));
+  note.appendChild(el('code', null, '.cell/cell-app.json'));
+  note.appendChild(el('span', null, '（随 exe 走，换浏览器 profile 也不会丢）。'));
   s.appendChild(note);
   return s;
 }

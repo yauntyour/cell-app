@@ -358,6 +358,7 @@ const S = {
   groupsClosed: new Set(),   // 侧栏里被折叠的工作区分组（见 02-render.js）
   pendingApprovals: 0,
   update: null,              // 启动时的更新检查结果（见 09-boot.js），后端只查一次
+  prefs: {},                 // 桌面壳偏好：tray / update_check（.cell/cell-app.json）
 };
 
 function tab(ws) {
@@ -610,8 +611,10 @@ function applyHello(st, rebuild, opts) {
   if (st.settings) S.settings = Object.assign({}, S.settings, st.settings);
   if (st.providers) S.providers = st.providers;
   if (Array.isArray(st.tools)) S.tools = true; else if (typeof st.tools === 'boolean') S.tools = st.tools;
-  // 更新检查的结论也是全局的（零工作区启动时唯一可能出现的提示）
-  if (st.update) { S.update = st.update; renderUpdateChip(); }
+  // 更新检查的结论与桌面壳偏好也是全局的（零工作区启动时唯一可能出现的提示）
+  if (st.update) S.update = st.update;
+  if (st.prefs) S.prefs = st.prefs;
+  if (st.update || st.prefs) renderUpdateChip();
 
   let noticesReset = false;
   if (Array.isArray(st.workspaces)) {
