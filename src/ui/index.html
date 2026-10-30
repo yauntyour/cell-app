@@ -372,6 +372,12 @@ select{appearance:none;background-image:url("data:image/svg+xml;charset=utf-8,%3
 .sb-uchip.has-val .sb-uval{color:var(--fg3)}
 .sb-uchip:hover .sb-uval{color:var(--fg)}
 .sb-uchip.on .sb-uval{color:inherit}
+/* 更新提醒 chip（紧跟用量 chip；只在有新版本、且设置里开着提醒时出现，
+   见 09-boot.js 的 renderUpdateChip）*/
+#navUpdate{display:none;color:var(--accent);background:var(--accent-soft);border-color:transparent}
+#navUpdate.show{display:inline-flex}
+#navUpdate .sb-uval{color:inherit;font-family:inherit;font-size:11px;font-weight:600}
+#navUpdate:hover{color:var(--accent-hi);background:var(--accent-soft);border-color:var(--accent-soft)}
 /* 3.4 右侧面板外壳 -------------------------------------------------- */
 .dockhead{height:46px;flex:none;display:flex;align-items:center;gap:6px;padding:0 8px 0 10px;
   border-bottom:1px solid var(--line);background:var(--bg)}
@@ -509,15 +515,6 @@ select{appearance:none;background-image:url("data:image/svg+xml;charset=utf-8,%3
   box-shadow:var(--shadow-sm);white-space:nowrap;max-width:min(420px,calc(100vw - 780px));
   overflow:hidden;text-overflow:ellipsis}
 #banner.show{display:block}
-/* 更新提示条：占位在顶栏之下（不浮动、不遮内容），只在有新版本时出现 */
-#updateBar{display:none;flex:none;align-items:center;gap:10px;height:34px;
-  padding:0 8px 0 12px;background:var(--accent-soft);border-bottom:1px solid var(--line);
-  color:var(--fg2);font-size:12px;animation:fadeUp 180ms var(--ease)}
-#updateBar.show{display:flex}
-#updateBar .ub-ico{display:flex;flex:none;color:var(--accent)}
-#updateBar .ub-text{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-#updateBar .ub-text b{color:var(--fg);font-weight:600}
-#updateBar .ub-ver{font-family:var(--mono);color:var(--fg3)}
 #reconnect{position:absolute;left:50%;bottom:14px;transform:translateX(-50%);z-index:70;
   padding:6px 14px;border-radius:var(--radius-full);background:var(--panel2);border:1px solid var(--line2);
   color:var(--warn);font-size:12px;box-shadow:var(--shadow-sm);display:none}
@@ -3062,6 +3059,10 @@ mark{background:var(--accent-soft);color:var(--accent);border-radius:3px;padding
             <svg class="uico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 20V11M9.75 20V5M15 20v-6M20.25 20V8.5"/><path d="M2.5 20h19"/></svg>
             <span class="sb-uval" id="navUsageVal">—</span>
           </button>
+          <button class="icon-btn sm sb-uchip" id="navUpdate" title="有新版本" aria-label="有新版本，前往下载">
+            <svg class="uico" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5M12 15V3"/></svg>
+            <span class="sb-uval">更新</span>
+          </button>
           <span class="grow"></span>
           <button class="icon-btn sm docktoggle" id="navDock" title="打开面板" aria-pressed="false">
             <svg class="uico" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M15 3v18"/></svg>
@@ -3096,8 +3097,6 @@ mark{background:var(--accent-soft);color:var(--accent);border-radius:3px;padding
           </button>
         </div>
       </header>
-
-      <div id="updateBar"></div>
 
       <div id="workarea">
         <div id="centre">
@@ -3546,7 +3545,6 @@ const S = {
   groupsClosed: new Set(),   // 侧栏里被折叠的工作区分组（见 02-render.js）
   pendingApprovals: 0,
   update: null,              // 启动时的更新检查结果（见 09-boot.js），后端只查一次
-  updateClosed: false,       // 本次运行关掉了更新提示条
 };
 
 function tab(ws) {
@@ -3733,7 +3731,7 @@ function handleEvent(e) {
     case 'tool_begin': onToolBegin(e); break;
     case 'tool_end': onToolEnd(e); break;
     case 'notice': onNotice(e); break;
-    case 'update': S.update = e; renderUpdateBar(); break;
+    case 'update': S.update = e; renderUpdateChip(); break;
     case 'approval': onApproval(e); break;
     case 'approval_resolved': onApprovalResolved(e); break;
     case 'teamwork_changed': case 'workspace_state':
@@ -3800,7 +3798,7 @@ function applyHello(st, rebuild, opts) {
   if (st.providers) S.providers = st.providers;
   if (Array.isArray(st.tools)) S.tools = true; else if (typeof st.tools === 'boolean') S.tools = st.tools;
   // 更新检查的结论也是全局的（零工作区启动时唯一可能出现的提示）
-  if (st.update) { S.update = st.update; renderUpdateBar(); }
+  if (st.update) { S.update = st.update; renderUpdateChip(); }
 
   let noticesReset = false;
   if (Array.isArray(st.workspaces)) {
@@ -12144,6 +12142,13 @@ function buildAbout(st) {
   hero.appendChild(info);
   s.appendChild(card([hero]));
 
+  // 更新提醒：只是界面偏好（与主题 / 动画等级同源，存本机 localStorage）
+  const remindRow = switchRow('启动时提醒更新', updateReminderOn(), v => {
+    setUpdateReminder(v);
+    toast(v ? '已开启更新提醒' : '已关闭更新提醒', 'ok');
+  }, '启动时比对 GitHub 最新发布的提交短号，有新版本就在左侧栏「用量」旁显示入口');
+  s.appendChild(card([setCardHead('更新'), remindRow]));
+
   // 运行状态
   const kv = el('div', 'kv');
   const curProvider = (S.providers || []).find(p => p.current);
@@ -17550,6 +17555,7 @@ function wireEvents() {
   $('#navRefresh').onclick = () => Nav.refresh();
   $('#navHome').onclick = () => Nav.home();
   $('#navUsage').onclick = () => toggleUsagePop();
+  $('#navUpdate').onclick = () => openReleasePage((S.update || {}).url);
   $('#navDock').onclick = () => toggleDock();
   $('#btnTopDock').onclick = () => toggleDock();
   $('#dockClose').onclick = () => closeDock();
@@ -17728,43 +17734,42 @@ async function boot() {
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
 else boot();
 
-/* ---------- N. 更新提示 ----------------------------------------------
+/* ---------- N. 更新提醒 ----------------------------------------------
    后端在进程启动时只查一次（app_core::start_update_check）：本 exe 内置的
-   短提交号 vs GitHub 最新 release 页上的提交号。这里只把结论画成顶栏下方
-   的一条可关闭横条 —— 从托盘恢复窗口、页面重连都不会重新检查。
-   结论有两条到达路径：boot 的 state 快照，或检查稍晚完成时的 update 事件。 */
-function renderUpdateBar() {
-  const host = $('#updateBar');
-  if (!host) return;
-  const u = S.update || {};
-  if (u.state !== 'available' || !u.url || S.updateClosed) { host.classList.remove('show'); return; }
-  if (!host.firstChild) {
-    const ic = el('span', 'ub-ico');
-    ic.appendChild(iconEl('download', 'sm'));
-    host.appendChild(ic);
-    host.appendChild(el('span', 'ub-text'));
-    const go = el('button', 'btn sm accent', '前往下载');
-    go.title = '在浏览器中打开最新版本的发布页；下载后替换同目录下的可执行文件';
-    go.onclick = () => openReleasePage((S.update || {}).url);
-    host.appendChild(go);
-    const close = el('button', 'icon-btn sm');
-    close.title = '关闭（本次运行不再提示）';
-    close.appendChild(iconEl('x', 'sm'));
-    close.onclick = () => { S.updateClosed = true; renderUpdateBar(); };
-    host.appendChild(close);
-  }
-  const txt = $('.ub-text', host);
-  txt.innerHTML = '有新版本 <b>' + esc(u.latest_tag || '') + '</b>'
-    + (u.current ? ' · 当前构建 <span class="ub-ver">' + esc(u.current) + '</span>' : '');
-  host.classList.add('show');
+   短提交号 vs GitHub 最新 release 页上的提交号。这里有新版本时把左侧栏
+   「用量」旁的 chip 点亮 —— 从托盘恢复窗口、页面重连都不会重新检查。
+   结论有两条到达路径：boot 的 state 快照，或检查稍晚完成时的 update 事件。
+   是否显示属于界面偏好（与主题 / 动画等级同源，存 localStorage）。      */
+const UPDATE_REMINDER_KEY = 'cell.updateReminder';
+function updateReminderOn() {
+  try { return localStorage.getItem(UPDATE_REMINDER_KEY) !== 'off'; } catch (e) { return true; }
+}
+function setUpdateReminder(on) {
+  try { localStorage.setItem(UPDATE_REMINDER_KEY, on ? 'on' : 'off'); } catch (e) {}
+  renderUpdateChip();
 }
 
-// 下载页交给系统浏览器：桌面壳里是 host_open_url 绑定（WebView2 没有
-// NewWindowRequested 处理，window.open 会被静默丢弃），普通浏览器退回新标签页
+function renderUpdateChip() {
+  const chip = $('#navUpdate');
+  if (!chip) return;
+  const u = S.update || {};
+  const show = u.state === 'available' && !!u.url && updateReminderOn();
+  chip.classList.toggle('show', show);
+  if (!show) return;
+  const cur = u.current ? '当前构建 ' + u.current : '';
+  chip.title = '有新版本 ' + (u.latest_tag || '') + (cur ? '（' + cur + '）' : '') + ' · 点击前往下载';
+}
+
+// 下载页交给系统默认浏览器：桌面壳里走 host_open_url 绑定（ShellExecuteW，
+// 起的是真正的浏览器进程）；WebView2 没有 NewWindowRequested 处理，window.open
+// 只会开出壳自己的派生窗口，所以壳里失败就只提示链接，绝不退回 window.open。
 async function openReleasePage(url) {
   if (!url) return;
   if (typeof window.host_open_url === 'function') {
-    try { const r = await window.host_open_url(url); if (r && r.ok) return; } catch (e) {}
+    let ok = false;
+    try { const r = await window.host_open_url(url); ok = !!(r && r.ok); } catch (e) {}
+    if (!ok) toast('无法唤起浏览器，请手动打开：' + url, 'bad', 9000);
+    return;
   }
   if (!window.open(url, '_blank', 'noopener')) toast('请手动打开：' + url, 'info', 8000);
 }

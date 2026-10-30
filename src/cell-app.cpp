@@ -38,13 +38,14 @@
 namespace app
 {
     // =====================================================================
-    //  open_url — hand a web link to the OS default handler. The page cannot
-    //  do it itself: WebView2 suppresses window.open without a
-    //  NewWindowRequested handler, and a popup blocker would eat it in a
-    //  browser. Only http(s) and only characters that are safe to hand to a
-    //  shell — the link comes from a remote page.
+    //  open_url — hand a web link to the OS default handler, i.e. a real
+    //  browser process (ShellExecuteW / xdg-open / open), never a window
+    //  derived from the shell: WebView2 has no NewWindowRequested handler, so
+    //  window.open there only ever spawns a child window of this app.
+    //  Only http(s) and only characters that are safe to hand to a shell —
+    //  the link comes from a remote page.
     // =====================================================================
-    static bool open_url(const std::string &url)
+    static bool open_url(const std::string &url, void *owner)
     {
         if (url.rfind("https://", 0) != 0 && url.rfind("http://", 0) != 0)
             return false;
@@ -53,11 +54,15 @@ namespace app
                 return false;
 #ifdef _WIN32
         const std::wstring w = cell::plat::utf8_to_wide(url);
-        return reinterpret_cast<INT_PTR>(
-                   ShellExecuteW(nullptr, L"open", w.c_str(), nullptr, nullptr, SW_SHOWNORMAL)) > 32;
+        // `open` = the user's default handler for the protocol, so the default
+        // browser comes up as its own window; owner only anchors any dialog
+        return reinterpret_cast<INT_PTR>(ShellExecuteW(reinterpret_cast<HWND>(owner), L"open", w.c_str(),
+                                                       nullptr, nullptr, SW_SHOWNORMAL)) > 32;
 #elif defined(__APPLE__)
+        (void)owner;
         return std::system(("open '" + url + "' >/dev/null 2>&1").c_str()) == 0;
 #else
+        (void)owner;
         return std::system(("xdg-open '" + url + "' >/dev/null 2>&1 &").c_str()) == 0;
 #endif
     }
@@ -719,10 +724,14 @@ namespace app
                         owner = reinterpret_cast<HWND>(win.value());
                     return pick_folder(owner); });
 #endif
-                // host_open_url — the update bar's 前往下载: the page hands the
-                // release link over and the shell pops the system browser.
-                w.bind("host_open_url", [](std::string url) -> std::string
-                       { return open_url(url) ? "{\"ok\":true}" : "{\"ok\":false}"; });
+                // host_open_url — the update chip: the page hands the release
+                // link over and the shell pops the user's default browser
+                w.bind("host_open_url", [&w](std::string url) -> std::string
+                       {
+                    void *owner = nullptr;
+                    if (auto win = w.window(); win.ok())
+                        owner = reinterpret_cast<void *>(win.value());
+                    return open_url(url, owner) ? "{\"ok\":true}" : "{\"ok\":false}"; });
 
                 if (served)
                 {

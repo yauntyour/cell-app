@@ -127,6 +127,12 @@
 .sb-uchip.has-val .sb-uval{color:var(--fg3)}
 .sb-uchip:hover .sb-uval{color:var(--fg)}
 .sb-uchip.on .sb-uval{color:inherit}
+/* 更新提醒 chip（紧跟用量 chip；只在有新版本、且设置里开着提醒时出现，
+   见 09-boot.js 的 renderUpdateChip）*/
+#navUpdate{display:none;color:var(--accent);background:var(--accent-soft);border-color:transparent}
+#navUpdate.show{display:inline-flex}
+#navUpdate .sb-uval{color:inherit;font-family:inherit;font-size:11px;font-weight:600}
+#navUpdate:hover{color:var(--accent-hi);background:var(--accent-soft);border-color:var(--accent-soft)}
 /* 3.4 右侧面板外壳 -------------------------------------------------- */
 .dockhead{height:46px;flex:none;display:flex;align-items:center;gap:6px;padding:0 8px 0 10px;
   border-bottom:1px solid var(--line);background:var(--bg)}

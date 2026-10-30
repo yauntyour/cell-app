@@ -809,6 +809,13 @@ function buildAbout(st) {
   hero.appendChild(info);
   s.appendChild(card([hero]));
 
+  // 更新提醒：只是界面偏好（与主题 / 动画等级同源，存本机 localStorage）
+  const remindRow = switchRow('启动时提醒更新', updateReminderOn(), v => {
+    setUpdateReminder(v);
+    toast(v ? '已开启更新提醒' : '已关闭更新提醒', 'ok');
+  }, '启动时比对 GitHub 最新发布的提交短号，有新版本就在左侧栏「用量」旁显示入口');
+  s.appendChild(card([setCardHead('更新'), remindRow]));
+
   // 运行状态
   const kv = el('div', 'kv');
   const curProvider = (S.providers || []).find(p => p.current);

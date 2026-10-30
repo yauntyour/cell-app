@@ -62,15 +62,6 @@
   box-shadow:var(--shadow-sm);white-space:nowrap;max-width:min(420px,calc(100vw - 780px));
   overflow:hidden;text-overflow:ellipsis}
 #banner.show{display:block}
-/* 更新提示条：占位在顶栏之下（不浮动、不遮内容），只在有新版本时出现 */
-#updateBar{display:none;flex:none;align-items:center;gap:10px;height:34px;
-  padding:0 8px 0 12px;background:var(--accent-soft);border-bottom:1px solid var(--line);
-  color:var(--fg2);font-size:12px;animation:fadeUp 180ms var(--ease)}
-#updateBar.show{display:flex}
-#updateBar .ub-ico{display:flex;flex:none;color:var(--accent)}
-#updateBar .ub-text{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-#updateBar .ub-text b{color:var(--fg);font-weight:600}
-#updateBar .ub-ver{font-family:var(--mono);color:var(--fg3)}
 #reconnect{position:absolute;left:50%;bottom:14px;transform:translateX(-50%);z-index:70;
   padding:6px 14px;border-radius:var(--radius-full);background:var(--panel2);border:1px solid var(--line2);
   color:var(--warn);font-size:12px;box-shadow:var(--shadow-sm);display:none}

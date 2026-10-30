@@ -18,6 +18,10 @@
 #                              supports C++26 and Apple SDK headers)
 #
 # All three toolchains target C++26 (CELL_CXX_STANDARD=26).
+#
+# The release tag is the short commit hash the binaries were built from
+# (v0320cc6) — the tag is the build identity, not a timestamp, so a re-run of
+# the same commit updates that release instead of creating a second one.
 # =============================================================================
 
 name: cmake-multi-platform
@@ -332,7 +336,12 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           chmod +x dist/* || true     # artifact upload/download drops the exec bit
-          tag="v$(date -u +%Y.%m.%d)-$(date -u +%H%M)"
+          # the tag IS the build identity: the short commit hash the binaries
+          # were compiled from (same value CMake bakes into cell-build-info.hpp,
+          # and the one the app's update check compares against). No timestamp:
+          # a re-run of the same commit updates that release instead of adding a
+          # second name for identical code.
+          tag="v${GITHUB_SHA::7}"
           if gh release view "$tag" >/dev/null 2>&1; then
             gh release upload "$tag" dist/* --clobber
           else

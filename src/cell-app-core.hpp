@@ -39,35 +39,23 @@ namespace app
     //  update — is this exe the newest published build?
     //
     //  The binary carries the short commit hash it was built from
-    //  (cell-build-info.hpp). GitHub serves the newest release at a stable
-    //  URL that redirects to /releases/tag/<tag>, and that page names the
-    //  commit the release was built from (<a href="/commit/<sha>">), so two
-    //  plain GETs answer the question: the same short hash means the newest
-    //  release *is* this build.
+    //  (cell-build-info.hpp). Every release is tagged with exactly that hash
+    //  (v0320cc6, see the workflow's publish step), so one GET answers the
+    //  question: /releases/latest redirects to the newest tag, and the tag is
+    //  the commit it was built from. Same short hash = this build IS the
+    //  newest release. No tag format of its own to keep in sync — the tag and
+    //  the build identity are the same string.
     //
-    //  Deliberately not the REST API: github.com's HTML needs no token and
-    //  has none of the API's 60 requests/hour limit, which a desktop app
-    //  restarting all day would eventually hit.
+    //  Deliberately not the REST API: github.com needs no token and has none
+    //  of the API's 60 requests/hour limit, which a desktop app restarting all
+    //  day would eventually hit.
     // =====================================================================
     namespace update
     {
         constexpr const char *kLatestUrl = "https://github.com/yauntyour/cell-app/releases/latest";
         constexpr const char *kTagUrl = "https://github.com/yauntyour/cell-app/releases/tag/";
 
-        // first hex run of the first /commit/<sha> link on a release page
-        inline std::string page_commit(const std::string &html)
-        {
-            size_t at = html.find("/commit/");
-            if (at == std::string::npos)
-                return "";
-            at += 8; // strlen("/commit/")
-            size_t n = 0;
-            while (at + n < html.size() && n < 40 && std::isxdigit((unsigned char)html[at + n]))
-                n++;
-            return n >= 7 ? html.substr(at, n) : "";
-        }
-
-        // …/releases/tag/v2026.10.29-1613 → v2026.10.29-1613
+        // …/releases/tag/v0320cc6 → v0320cc6 (the tag is the build's short hash)
         inline std::string tag_of(const std::string &url)
         {
             size_t at = url.find("/releases/tag/");
@@ -78,17 +66,30 @@ namespace app
             return url.substr(at, end == std::string::npos ? std::string::npos : end - at);
         }
 
+        // v0320cc6 → 0320cc6. Anything that is not "v" + hex is not a build
+        // identity: there is no second tag scheme to fall back to.
+        inline std::string hash_of(const std::string &tag)
+        {
+            std::string_view h(tag);
+            if (h.starts_with('v'))
+                h.remove_prefix(1);
+            if (h.size() < 7 || h.size() > 40)
+                return "";
+            for (char c : h)
+                if (!std::isxdigit((unsigned char)c))
+                    return "";
+            return std::string(h);
+        }
+
         // One probe. state: "current" (this build is the newest release) /
-        // "available" (a newer one is published) / "error" (offline, or the
-        // release page did not say which commit it was built from — never
-        // guess, an update prompt must not fire on a bad guess).
+        // "available" (a newer commit is published) / "error" (offline, or the
+        // tag carries no commit hash — no verdict rather than a guess).
         inline nlohmann::json probe()
         {
             nlohmann::json r;
             const std::string cur = app::build::commit;
             r["state"] = "error";
             r["current"] = cur;
-            r["current_tag"] = app::build::tag;
             r["current_date"] = app::build::date;
             if (cur.empty())
             {
@@ -101,13 +102,11 @@ namespace app
                 r["error"] = "curl init failed";
                 return r;
             }
+            // the stable link answers 301 to the newest tag; CURL_get does not
+            // follow redirects, so read the target off the handle
             const std::vector<std::string> hdrs = {"User-Agent: cell-app/" + cur};
-            std::string err;
+            std::string body, err, tag;
             long code = 0;
-
-            // 1) the stable link answers 301 to the newest tag; CURL_get does
-            //    not follow redirects, so read the target off the handle
-            std::string body, tag;
             cell::net::CURL_get(c, kLatestUrl, hdrs, body, &code, &err, nullptr, 10);
             if (code == 301 || code == 302 || code == 307 || code == 308)
             {
@@ -115,44 +114,22 @@ namespace app
                 if (curl_easy_getinfo(c, CURLINFO_REDIRECT_URL, &loc) == CURLE_OK && loc)
                     tag = tag_of(loc); // relative targets never happen on github.com
             }
+            curl_easy_cleanup(c);
             if (tag.empty())
             {
                 r["error"] = err.empty() ? std::format("HTTP {} from {}", code, kLatestUrl) : err;
-                curl_easy_cleanup(c);
                 return r;
             }
-
-            // 2) the tag page names the commit the release was built from
-            const std::string url = std::string(kTagUrl) + tag;
-            std::string html;
-            err.clear();
-            code = 0;
-            bool ok = cell::net::CURL_get(c, url.c_str(), hdrs, html, &code, &err, nullptr, 10);
-            curl_easy_cleanup(c);
             r["latest_tag"] = tag;
-            r["url"] = url;
-            if (!ok || code != 200)
+            r["url"] = std::string(kTagUrl) + tag;
+            const std::string hash = hash_of(tag);
+            if (hash.empty())
             {
-                r["error"] = err.empty() ? std::format("HTTP {} from {}", code, url) : err;
+                r["error"] = std::format("release tag '{}' is not a commit hash", tag);
                 return r;
             }
-            const std::string sha = page_commit(html);
-            if (!sha.empty())
-                r["latest_hash"] = sha.substr(0, std::min(sha.size(), cur.size()));
-            // the page names the commit the release was built from; that short
-            // hash is the verdict. The tag is only a fallback for a page that
-            // names none (a build made exactly at that tag *is* that release).
-            bool same = false;
-            if (!sha.empty())
-                same = sha.size() >= cur.size() && sha.compare(0, cur.size(), cur) == 0;
-            else if (*app::build::tag && tag == app::build::tag)
-                same = true;
-            else
-            {
-                r["error"] = "the release page names no commit";
-                return r;
-            }
-            r["state"] = same ? "current" : "available";
+            r["latest_hash"] = hash.substr(0, std::min(hash.size(), cur.size()));
+            r["state"] = hash.compare(0, cur.size(), cur) == 0 ? "current" : "available";
             return r;
         }
     } // namespace update
