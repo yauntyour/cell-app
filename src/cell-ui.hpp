@@ -516,6 +516,15 @@ select{appearance:none;background-image:url("data:image/svg+xml;charset=utf-8,%3
   box-shadow:var(--shadow-sm);white-space:nowrap;max-width:min(420px,calc(100vw - 780px));
   overflow:hidden;text-overflow:ellipsis}
 #banner.show{display:block}
+/* 更新提示条：占位在顶栏之下（不浮动、不遮内容），只在有新版本时出现 */
+#updateBar{display:none;flex:none;align-items:center;gap:10px;height:34px;
+  padding:0 8px 0 12px;background:var(--accent-soft);border-bottom:1px solid var(--line);
+  color:var(--fg2);font-size:12px;animation:fadeUp 180ms var(--ease)}
+#updateBar.show{display:flex}
+#updateBar .ub-ico{display:flex;flex:none;color:var(--accent)}
+#updateBar .ub-text{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#updateBar .ub-text b{color:var(--fg);font-weight:600}
+#updateBar .ub-ver{font-family:var(--mono);color:var(--fg3)}
 #reconnect{position:absolute;left:50%;bottom:14px;transform:translateX(-50%);z-index:70;
   padding:6px 14px;border-radius:var(--radius-full);background:var(--panel2);border:1px solid var(--line2);
   color:var(--warn);font-size:12px;box-shadow:var(--shadow-sm);display:none}
@@ -3095,6 +3104,8 @@ mark{background:var(--accent-soft);color:var(--accent);border-radius:3px;padding
         </div>
       </header>
 
+      <div id="updateBar"></div>
+
       <div id="workarea">
         <div id="centre">
           <div id="tabview"></div>
@@ -3541,6 +3552,8 @@ const S = {
   closedTabs: [], tabMenuNode: null,
   groupsClosed: new Set(),   // 侧栏里被折叠的工作区分组（见 02-render.js）
   pendingApprovals: 0,
+  update: null,              // 启动时的更新检查结果（见 09-boot.js），后端只查一次
+  updateClosed: false,       // 本次运行关掉了更新提示条
 };
 
 function tab(ws) {
@@ -3727,6 +3740,7 @@ function handleEvent(e) {
     case 'tool_begin': onToolBegin(e); break;
     case 'tool_end': onToolEnd(e); break;
     case 'notice': onNotice(e); break;
+    case 'update': S.update = e; renderUpdateBar(); break;
     case 'approval': onApproval(e); break;
     case 'approval_resolved': onApprovalResolved(e); break;
     case 'teamwork_changed': case 'workspace_state':
@@ -3792,6 +3806,8 @@ function applyHello(st, rebuild, opts) {
   if (st.settings) S.settings = Object.assign({}, S.settings, st.settings);
   if (st.providers) S.providers = st.providers;
   if (Array.isArray(st.tools)) S.tools = true; else if (typeof st.tools === 'boolean') S.tools = st.tools;
+  // 更新检查的结论也是全局的（零工作区启动时唯一可能出现的提示）
+  if (st.update) { S.update = st.update; renderUpdateBar(); }
 
   let noticesReset = false;
   if (Array.isArray(st.workspaces)) {
@@ -17718,6 +17734,47 @@ async function boot() {
 
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
 else boot();
+
+/* ---------- N. 更新提示 ----------------------------------------------
+   后端在进程启动时只查一次（app_core::start_update_check）：本 exe 内置的
+   短提交号 vs GitHub 最新 release 页上的提交号。这里只把结论画成顶栏下方
+   的一条可关闭横条 —— 从托盘恢复窗口、页面重连都不会重新检查。
+   结论有两条到达路径：boot 的 state 快照，或检查稍晚完成时的 update 事件。 */
+function renderUpdateBar() {
+  const host = $('#updateBar');
+  if (!host) return;
+  const u = S.update || {};
+  if (u.state !== 'available' || !u.url || S.updateClosed) { host.classList.remove('show'); return; }
+  if (!host.firstChild) {
+    const ic = el('span', 'ub-ico');
+    ic.appendChild(iconEl('download', 'sm'));
+    host.appendChild(ic);
+    host.appendChild(el('span', 'ub-text'));
+    const go = el('button', 'btn sm accent', '前往下载');
+    go.title = '在浏览器中打开最新版本的发布页；下载后替换同目录下的可执行文件';
+    go.onclick = () => openReleasePage((S.update || {}).url);
+    host.appendChild(go);
+    const close = el('button', 'icon-btn sm');
+    close.title = '关闭（本次运行不再提示）';
+    close.appendChild(iconEl('x', 'sm'));
+    close.onclick = () => { S.updateClosed = true; renderUpdateBar(); };
+    host.appendChild(close);
+  }
+  const txt = $('.ub-text', host);
+  txt.innerHTML = '有新版本 <b>' + esc(u.latest_tag || '') + '</b>'
+    + (u.current ? ' · 当前构建 <span class="ub-ver">' + esc(u.current) + '</span>' : '');
+  host.classList.add('show');
+}
+
+// 下载页交给系统浏览器：桌面壳里是 host_open_url 绑定（WebView2 没有
+// NewWindowRequested 处理，window.open 会被静默丢弃），普通浏览器退回新标签页
+async function openReleasePage(url) {
+  if (!url) return;
+  if (typeof window.host_open_url === 'function') {
+    try { const r = await window.host_open_url(url); if (r && r.ok) return; } catch (e) {}
+  }
+  if (!window.open(url, '_blank', 'noopener')) toast('请手动打开：' + url, 'info', 8000);
+}
 
 </script>
 </body>

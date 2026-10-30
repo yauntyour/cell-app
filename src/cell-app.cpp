@@ -37,6 +37,31 @@
 
 namespace app
 {
+    // =====================================================================
+    //  open_url — hand a web link to the OS default handler. The page cannot
+    //  do it itself: WebView2 suppresses window.open without a
+    //  NewWindowRequested handler, and a popup blocker would eat it in a
+    //  browser. Only http(s) and only characters that are safe to hand to a
+    //  shell — the link comes from a remote page.
+    // =====================================================================
+    static bool open_url(const std::string &url)
+    {
+        if (url.rfind("https://", 0) != 0 && url.rfind("http://", 0) != 0)
+            return false;
+        for (unsigned char ch : url)
+            if (ch <= 0x20 || ch >= 0x7f || std::string_view("\"'`<>|^&;\\").find((char)ch) != std::string_view::npos)
+                return false;
+#ifdef _WIN32
+        const std::wstring w = cell::plat::utf8_to_wide(url);
+        return reinterpret_cast<INT_PTR>(
+                   ShellExecuteW(nullptr, L"open", w.c_str(), nullptr, nullptr, SW_SHOWNORMAL)) > 32;
+#elif defined(__APPLE__)
+        return std::system(("open '" + url + "' >/dev/null 2>&1").c_str()) == 0;
+#else
+        return std::system(("xdg-open '" + url + "' >/dev/null 2>&1 &").c_str()) == 0;
+#endif
+    }
+
 #ifdef _WIN32
     // =====================================================================
     //  pick_folder — the native folder picker behind the host_pick_folder
@@ -300,6 +325,9 @@ namespace app
         printf("  --headless [PORT] start only the HTTP service, no window\n");
         printf("  --ui FILE         serve the UI page from this file (dev mode:\n");
         printf("                    edit + refresh, no rebuild; default: embedded)\n");
+        printf("  --update-check    compare this build with the newest GitHub release\n");
+        printf("                    and print the verdict (no window; exit codes:\n");
+        printf("                    0 = up to date, 1 = update available, 2 = no answer)\n");
         printf("  --help            show this help\n\n");
         printf("Smoke tests (isolated data root, exit automatically):\n");
         printf("  --smoke           UI bridge only\n");
@@ -319,6 +347,7 @@ namespace app
         int smoke = 0;
         int serve_port = 0; // 0 = no HTTP service
         bool headless = false;
+        bool update_check = false; // --update-check: probe and print, then leave
         for (int i = 1; i < argc; i++)
         {
             std::string a = argv[i];
@@ -362,6 +391,8 @@ namespace app
                 smoke = 2;
             else if (a == "--smoke-ws")
                 smoke = 3;
+            else if (a == "--update-check")
+                update_check = true;
             else if (a == "--help" || a == "-h")
             {
                 print_usage();
@@ -373,6 +404,18 @@ namespace app
                 print_usage();
                 return 1;
             }
+        }
+        if (update_check)
+        {
+            // probe only: no window, no config, no session — the desktop app
+            // asks the same question once per launch (app_core::start_update_check)
+            curl_global_init(CURL_GLOBAL_DEFAULT);
+            nlohmann::json r = update::probe();
+            printf("%s\n", r.dump(2).c_str());
+            fflush(stdout);
+            cell::net::curl_global_shutdown();
+            const std::string state = r.value("state", "error");
+            return state == "current" ? 0 : state == "available" ? 1 : 2;
         }
 #ifdef _WIN32
         // 进程唯一性（桌面窗口模式）：重复启动 = 把焦点交给已运行实例的窗口
@@ -546,6 +589,13 @@ namespace app
             }
             else
             {
+                // one update probe per process, and only for the desktop app:
+                // --headless and the smoke runs are automation channels. Runs
+                // off this thread; the page reads the verdict from its boot
+                // `state`, or receives it as a live "update" event.
+                if (!smoke)
+                    core.start_update_check();
+
                 // ---- desktop window ---------------------------------------
                 webview::webview w(false, nullptr);
                 w.set_title("cell");
@@ -669,6 +719,10 @@ namespace app
                         owner = reinterpret_cast<HWND>(win.value());
                     return pick_folder(owner); });
 #endif
+                // host_open_url — the update bar's 前往下载: the page hands the
+                // release link over and the shell pops the system browser.
+                w.bind("host_open_url", [](std::string url) -> std::string
+                       { return open_url(url) ? "{\"ok\":true}" : "{\"ok\":false}"; });
 
                 if (served)
                 {

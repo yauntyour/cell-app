@@ -197,3 +197,44 @@ async function boot() {
 
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
 else boot();
+
+/* ---------- N. 更新提示 ----------------------------------------------
+   后端在进程启动时只查一次（app_core::start_update_check）：本 exe 内置的
+   短提交号 vs GitHub 最新 release 页上的提交号。这里只把结论画成顶栏下方
+   的一条可关闭横条 —— 从托盘恢复窗口、页面重连都不会重新检查。
+   结论有两条到达路径：boot 的 state 快照，或检查稍晚完成时的 update 事件。 */
+function renderUpdateBar() {
+  const host = $('#updateBar');
+  if (!host) return;
+  const u = S.update || {};
+  if (u.state !== 'available' || !u.url || S.updateClosed) { host.classList.remove('show'); return; }
+  if (!host.firstChild) {
+    const ic = el('span', 'ub-ico');
+    ic.appendChild(iconEl('download', 'sm'));
+    host.appendChild(ic);
+    host.appendChild(el('span', 'ub-text'));
+    const go = el('button', 'btn sm accent', '前往下载');
+    go.title = '在浏览器中打开最新版本的发布页；下载后替换同目录下的可执行文件';
+    go.onclick = () => openReleasePage((S.update || {}).url);
+    host.appendChild(go);
+    const close = el('button', 'icon-btn sm');
+    close.title = '关闭（本次运行不再提示）';
+    close.appendChild(iconEl('x', 'sm'));
+    close.onclick = () => { S.updateClosed = true; renderUpdateBar(); };
+    host.appendChild(close);
+  }
+  const txt = $('.ub-text', host);
+  txt.innerHTML = '有新版本 <b>' + esc(u.latest_tag || '') + '</b>'
+    + (u.current ? ' · 当前构建 <span class="ub-ver">' + esc(u.current) + '</span>' : '');
+  host.classList.add('show');
+}
+
+// 下载页交给系统浏览器：桌面壳里是 host_open_url 绑定（WebView2 没有
+// NewWindowRequested 处理，window.open 会被静默丢弃），普通浏览器退回新标签页
+async function openReleasePage(url) {
+  if (!url) return;
+  if (typeof window.host_open_url === 'function') {
+    try { const r = await window.host_open_url(url); if (r && r.ok) return; } catch (e) {}
+  }
+  if (!window.open(url, '_blank', 'noopener')) toast('请手动打开：' + url, 'info', 8000);
+}

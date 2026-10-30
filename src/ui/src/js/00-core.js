@@ -357,6 +357,8 @@ const S = {
   closedTabs: [], tabMenuNode: null,
   groupsClosed: new Set(),   // 侧栏里被折叠的工作区分组（见 02-render.js）
   pendingApprovals: 0,
+  update: null,              // 启动时的更新检查结果（见 09-boot.js），后端只查一次
+  updateClosed: false,       // 本次运行关掉了更新提示条
 };
 
 function tab(ws) {
@@ -543,6 +545,7 @@ function handleEvent(e) {
     case 'tool_begin': onToolBegin(e); break;
     case 'tool_end': onToolEnd(e); break;
     case 'notice': onNotice(e); break;
+    case 'update': S.update = e; renderUpdateBar(); break;
     case 'approval': onApproval(e); break;
     case 'approval_resolved': onApprovalResolved(e); break;
     case 'teamwork_changed': case 'workspace_state':
@@ -608,6 +611,8 @@ function applyHello(st, rebuild, opts) {
   if (st.settings) S.settings = Object.assign({}, S.settings, st.settings);
   if (st.providers) S.providers = st.providers;
   if (Array.isArray(st.tools)) S.tools = true; else if (typeof st.tools === 'boolean') S.tools = st.tools;
+  // 更新检查的结论也是全局的（零工作区启动时唯一可能出现的提示）
+  if (st.update) { S.update = st.update; renderUpdateBar(); }
 
   let noticesReset = false;
   if (Array.isArray(st.workspaces)) {
