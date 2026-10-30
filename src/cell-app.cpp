@@ -56,8 +56,12 @@ namespace app
         const std::wstring w = cell::plat::utf8_to_wide(url);
         // `open` = the user's default handler for the protocol, so the default
         // browser comes up as its own window; owner only anchors any dialog
-        return reinterpret_cast<INT_PTR>(ShellExecuteW(reinterpret_cast<HWND>(owner), L"open", w.c_str(),
-                                                       nullptr, nullptr, SW_SHOWNORMAL)) > 32;
+        const INT_PTR rc = reinterpret_cast<INT_PTR>(ShellExecuteW(reinterpret_cast<HWND>(owner), L"open", w.c_str(),
+                                                                  nullptr, nullptr, SW_SHOWNORMAL));
+        if (rc <= 32) // nothing else reports this: keep the reason in the log
+            cell::sys::logger::instance().warn(
+                "app", std::format("open_url failed: ShellExecute={} url={}", rc, url));
+        return rc > 32;
 #elif defined(__APPLE__)
         (void)owner;
         return std::system(("open '" + url + "' >/dev/null 2>&1").c_str()) == 0;
@@ -754,9 +758,17 @@ namespace app
                     return pick_folder(owner); });
 #endif
                 // host_open_url — the update chip: the page hands the release
-                // link over and the shell pops the user's default browser
-                w.bind("host_open_url", [&w](std::string url) -> std::string
+                // link over and the shell pops the user's default browser.
+                // A sync binding receives the raw JSON argument array
+                // ("[\"https://…\"]"), not the unwrapped first argument.
+                w.bind("host_open_url", [&w](std::string args) -> std::string
                        {
+                    std::string url;
+                    auto a = nlohmann::json::parse(args, nullptr, false);
+                    if (a.is_array() && !a.empty() && a[0].is_string())
+                        url = a[0].get<std::string>();
+                    else if (a.is_string())
+                        url = a.get<std::string>();
                     void *owner = nullptr;
                     if (auto win = w.window(); win.ok())
                         owner = reinterpret_cast<void *>(win.value());
