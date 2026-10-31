@@ -125,7 +125,7 @@ jobs:
         run: |
           objdump -p build/cell-app.exe | awk '/DLL Name/ {print tolower($3)}' | sort -u
           bad="$(objdump -p build/cell-app.exe | awk '/DLL Name/ {print tolower($3)}' | sort -u \
-            | grep -Ev '^(api-ms-win-[a-z0-9-]+|advapi32|bcrypt|cfgmgr32|combase|comctl32|comdlg32|crypt32|dnsapi|gdi32|imm32|iphlpapi|kernel32|kernelbase|msvcrt|mswsock|ncrypt|ntdll|ole32|oleaut32|powrprof|profapi|psapi|rpcrt4|sechost|secur32|setupapi|shell32|shlwapi|sspicli|ucrtbase|user32|userenv|uuid|version|win32u|wintrust|ws2_32|wldap32|wtsapi32)\.dll$' \
+            | grep -Ev '^(api-ms-win-[a-z0-9-]+|advapi32|bcrypt|cfgmgr32|combase|comctl32|comdlg32|crypt32|dnsapi|dwmapi|gdi32|imm32|iphlpapi|kernel32|kernelbase|msvcrt|mswsock|ncrypt|ntdll|ole32|oleaut32|powrprof|profapi|psapi|rpcrt4|sechost|secur32|setupapi|shell32|shlwapi|sspicli|ucrtbase|user32|userenv|uuid|version|win32u|wintrust|ws2_32|wldap32|wtsapi32)\.dll$' \
             || true)"
           if [ -n "$bad" ]; then
             echo "::error::third-party DLL dependencies leaked in: $bad"
