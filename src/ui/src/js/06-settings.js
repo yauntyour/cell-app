@@ -805,14 +805,20 @@ function buildAppearance(st) {
       wticks.appendChild(tk);
     }
     const wdesc = el('div', 'set-hint');
+    const blurOn = !(typeof WINBLUR !== 'undefined' && !WINBLUR.on);
     const paintWin = () => {
       const v = Number(wrange.value);
       wval.textContent = v + '%';
-      wdesc.textContent = v >= 100
-        ? '整窗只剩磨砂玻璃，壁纸在窗后完全可见。'
-        : v <= 0
-          ? '整窗不透明，和普通深色窗口一样（壁纸完全看不到）。'
-          : '页面最底下压 ' + (100 - v) + '% 的实色画布，壁纸仍然透过玻璃可见。';
+      wdesc.textContent = !blurOn
+        ? '磨砂关着：这个滑块现在是整窗不透明度，100% = 整窗只留 ' +
+          Math.round(WINBLUR_MIN_ALPHA * 100) + '%，背后的内容清晰可见（文字也会跟着淡）。'
+        : v >= 100
+          ? '页面不再叠任何底色与纱，背后的窗口原样透出来（磨砂开着时就是糊的，关掉就是清晰的）。'
+          : v <= 50
+            ? (v <= 0
+              ? '整窗不透明，和普通深色窗口一样（壁纸完全看不到）。'
+              : '页面最底下压 ' + (100 - v * 2) + '% 的实色画布，壁纸仍然透过玻璃可见。')
+            : '画布已经撤掉了，整窗那层纱还剩 ' + Math.round((100 - v) * 2) + '%，拖到底就一点不剩。';
       for (const [tk, at] of wtickEls) tk.classList.toggle('on', Math.abs(at - v) <= 25);
     };
     wrange.oninput = paintWin;
@@ -823,8 +829,16 @@ function buildAppearance(st) {
     wfield.appendChild(wrow);
     wfield.appendChild(wticks);
     wfield.appendChild(wdesc);
-    wfield.appendChild(el('div', 'set-hint', '整窗是 Win11 的系统丙烯酸背衬（壁纸在窗后取景、自动磨砂），这个滑块只改页面自己的底色深浅。设置保存在本机浏览器。'));
-    s.appendChild(card([setCardHead('窗口背景'), wfield]));
+    wfield.appendChild(el('div', 'set-hint', '两个旋钮各管一件事：滑块管页面叠多少色，下面的「磨砂」管背后糊不糊。设置保存在本机浏览器。'));
+
+    /* 磨砂：DWM 的系统背衬整档开关（模糊半径不可调，所以不是滑杆）。
+       关掉后窗口就是"清晰透视"，配合 100% 透明度即 VSCode 式的窗口透明。 */
+    const kids = [setCardHead('窗口背景'), wfield];
+    if (typeof WINBLUR !== 'undefined' && typeof setWindowBlur === 'function') {
+      kids.push(switchRow('磨砂玻璃', WINBLUR.on, v => { setWindowBlur(v); renderSettings(); },
+        '开 = Win11 系统丙烯酸：背后的窗口被磨砂。关 = 去掉系统背衬，改用整窗统一半透明（VSCode 的窗口透明就是这个做法）——背后清晰可见，但页面与文字会一起变淡。Windows 只提供这两种，没有可调的模糊半径。'));
+    }
+    s.appendChild(card(kids));
   }
 
   /* 输入卡玻璃：完全无色的材质，唯一可调的是高斯模糊（跟随"透明度"） */
@@ -897,14 +911,19 @@ function buildSplashCard() {
   ti.onchange = () => save({ title: ti.value.trim() });
   kids.push(field('标题', ti, '留空用内置的「cell」。'));
 
-  const su = setInput('本地代理工作台', sp.sub || '');
+  const su = setInput(SPLASH_DEFAULT_SUB, sp.sub || '');
   su.onchange = () => save({ sub: su.value.trim() });
   kids.push(field('副标题', su, '一行说明文字，留空用内置文案。'));
 
-  // 背景色 + 跟随主题
+  // 背景色 + 跟随主题。跟随主题时色块要显示**当前主题**的画布色（--bg）：
+  // 写死 #111113 的话，浅色主题下这块永远是黑的，看起来像没跟随。
+  const canvasColor = () => {
+    const v = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
+    return /^#[0-9a-f]{6}$/i.test(v) ? v : '#111113';
+  };
   const bg = el('input', 'set-color');
   bg.type = 'color';
-  bg.value = sp.bg || '#111113';
+  bg.value = sp.bg || canvasColor();
   bg.onchange = () => save({ bg: bg.value });
   const bgReset = setBtn('跟随主题', 'ghost sm', () => save({ bg: '' }));
   const bgRow = el('div', 'splash-row');

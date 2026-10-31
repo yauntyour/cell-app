@@ -91,14 +91,20 @@ namespace app
   /* ---- 液态玻璃（窗口级）------------------------------------------ */
   /* 窗口本身是透明的（DWM 丙烯酸背衬），页面只允许用 alpha 叠在背衬上：
      scrim 是整窗那一层纱，panel 是贴边的大面板（标题栏 / 侧栏），
-     dock 是右侧面板，float 是浮在内容之上的菜单/弹窗（要更实才读得清）。 */
+     dock 是右侧面板，float 是浮在内容之上的菜单/弹窗（要更实才读得清）。
+
+     --glass-film 是「这层纱还剩多少」：1 = 完整，0 = 一点不剩。它只乘在
+     整窗材质（纱 / 侧栏 / 右栏）上，浮层 opacity 不变。设置里的窗口透明度
+     拖到 100% 时它归零（见 05-composer.js 的 applyWindowOpacity），窗口就
+     真的只剩系统背衬的磨砂，不再有一层灰纱压在壁纸上。 */
+  --glass-film:1;
   --glass-scrim:linear-gradient(180deg,
-    rgba(9,9,12,.34) 0%,
-    rgba(9,9,12,.22) 26%,
-    rgba(9,9,12,.24) 72%,
-    rgba(6,6,9,.38) 100%);
-  --glass-panel:rgba(12,12,17,.30);
-  --glass-dock:rgba(10,10,14,.14);
+    rgba(9,9,12,calc(.34 * var(--glass-film))) 0%,
+    rgba(9,9,12,calc(.22 * var(--glass-film))) 26%,
+    rgba(9,9,12,calc(.24 * var(--glass-film))) 72%,
+    rgba(6,6,9,calc(.38 * var(--glass-film))) 100%);
+  --glass-panel:rgba(12,12,17,calc(.30 * var(--glass-film)));
+  --glass-dock:rgba(10,10,14,calc(.14 * var(--glass-film)));
   --glass-float:var(--panel2);
   --glass-hair:rgba(255,255,255,.055);              /* 面板之间的那道极淡分隔 */
   --glass-edge:rgba(255,255,255,.10);               /* 面板外缘的受光 */
@@ -148,8 +154,8 @@ html,body{height:100%;margin:0}
    否则 DWM 的背衬（磨砂后的桌面）会被这张底盖住。 */
 html,body{background:transparent}
 /* 背景透明度（设置 → 外观 → 窗口背景）：这层实色画布压在页面最底下，
-   --glass-solid = 1 - 透明度。0 = 完全没有这层（纯玻璃，壁纸最清楚），
-   1 = 完全不透明（和改造前的实色窗口一样）。 */
+   --glass-solid = 1 - 2×透明度（前 50% 量程就撤完）。0 = 完全没有这层
+   （纯玻璃，壁纸最清楚），1 = 完全不透明（和改造前的实色窗口一样）。 */
 body::before{content:"";position:fixed;inset:0;z-index:-1;background:var(--bg);
   opacity:var(--glass-solid,0);pointer-events:none}
 body{
@@ -697,11 +703,12 @@ body.locked{overflow:hidden}
 .chat{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;
   /* 正文压在会滚动的玻璃上：壁纸亮的地方白字会糊。这里给消息列一层很淡的
      中心纱（不是面板，没有边），远离中心的地方全透明 —— 窗口的"透明"由
-     四周交代，可读性由中间这层纱交代。 */
+     四周交代，可读性由中间这层纱交代。纱的强度乘 --glass-film：透明度
+     拖到 100% 时连它一起收掉，否则"完全透明"中间还压着一团灰。 */
   background:radial-gradient(115% 95% at 50% 45%,
-    rgba(8,8,11,.34) 0%,
-    rgba(8,8,11,.20) 55%,
-    rgba(8,8,11,.06) 82%,
+    rgba(8,8,11,calc(.34 * var(--glass-film))) 0%,
+    rgba(8,8,11,calc(.20 * var(--glass-film))) 55%,
+    rgba(8,8,11,calc(.06 * var(--glass-film))) 82%,
     rgba(8,8,11,0) 100%);
   /* 底部留白读 --composer-pad（由 02-render2-chat.js 的 syncJumpAnchors 按卡片
      **实测**上界写入）：卡片高度在 Teamwork 模式 / 72vh 限高下都不等于
@@ -3353,11 +3360,14 @@ mark{background:var(--accent-soft);color:var(--accent);border-radius:3px;padding
   --line:#e4e4e9;
   --line2:#d2d2da;
 
-  /* ---- 文本 ------------------------------------------------------- */
-  --fg:#1a1a1e;
-  --fg2:#53545c;
-  --fg3:#787983;
-  --fg4:#9fa0a9;
+  /* ---- 文本 -------------------------------------------------------
+     浅色主题的文字必须真的"深"：整窗透明时正文压在被磨砂的壁纸上，原来那套
+     中灰（#53545c / #787983 / #9fa0a9）在灰底上几乎没有对比（2026-11-01 用户
+     截图：侧栏导航与分组标题看不清）。整体压深一到两档，层级仍靠明度拉开。 */
+  --fg:#141416;
+  --fg2:#33343b;
+  --fg3:#4e4f58;
+  --fg4:#77787f;
 
   /* ---- 强调色（浅底上要压深一档才够对比度） ----------------------- */
   --accent:#4f5bd5;
@@ -3387,6 +3397,21 @@ mark{background:var(--accent-soft);color:var(--accent);border-radius:3px;padding
   --glass-lo:inset 0 -1px 0 rgba(24,26,36,.05);
   --glass-drop:0 1px 2px rgba(24,26,36,.07);
 
+  /* ---- 窗口级材质：深色版那层"黑纱"，浅色版只能翻成"白纱" --------
+     这几个令牌默认按深色写的（rgba(9,9,12,.34) 之类），浅色下照抄会让
+     整窗变成一块灰玻璃、侧栏和标题栏比卡片还深。浅色版一律改成低饱和的
+     白雾，透明度乘同一个 --glass-film（100% 透明度时一起归零）。 */
+  --glass-scrim:linear-gradient(180deg,
+    rgba(250,250,252,calc(.62 * var(--glass-film))) 0%,
+    rgba(250,250,252,calc(.46 * var(--glass-film))) 26%,
+    rgba(250,250,252,calc(.48 * var(--glass-film))) 72%,
+    rgba(246,246,249,calc(.64 * var(--glass-film))) 100%);
+  --glass-panel:rgba(255,255,255,calc(.50 * var(--glass-film)));
+  --glass-dock:rgba(255,255,255,calc(.30 * var(--glass-film)));
+  --glass-hair:rgba(24,26,36,.075);
+  --glass-edge:rgba(255,255,255,.65);
+  --glass-veil:rgba(247,247,250,.74);
+
   /* ---- 阴影：浅、散、低饱和 --------------------------------------- */
   --shadow:0 18px 44px rgba(24,26,36,.14),0 1px 2px rgba(24,26,36,.07);
   --shadow-sm:0 1px 2px rgba(24,26,36,.07);
@@ -3396,10 +3421,10 @@ mark{background:var(--accent-soft);color:var(--accent);border-radius:3px;padding
   --line-soft:#e9e9ed;
   --code-bg:#f2f2f5;
   --user:#2c2d34;
-  --assistant:#1a1a1e;
-  --tool:#53545c;
-  --system:#666771;
-  --other:#787983;
+  --assistant:#141416;
+  --tool:#3b3c43;
+  --system:#4a4b54;
+  --other:#545560;
 }
 
 /* ---------- 9.2 输入卡（液态玻璃的浅色版） --------------------------
@@ -3455,6 +3480,14 @@ mark{background:var(--accent-soft);color:var(--accent);border-radius:3px;padding
 /* 弹窗/浮层遮罩：深色版是近乎纯黑 55%，浅色下压到 30% 的冷灰 */
 :root[data-theme="light"] .modal{background:rgba(24,26,36,.30)}
 :root[data-theme="light"] .pnl-ov{background:color-mix(in srgb,var(--bg) 55%,rgba(24,26,36,.45))}
+/* 消息列的中心纱（05-stream.css）：深色版是压暗换可读性，浅色版必须提亮 ——
+   照抄就是空态/正文底下压着一团灰（2026-10-31 截图里主区发灰的原因） */
+:root[data-theme="light"] .chat{
+  background:radial-gradient(115% 95% at 50% 45%,
+    rgba(250,250,252,calc(.72 * var(--glass-film))) 0%,
+    rgba(250,250,252,calc(.46 * var(--glass-film))) 55%,
+    rgba(250,250,252,calc(.14 * var(--glass-film))) 82%,
+    rgba(250,250,252,0) 100%);}
 
 /* ---------- 9.4 语义小徽标 / 停止钮：浅色下白字白底读不出来 ----------
    .badge.warn/.badge.ok 在深色版用深字压彩色底；.cmp-send.stop 用白字压
@@ -3500,6 +3533,14 @@ mark{background:var(--accent-soft);color:var(--accent);border-radius:3px;padding
 :root[data-theme="light"] .ct-root .ct-screen::-webkit-scrollbar-thumb{background:#3a3a42;
   border:2px solid transparent;background-clip:content-box}
 :root[data-theme="light"] .ct-root .ct-screen::-webkit-scrollbar-thumb:hover{background:#4b4b55}
+
+/* ---------- 9.7 设置页里的两块面板 ----------------------------------
+   06b-settings.css 把分节导航与粘性页头写成了深色材质（白 3.5% 的水洗 +
+   rgba(16,16,21,.55) 的页头），浅色下照抄就是「黑侧栏 + 黑标题带 + 白卡片」
+   （2026-10-31 用户截图）。浅色版反过来：两块都比纱更亮一档，边界交给
+   那一道发丝线。 */
+:root[data-theme="light"] #settings .set-side{background:rgba(255,255,255,.55)}
+:root[data-theme="light"] #settings .set-head{background:rgba(255,255,255,.72)}
 
 /* ==== css/10-splash.css =============================================== */
 
@@ -3574,10 +3615,19 @@ html[data-theme="light"] #splash::before{opacity:.5}
    等 state 回来再隐藏会白闪一屏。桌面壳在 URL 上带 splash=0（设置里关掉
    了启动页）时，这里同步打上 no-splash（样式见 10-splash.css）。
    内联在 head：外链脚本和页面脚本都晚于首次绘制。
-   浏览器里同样可用：?splash=0 即可跳过启动页。 */
+   浏览器里同样可用：?splash=0 即可跳过启动页。
+
+   外观（主题 / 动画等级）同理：启动页的底色取 --bg、文字取 --fg，主题晚一步
+   落到 <html> 上，浅色主题会先画出一屏**深色**启动页再翻白（1.4s 的启动页
+   里这个跳变很明显）。Theme.init() 在 boot 里，跑在 DOMContentLoaded，
+   所以在这里先把 localStorage 里的选择贴上去。 */
 try {
   if (/[?&]splash=0(?:&|$)/.test(location.search))
     document.documentElement.classList.add('no-splash');
+  const th = localStorage.getItem('cell.theme');
+  if (th) document.documentElement.dataset.theme = th;
+  const an = localStorage.getItem('cell.anim');
+  if (an != null) document.documentElement.dataset.anim = an;
 } catch (e) {}
 </script>
 </head>
@@ -3601,7 +3651,7 @@ try {
     </div>
     <img class="sp-image" id="splashImage" alt="" hidden>
     <div class="sp-title" id="splashTitle">cell</div>
-    <div class="sp-sub" id="splashSub">本地代理工作台</div>
+    <div class="sp-sub" id="splashSub">大道至简</div>
     <div class="sp-bar" id="splashBar"><i></i></div>
   </div>
   <iframe class="sp-page" id="splashFrame" title="自定义启动页" hidden></iframe>
@@ -10466,30 +10516,72 @@ function setGlassPref(t) {
 window.setGlassTransparency = pct => setGlassPref((Number(pct) || 0) / 100);
 loadGlassPref();
 
-/* ---------- 窗口背景透明度 ------------------------------------------------
-   整窗透明以后，"玻璃"和"能不能看清字"是一对矛盾：壁纸越清楚，正文越糊。
-   这里只给一个旋钮（设置 → 外观 → 窗口背景）：0 = 完全不透明（页面最底下压
-   一层实色画布），100 = 只剩磨砂玻璃。实现就是 --glass-solid 一个变量，
-   见 01-base.css 的 body::before；不动任何面板的 alpha。 */
-const WINGLASS = { t: 1 };            // 0..1 透明度（1 = 全透明）
-const WINGLASS_PREF_KEY = 'cell.win.glass';
+/* ---------- 窗口材质：透明度 / 磨砂（两个独立旋钮） ------------------------
+   整窗透明以后，"玻璃"和"能不能看清字"是一对矛盾，于是拆成两件事：
 
+   · 背景透明度（WINGLASS）—— 只改**页面自己**叠了多少色，两段走：
+       0 → 50%    撤掉页面最底下那层实色画布（--glass-solid，见 01-base.css）；
+                  50% 正好是"只有玻璃、没有画布"的那一版。
+       50% → 100% 再撤掉整窗那层纱（--glass-film：scrim + 侧栏/右栏的面 +
+                  消息列的中心纱），拖到底页面一点也不盖住背后。
+   · 磨砂（WINBLUR）—— 决定"背后那层糊不糊"。模糊是 DWM 画的（系统背衬），
+     **半径不可调**，只有两档：
+       开 = Win11 丙烯酸：背后被磨砂，页面自己的 alpha 叠在磨砂层上；
+       关 = 去掉背衬，改用**整窗统一 alpha**（WS_EX_LAYERED + LWA_ALPHA，
+            VSCode 的窗口透明就是这一个做法）：背后清晰可见，代价是页面与
+            文字一起变淡，所以这时页面必须不透明（否则透明处会露出窗口底色）。
+
+   浮层（菜单 / 弹窗）不跟，任何时候都要读得清。 */
+const WINGLASS = { t: 1 };            // 0..1 透明度（1 = 页面一点也不盖）
+const WINGLASS_PREF_KEY = 'cell.win.glass';
+const WINBLUR = { on: true };          // 磨砂（系统背衬）
+const WINBLUR_PREF_KEY = 'cell.win.blur';
+const WINBLUR_MIN_ALPHA = 0.5;         // 整窗 alpha 最低到 50%（再低就真看不见了）
+
+function applyWindowSurface(silent) {
+  const t = WINGLASS.t;
+  const root = document.documentElement;
+  // 桌面壳才有的绑定；直接走 window.host_win（不能用 Win —— 本文件先于
+  // 10-shell.js 求值，那时 const Win 还在 TDZ 里）
+  const shell = typeof window.host_win === 'function' ? window.host_win : null;
+  if (!WINBLUR.on) {
+    // 无磨砂：页面不透明 + 整窗 alpha = 1 - 透明度/2
+    root.style.setProperty('--glass-solid', '1');
+    root.style.setProperty('--glass-film', '1');
+    if (shell) shell({ op: 'blur', on: false, alpha: Math.round((1 - t * (1 - WINBLUR_MIN_ALPHA)) * 255) });
+  } else {
+    root.style.setProperty('--glass-solid', Math.max(0, 1 - t * 2).toFixed(3));
+    root.style.setProperty('--glass-film', Math.max(0, Math.min(1, 2 - t * 2)).toFixed(3));
+    if (shell) shell({ op: 'blur', on: true });
+  }
+  if (!silent)
+    try {
+      localStorage.setItem(WINGLASS_PREF_KEY, JSON.stringify({ t: Number(WINGLASS.t.toFixed(3)) }));
+      localStorage.setItem(WINBLUR_PREF_KEY, JSON.stringify({ on: WINBLUR.on }));
+    } catch (e) {}
+}
 function applyWindowOpacity(t, silent) {
   if (t != null) WINGLASS.t = Math.min(1, Math.max(0, Number(t) || 0));
-  document.documentElement.style.setProperty('--glass-solid', (1 - WINGLASS.t).toFixed(3));
-  if (!silent)
-    try { localStorage.setItem(WINGLASS_PREF_KEY, JSON.stringify({ t: Number(WINGLASS.t.toFixed(3)) })); } catch (e) {}
+  applyWindowSurface(silent);
 }
-function loadWindowOpacity() {
-  let t = WINGLASS.t;
+function applyWindowBlur(on, silent) {
+  WINBLUR.on = !!on;
+  applyWindowSurface(silent);
+}
+function loadWindowSurface() {
   try {
     const v = Number((JSON.parse(localStorage.getItem(WINGLASS_PREF_KEY) || '{}') || {}).t);
-    if (isFinite(v)) t = v;
+    if (isFinite(v)) WINGLASS.t = Math.min(1, Math.max(0, v));
   } catch (e) {}
-  applyWindowOpacity(t, true);
+  try {
+    const b = JSON.parse(localStorage.getItem(WINBLUR_PREF_KEY) || '{}');
+    if (b && typeof b.on === 'boolean') WINBLUR.on = b.on;
+  } catch (e) {}
+  applyWindowSurface(true);
 }
 window.setWindowTransparency = pct => applyWindowOpacity((Number(pct) || 0) / 100);
-loadWindowOpacity();
+window.setWindowBlur = on => applyWindowBlur(on);
+loadWindowSurface();
 
 /* ---------- I2. 事件绑定 ------------------------------------------- */
 function bindComposer() {
@@ -13339,14 +13431,20 @@ function buildAppearance(st) {
       wticks.appendChild(tk);
     }
     const wdesc = el('div', 'set-hint');
+    const blurOn = !(typeof WINBLUR !== 'undefined' && !WINBLUR.on);
     const paintWin = () => {
       const v = Number(wrange.value);
       wval.textContent = v + '%';
-      wdesc.textContent = v >= 100
-        ? '整窗只剩磨砂玻璃，壁纸在窗后完全可见。'
-        : v <= 0
-          ? '整窗不透明，和普通深色窗口一样（壁纸完全看不到）。'
-          : '页面最底下压 ' + (100 - v) + '% 的实色画布，壁纸仍然透过玻璃可见。';
+      wdesc.textContent = !blurOn
+        ? '磨砂关着：这个滑块现在是整窗不透明度，100% = 整窗只留 ' +
+          Math.round(WINBLUR_MIN_ALPHA * 100) + '%，背后的内容清晰可见（文字也会跟着淡）。'
+        : v >= 100
+          ? '页面不再叠任何底色与纱，背后的窗口原样透出来（磨砂开着时就是糊的，关掉就是清晰的）。'
+          : v <= 50
+            ? (v <= 0
+              ? '整窗不透明，和普通深色窗口一样（壁纸完全看不到）。'
+              : '页面最底下压 ' + (100 - v * 2) + '% 的实色画布，壁纸仍然透过玻璃可见。')
+            : '画布已经撤掉了，整窗那层纱还剩 ' + Math.round((100 - v) * 2) + '%，拖到底就一点不剩。';
       for (const [tk, at] of wtickEls) tk.classList.toggle('on', Math.abs(at - v) <= 25);
     };
     wrange.oninput = paintWin;
@@ -13357,8 +13455,16 @@ function buildAppearance(st) {
     wfield.appendChild(wrow);
     wfield.appendChild(wticks);
     wfield.appendChild(wdesc);
-    wfield.appendChild(el('div', 'set-hint', '整窗是 Win11 的系统丙烯酸背衬（壁纸在窗后取景、自动磨砂），这个滑块只改页面自己的底色深浅。设置保存在本机浏览器。'));
-    s.appendChild(card([setCardHead('窗口背景'), wfield]));
+    wfield.appendChild(el('div', 'set-hint', '两个旋钮各管一件事：滑块管页面叠多少色，下面的「磨砂」管背后糊不糊。设置保存在本机浏览器。'));
+
+    /* 磨砂：DWM 的系统背衬整档开关（模糊半径不可调，所以不是滑杆）。
+       关掉后窗口就是"清晰透视"，配合 100% 透明度即 VSCode 式的窗口透明。 */
+    const kids = [setCardHead('窗口背景'), wfield];
+    if (typeof WINBLUR !== 'undefined' && typeof setWindowBlur === 'function') {
+      kids.push(switchRow('磨砂玻璃', WINBLUR.on, v => { setWindowBlur(v); renderSettings(); },
+        '开 = Win11 系统丙烯酸：背后的窗口被磨砂。关 = 去掉系统背衬，改用整窗统一半透明（VSCode 的窗口透明就是这个做法）——背后清晰可见，但页面与文字会一起变淡。Windows 只提供这两种，没有可调的模糊半径。'));
+    }
+    s.appendChild(card(kids));
   }
 
   /* 输入卡玻璃：完全无色的材质，唯一可调的是高斯模糊（跟随"透明度"） */
@@ -13431,14 +13537,19 @@ function buildSplashCard() {
   ti.onchange = () => save({ title: ti.value.trim() });
   kids.push(field('标题', ti, '留空用内置的「cell」。'));
 
-  const su = setInput('本地代理工作台', sp.sub || '');
+  const su = setInput(SPLASH_DEFAULT_SUB, sp.sub || '');
   su.onchange = () => save({ sub: su.value.trim() });
   kids.push(field('副标题', su, '一行说明文字，留空用内置文案。'));
 
-  // 背景色 + 跟随主题
+  // 背景色 + 跟随主题。跟随主题时色块要显示**当前主题**的画布色（--bg）：
+  // 写死 #111113 的话，浅色主题下这块永远是黑的，看起来像没跟随。
+  const canvasColor = () => {
+    const v = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
+    return /^#[0-9a-f]{6}$/i.test(v) ? v : '#111113';
+  };
   const bg = el('input', 'set-color');
   bg.type = 'color';
-  bg.value = sp.bg || '#111113';
+  bg.value = sp.bg || canvasColor();
   bg.onchange = () => save({ bg: bg.value });
   const bgReset = setBtn('跟随主题', 'ghost sm', () => save({ bg: '' }));
   const bgRow = el('div', 'splash-row');
@@ -19250,7 +19361,7 @@ const Win = {
 window.__cellWinState = st => { if (st && typeof st.maximized === 'boolean') Win.setMax(st.maximized); };
 
 /* ---------- O.2 启动页 --------------------------------------------- */
-const SPLASH_DEFAULT_SUB = '本地代理工作台';
+const SPLASH_DEFAULT_SUB = '大道至简';
 
 const Splash = {
   node: null,
@@ -19391,7 +19502,11 @@ function wireShell() {
   Win.ready(); // 告诉 C++：页面在听了，最大化状态可以广播过来
   // 首帧**先要实色**、画完再切透明：alpha=0 的第一帧会让窗口最上面几像素
   // 留成白色（"左上角一条浅灰带"，2026-10-31）。延迟放在启动页还盖着的时候。
-  setTimeout(() => Win.call('glass'), 260);
+  // 透明切完再把用户选的磨砂档位下发（关掉背衬时窗口就是清晰透视）。
+  setTimeout(() => {
+    Win.call('glass');
+    if (typeof applyWindowBlur === 'function') applyWindowBlur(WINBLUR.on, true);
+  }, 260);
 
 
 }

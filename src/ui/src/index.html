@@ -15,10 +15,19 @@
    等 state 回来再隐藏会白闪一屏。桌面壳在 URL 上带 splash=0（设置里关掉
    了启动页）时，这里同步打上 no-splash（样式见 10-splash.css）。
    内联在 head：外链脚本和页面脚本都晚于首次绘制。
-   浏览器里同样可用：?splash=0 即可跳过启动页。 */
+   浏览器里同样可用：?splash=0 即可跳过启动页。
+
+   外观（主题 / 动画等级）同理：启动页的底色取 --bg、文字取 --fg，主题晚一步
+   落到 <html> 上，浅色主题会先画出一屏**深色**启动页再翻白（1.4s 的启动页
+   里这个跳变很明显）。Theme.init() 在 boot 里，跑在 DOMContentLoaded，
+   所以在这里先把 localStorage 里的选择贴上去。 */
 try {
   if (/[?&]splash=0(?:&|$)/.test(location.search))
     document.documentElement.classList.add('no-splash');
+  const th = localStorage.getItem('cell.theme');
+  if (th) document.documentElement.dataset.theme = th;
+  const an = localStorage.getItem('cell.anim');
+  if (an != null) document.documentElement.dataset.anim = an;
 } catch (e) {}
 </script>
 </head>
@@ -42,7 +51,7 @@ try {
     </div>
     <img class="sp-image" id="splashImage" alt="" hidden>
     <div class="sp-title" id="splashTitle">cell</div>
-    <div class="sp-sub" id="splashSub">本地代理工作台</div>
+    <div class="sp-sub" id="splashSub">大道至简</div>
     <div class="sp-bar" id="splashBar"><i></i></div>
   </div>
   <iframe class="sp-page" id="splashFrame" title="自定义启动页" hidden></iframe>

@@ -68,7 +68,7 @@ const Win = {
 window.__cellWinState = st => { if (st && typeof st.maximized === 'boolean') Win.setMax(st.maximized); };
 
 /* ---------- O.2 启动页 --------------------------------------------- */
-const SPLASH_DEFAULT_SUB = '本地代理工作台';
+const SPLASH_DEFAULT_SUB = '大道至简';
 
 const Splash = {
   node: null,
@@ -209,7 +209,11 @@ function wireShell() {
   Win.ready(); // 告诉 C++：页面在听了，最大化状态可以广播过来
   // 首帧**先要实色**、画完再切透明：alpha=0 的第一帧会让窗口最上面几像素
   // 留成白色（"左上角一条浅灰带"，2026-10-31）。延迟放在启动页还盖着的时候。
-  setTimeout(() => Win.call('glass'), 260);
+  // 透明切完再把用户选的磨砂档位下发（关掉背衬时窗口就是清晰透视）。
+  setTimeout(() => {
+    Win.call('glass');
+    if (typeof applyWindowBlur === 'function') applyWindowBlur(WINBLUR.on, true);
+  }, 260);
 
 
 }

@@ -439,6 +439,42 @@ namespace app
             return CallWindowProcW(g_prev, hwnd, msg, wp, lp);
         }
 
+        // 系统背衬（磨砂）的开关。Win11 只给整档：丙烯酸 / 没有背衬，模糊半径
+        // 不可调，所以页面上那个"磨砂"只能是开关而不是滑杆。
+        //   开 = Win11 丙烯酸：壁纸在窗后取景并被磨砂，页面的 alpha 叠在磨砂层上；
+        //   关 = 去掉背衬，改用**整窗统一 alpha**（WS_EX_LAYERED + LWA_ALPHA）。
+        //        实测：没有背衬时，客户区里 WebView2 的透明像素会露出窗口自己的
+        //        底色（build 时 paint_client 刷的 #111113），整窗漆黑一片 ——
+        //        所以这条路只能是"页面不透明 + 整窗半透明"，也就是 VSCode 的
+        //        窗口透明（文字跟着一起淡），而不是"背景单独透、文字不漏"。
+        static void set_backdrop(HWND hwnd, bool on, int alpha = 255)
+        {
+            constexpr DWORD kBackdrop = 38; // DWMWA_SYSTEMBACKDROP_TYPE
+            constexpr int kNone = 1;        // DWMSBT_NONE
+            constexpr int kAcrylic = 3;     // DWMSBT_TRANSIENTWINDOW（丙烯酸）
+            int backdrop = on ? kAcrylic : kNone;
+            DwmSetWindowAttribute(hwnd, kBackdrop, &backdrop, sizeof(backdrop));
+
+            LONG_PTR ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+            if (on)
+            {
+                if (ex & WS_EX_LAYERED)
+                    SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex & ~WS_EX_LAYERED);
+            }
+            else
+            {
+                if (!(ex & WS_EX_LAYERED))
+                    SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex | WS_EX_LAYERED);
+                SetLayeredWindowAttributes(hwnd, 0,
+                                           static_cast<BYTE>(alpha < 0 ? 0 : alpha > 255 ? 255 : alpha),
+                                           LWA_ALPHA);
+            }
+            // 背衬 / 分层属性换了要立刻重画一次，否则旧材质会留到下一次 SetWindowPos
+            SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
+                         SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER |
+                             SWP_NOACTIVATE);
+        }
+
         static void paint_dwm(HWND hwnd)
         {
             // Win11：圆角 + 深色窗口框；旧系统上这两个属性不存在，失败无妨
@@ -457,10 +493,7 @@ namespace app
             // 左上角那条 8px 浅灰带是 DWM 画的调整边框，靠下面的 BORDER_COLOR=none 去掉。
             MARGINS m{-1, -1, -1, -1};
             DwmExtendFrameIntoClientArea(hwnd, &m);
-            constexpr DWORD kBackdrop = 38; // DWMWA_SYSTEMBACKDROP_TYPE
-            constexpr int kAcrylic = 3;     // DWMSBT_TRANSIENTWINDOW（丙烯酸）
-            int backdrop = kAcrylic;
-            DwmSetWindowAttribute(hwnd, kBackdrop, &backdrop, sizeof(backdrop));
+            set_backdrop(hwnd, true);
             // 边框线也去掉：无边框窗口不该有那 1px 的系统描边
             constexpr DWORD kBorder = 34;          // DWMWA_BORDER_COLOR
             constexpr DWORD kNoBorder = 0xFFFFFFFE; // DWMWA_COLOR_NONE
@@ -620,6 +653,10 @@ namespace app
                 paint_client(hwnd, RGB(0x11, 0x11, 0x13));
                 page_background(0); // 页面首帧画完才切透明（见 page_background）
             }
+            else if (what == "blur")
+                // 磨砂开关：on=false 时用整窗 alpha（见 set_backdrop）
+                set_backdrop(hwnd, a.value("on", true),
+                             a.value("alpha", 230));
             return state_json(hwnd);
         }
     } // namespace frame

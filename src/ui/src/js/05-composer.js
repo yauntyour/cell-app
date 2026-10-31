@@ -430,30 +430,72 @@ function setGlassPref(t) {
 window.setGlassTransparency = pct => setGlassPref((Number(pct) || 0) / 100);
 loadGlassPref();
 
-/* ---------- 窗口背景透明度 ------------------------------------------------
-   整窗透明以后，"玻璃"和"能不能看清字"是一对矛盾：壁纸越清楚，正文越糊。
-   这里只给一个旋钮（设置 → 外观 → 窗口背景）：0 = 完全不透明（页面最底下压
-   一层实色画布），100 = 只剩磨砂玻璃。实现就是 --glass-solid 一个变量，
-   见 01-base.css 的 body::before；不动任何面板的 alpha。 */
-const WINGLASS = { t: 1 };            // 0..1 透明度（1 = 全透明）
-const WINGLASS_PREF_KEY = 'cell.win.glass';
+/* ---------- 窗口材质：透明度 / 磨砂（两个独立旋钮） ------------------------
+   整窗透明以后，"玻璃"和"能不能看清字"是一对矛盾，于是拆成两件事：
 
+   · 背景透明度（WINGLASS）—— 只改**页面自己**叠了多少色，两段走：
+       0 → 50%    撤掉页面最底下那层实色画布（--glass-solid，见 01-base.css）；
+                  50% 正好是"只有玻璃、没有画布"的那一版。
+       50% → 100% 再撤掉整窗那层纱（--glass-film：scrim + 侧栏/右栏的面 +
+                  消息列的中心纱），拖到底页面一点也不盖住背后。
+   · 磨砂（WINBLUR）—— 决定"背后那层糊不糊"。模糊是 DWM 画的（系统背衬），
+     **半径不可调**，只有两档：
+       开 = Win11 丙烯酸：背后被磨砂，页面自己的 alpha 叠在磨砂层上；
+       关 = 去掉背衬，改用**整窗统一 alpha**（WS_EX_LAYERED + LWA_ALPHA，
+            VSCode 的窗口透明就是这一个做法）：背后清晰可见，代价是页面与
+            文字一起变淡，所以这时页面必须不透明（否则透明处会露出窗口底色）。
+
+   浮层（菜单 / 弹窗）不跟，任何时候都要读得清。 */
+const WINGLASS = { t: 1 };            // 0..1 透明度（1 = 页面一点也不盖）
+const WINGLASS_PREF_KEY = 'cell.win.glass';
+const WINBLUR = { on: true };          // 磨砂（系统背衬）
+const WINBLUR_PREF_KEY = 'cell.win.blur';
+const WINBLUR_MIN_ALPHA = 0.5;         // 整窗 alpha 最低到 50%（再低就真看不见了）
+
+function applyWindowSurface(silent) {
+  const t = WINGLASS.t;
+  const root = document.documentElement;
+  // 桌面壳才有的绑定；直接走 window.host_win（不能用 Win —— 本文件先于
+  // 10-shell.js 求值，那时 const Win 还在 TDZ 里）
+  const shell = typeof window.host_win === 'function' ? window.host_win : null;
+  if (!WINBLUR.on) {
+    // 无磨砂：页面不透明 + 整窗 alpha = 1 - 透明度/2
+    root.style.setProperty('--glass-solid', '1');
+    root.style.setProperty('--glass-film', '1');
+    if (shell) shell({ op: 'blur', on: false, alpha: Math.round((1 - t * (1 - WINBLUR_MIN_ALPHA)) * 255) });
+  } else {
+    root.style.setProperty('--glass-solid', Math.max(0, 1 - t * 2).toFixed(3));
+    root.style.setProperty('--glass-film', Math.max(0, Math.min(1, 2 - t * 2)).toFixed(3));
+    if (shell) shell({ op: 'blur', on: true });
+  }
+  if (!silent)
+    try {
+      localStorage.setItem(WINGLASS_PREF_KEY, JSON.stringify({ t: Number(WINGLASS.t.toFixed(3)) }));
+      localStorage.setItem(WINBLUR_PREF_KEY, JSON.stringify({ on: WINBLUR.on }));
+    } catch (e) {}
+}
 function applyWindowOpacity(t, silent) {
   if (t != null) WINGLASS.t = Math.min(1, Math.max(0, Number(t) || 0));
-  document.documentElement.style.setProperty('--glass-solid', (1 - WINGLASS.t).toFixed(3));
-  if (!silent)
-    try { localStorage.setItem(WINGLASS_PREF_KEY, JSON.stringify({ t: Number(WINGLASS.t.toFixed(3)) })); } catch (e) {}
+  applyWindowSurface(silent);
 }
-function loadWindowOpacity() {
-  let t = WINGLASS.t;
+function applyWindowBlur(on, silent) {
+  WINBLUR.on = !!on;
+  applyWindowSurface(silent);
+}
+function loadWindowSurface() {
   try {
     const v = Number((JSON.parse(localStorage.getItem(WINGLASS_PREF_KEY) || '{}') || {}).t);
-    if (isFinite(v)) t = v;
+    if (isFinite(v)) WINGLASS.t = Math.min(1, Math.max(0, v));
   } catch (e) {}
-  applyWindowOpacity(t, true);
+  try {
+    const b = JSON.parse(localStorage.getItem(WINBLUR_PREF_KEY) || '{}');
+    if (b && typeof b.on === 'boolean') WINBLUR.on = b.on;
+  } catch (e) {}
+  applyWindowSurface(true);
 }
 window.setWindowTransparency = pct => applyWindowOpacity((Number(pct) || 0) / 100);
-loadWindowOpacity();
+window.setWindowBlur = on => applyWindowBlur(on);
+loadWindowSurface();
 
 /* ---------- I2. 事件绑定 ------------------------------------------- */
 function bindComposer() {

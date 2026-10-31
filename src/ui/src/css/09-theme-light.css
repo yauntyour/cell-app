@@ -36,11 +36,14 @@
   --line:#e4e4e9;
   --line2:#d2d2da;
 
-  /* ---- 文本 ------------------------------------------------------- */
-  --fg:#1a1a1e;
-  --fg2:#53545c;
-  --fg3:#787983;
-  --fg4:#9fa0a9;
+  /* ---- 文本 -------------------------------------------------------
+     浅色主题的文字必须真的"深"：整窗透明时正文压在被磨砂的壁纸上，原来那套
+     中灰（#53545c / #787983 / #9fa0a9）在灰底上几乎没有对比（2026-11-01 用户
+     截图：侧栏导航与分组标题看不清）。整体压深一到两档，层级仍靠明度拉开。 */
+  --fg:#141416;
+  --fg2:#33343b;
+  --fg3:#4e4f58;
+  --fg4:#77787f;
 
   /* ---- 强调色（浅底上要压深一档才够对比度） ----------------------- */
   --accent:#4f5bd5;
@@ -70,6 +73,21 @@
   --glass-lo:inset 0 -1px 0 rgba(24,26,36,.05);
   --glass-drop:0 1px 2px rgba(24,26,36,.07);
 
+  /* ---- 窗口级材质：深色版那层"黑纱"，浅色版只能翻成"白纱" --------
+     这几个令牌默认按深色写的（rgba(9,9,12,.34) 之类），浅色下照抄会让
+     整窗变成一块灰玻璃、侧栏和标题栏比卡片还深。浅色版一律改成低饱和的
+     白雾，透明度乘同一个 --glass-film（100% 透明度时一起归零）。 */
+  --glass-scrim:linear-gradient(180deg,
+    rgba(250,250,252,calc(.62 * var(--glass-film))) 0%,
+    rgba(250,250,252,calc(.46 * var(--glass-film))) 26%,
+    rgba(250,250,252,calc(.48 * var(--glass-film))) 72%,
+    rgba(246,246,249,calc(.64 * var(--glass-film))) 100%);
+  --glass-panel:rgba(255,255,255,calc(.50 * var(--glass-film)));
+  --glass-dock:rgba(255,255,255,calc(.30 * var(--glass-film)));
+  --glass-hair:rgba(24,26,36,.075);
+  --glass-edge:rgba(255,255,255,.65);
+  --glass-veil:rgba(247,247,250,.74);
+
   /* ---- 阴影：浅、散、低饱和 --------------------------------------- */
   --shadow:0 18px 44px rgba(24,26,36,.14),0 1px 2px rgba(24,26,36,.07);
   --shadow-sm:0 1px 2px rgba(24,26,36,.07);
@@ -79,10 +97,10 @@
   --line-soft:#e9e9ed;
   --code-bg:#f2f2f5;
   --user:#2c2d34;
-  --assistant:#1a1a1e;
-  --tool:#53545c;
-  --system:#666771;
-  --other:#787983;
+  --assistant:#141416;
+  --tool:#3b3c43;
+  --system:#4a4b54;
+  --other:#545560;
 }
 
 /* ---------- 9.2 输入卡（液态玻璃的浅色版） --------------------------
@@ -138,6 +156,14 @@
 /* 弹窗/浮层遮罩：深色版是近乎纯黑 55%，浅色下压到 30% 的冷灰 */
 :root[data-theme="light"] .modal{background:rgba(24,26,36,.30)}
 :root[data-theme="light"] .pnl-ov{background:color-mix(in srgb,var(--bg) 55%,rgba(24,26,36,.45))}
+/* 消息列的中心纱（05-stream.css）：深色版是压暗换可读性，浅色版必须提亮 ——
+   照抄就是空态/正文底下压着一团灰（2026-10-31 截图里主区发灰的原因） */
+:root[data-theme="light"] .chat{
+  background:radial-gradient(115% 95% at 50% 45%,
+    rgba(250,250,252,calc(.72 * var(--glass-film))) 0%,
+    rgba(250,250,252,calc(.46 * var(--glass-film))) 55%,
+    rgba(250,250,252,calc(.14 * var(--glass-film))) 82%,
+    rgba(250,250,252,0) 100%);}
 
 /* ---------- 9.4 语义小徽标 / 停止钮：浅色下白字白底读不出来 ----------
    .badge.warn/.badge.ok 在深色版用深字压彩色底；.cmp-send.stop 用白字压
@@ -183,3 +209,11 @@
 :root[data-theme="light"] .ct-root .ct-screen::-webkit-scrollbar-thumb{background:#3a3a42;
   border:2px solid transparent;background-clip:content-box}
 :root[data-theme="light"] .ct-root .ct-screen::-webkit-scrollbar-thumb:hover{background:#4b4b55}
+
+/* ---------- 9.7 设置页里的两块面板 ----------------------------------
+   06b-settings.css 把分节导航与粘性页头写成了深色材质（白 3.5% 的水洗 +
+   rgba(16,16,21,.55) 的页头），浅色下照抄就是「黑侧栏 + 黑标题带 + 白卡片」
+   （2026-10-31 用户截图）。浅色版反过来：两块都比纱更亮一档，边界交给
+   那一道发丝线。 */
+:root[data-theme="light"] #settings .set-side{background:rgba(255,255,255,.55)}
+:root[data-theme="light"] #settings .set-head{background:rgba(255,255,255,.72)}
