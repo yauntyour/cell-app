@@ -2547,6 +2547,7 @@ namespace app
                     }
                     nlohmann::json msgs = c->h.now().msg();
                     std::string what = c->h.now().id();
+                    std::string saved_stem; // 非空 = 导出的是存档，默认文件名带上它
                     const std::string saved_name = cell::text::trim(args.value("saved", ""));
                     if (!saved_name.empty())
                     {
@@ -2554,16 +2555,25 @@ namespace app
                         std::filesystem::path hit;
                         if (!cell::chat::resolve_saved(c->h.now().directory() / "saved", saved_name, hit, serr))
                             return ok_error(serr);
+                        // notice-*.jsonl 是通知快照（{id,from,topic,body,state}），不是消息
+                        // 转录；按消息解析会得到一张垃圾页，直接拒掉
+                        if (hit.filename().string().rfind("notice-", 0) == 0)
+                            return ok_error("saved archive " + hit.filename().string() +
+                                            " is a notice snapshot, not a transcript");
                         std::ifstream f(hit);
                         std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
                         msgs = cell::chat::parse_messages_jsonl(text);
                         if (msgs.empty())
                             return ok_error("saved archive " + hit.filename().string() + " is empty or unreadable");
                         what = hit.stem().string();
+                        saved_stem = what;
                     }
                     std::filesystem::path out = cell::text::trim(args.value("path", ""));
                     if (out.empty())
-                        out = std::filesystem::path(c->cwd) / std::format("cell-export-{}.html", cell::utc_stamp());
+                        out = std::filesystem::path(c->cwd) /
+                              (saved_stem.empty()
+                                   ? std::format("cell-export-{}.html", cell::utc_stamp())
+                                   : std::format("cell-export-{}-{}.html", saved_stem, cell::utc_stamp()));
                     else
                     {
                         if (out.is_relative())
@@ -2587,6 +2597,8 @@ namespace app
                                             export_ctx.jobs.size(), out.string()));
                     nlohmann::json r = ok();
                     r["path"] = out.string();
+                    r["what"] = what; // 会话 id 或存档名（saved 用前缀匹配时这里是命中的那份）
+                    r["saved"] = saved_stem;
                     r["msgs"] = (long long)msgs.size();
                     r["jobs"] = (long long)export_ctx.jobs.size();
                     return r;

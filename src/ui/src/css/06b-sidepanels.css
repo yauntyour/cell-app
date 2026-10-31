@@ -71,6 +71,16 @@
 .nacts .btn{flex:none}
 
 /* ---- 6b.3 存档卡 --------------------------------------------------- */
+/* 一行 = 一张卡：卡面（打开浮窗）+ 右侧导出按钮，共用一层底/边框 */
+.archrow{display:flex;align-items:center;gap:2px;margin:0 0 8px;padding-right:6px;
+  background:var(--elev-1);border:1px solid var(--line);border-radius:var(--radius);
+  transition:background var(--dur) var(--ease),border-color var(--dur) var(--ease)}
+.archrow:hover{background:var(--elev-2);border-color:var(--line2)}
+.archrow .archcard{flex:1;width:auto;min-width:0;margin:0;padding:10px 4px 10px 12px;
+  background:none;border:0;border-radius:0}
+.archrow .archcard:hover{background:none;border-color:transparent}
+.arch-dl{flex:none;align-self:center;color:var(--fg4)}
+.arch-dl:hover{color:var(--fg)}
 .archcard{display:flex;align-items:center;gap:10px;width:100%;margin:0 0 8px;padding:10px 12px;
   background:var(--elev-1);border:1px solid var(--line);border-radius:var(--radius);
   text-align:left;transition:background var(--dur) var(--ease),border-color var(--dur) var(--ease)}

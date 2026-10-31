@@ -2130,6 +2130,16 @@ body.locked{overflow:hidden}
 .nacts .btn{flex:none}
 
 /* ---- 6b.3 存档卡 --------------------------------------------------- */
+/* 一行 = 一张卡：卡面（打开浮窗）+ 右侧导出按钮，共用一层底/边框 */
+.archrow{display:flex;align-items:center;gap:2px;margin:0 0 8px;padding-right:6px;
+  background:var(--elev-1);border:1px solid var(--line);border-radius:var(--radius);
+  transition:background var(--dur) var(--ease),border-color var(--dur) var(--ease)}
+.archrow:hover{background:var(--elev-2);border-color:var(--line2)}
+.archrow .archcard{flex:1;width:auto;min-width:0;margin:0;padding:10px 4px 10px 12px;
+  background:none;border:0;border-radius:0}
+.archrow .archcard:hover{background:none;border-color:transparent}
+.arch-dl{flex:none;align-self:center;color:var(--fg4)}
+.arch-dl:hover{color:var(--fg)}
 .archcard{display:flex;align-items:center;gap:10px;width:100%;margin:0 0 8px;padding:10px 12px;
   background:var(--elev-1);border:1px solid var(--line);border-radius:var(--radius);
   text-align:left;transition:background var(--dur) var(--ease),border-color var(--dur) var(--ease)}
@@ -3430,7 +3440,7 @@ const COMMANDS = [
   { name: '/files', usage: '/files [path]', desc: '打开工作区文件面板；Ctrl+P 快速打开', run: () => openDock('files') },
   { name: '/terminal', usage: '/terminal', desc: '打开终端面板（在工作区运行命令）', run: () => openDock('terminal') },
   { name: '/save', usage: '/save', desc: '立即把当前会话写盘（对齐 CLI）', run: () => saveSession() },
-  { name: '/export', usage: '/export [path]', desc: '导出会话为自包含 HTML（默认落到工作区目录）', ctx: 'export' },
+  { name: '/export', usage: '/export [path] | /export saved <name> [path]', desc: '导出会话（或某个历史存档）为自包含 HTML（默认落到工作区目录）', ctx: 'export' },
   { name: '/reload', usage: '/reload', desc: '继续被中断的回合（对齐 CLI）', run: () => resumeTurn() },
   { name: '/help', usage: '/help', desc: '显示指令帮助', run: () => toast('输入 / 查看全部指令；↑↓ 选择，Tab 补全，Enter 执行', 'ok', 4200) },
   // ---- CLI 指令名别名：候选列表里不显示，输入完整名字照常执行 ----
@@ -3778,12 +3788,31 @@ function saveSession(ws) {
     toast('会话已保存（' + out.msgs + ' 条消息）', 'ok');
   });
 }
-function exportSession(t, path) {
+// 导出为自包含 HTML。saved 给存档名（对齐 CLI /export saved NAME）时导出的
+// 是那份压缩存档，而不是当前会话的完整转录。
+function exportSession(t, path, saved) {
   const ws = (t && t.ws) || S.active;
-  return cmd('session.export', { ws: ws, path: path || '' }).then(out => {
-    if (!out || out.ok === false) { toast((out && out.error) || '导出失败', 'bad', 5200); return; }
-    toast('已导出 ' + out.msgs + ' 条消息 → ' + out.path, 'ok', 7000);
+  const args = { ws: ws, path: path || '' };
+  if (saved) args.saved = saved;
+  return cmd('session.export', args).then(out => {
+    if (!out || out.ok === false) {
+      const err = String((out && out.error) || '');
+      toast(err.indexOf('a turn is running') >= 0 ? '回合进行中，结束后再导出' : (err || '导出失败'), 'bad', 5200);
+      return;
+    }
+    // 服务端回的 what 是真正命中的存档名（saved 支持前缀/子串匹配）
+    const hit = out.saved ? ('存档 ' + (out.what || saved) + ' 的 ') : '';
+    toast('已导出' + hit + out.msgs + ' 条消息 → ' + out.path, 'ok', 7000);
   });
+}
+// 存档卡 / 存档浮窗上的「导出」动作
+function exportArchive(t, a) {
+  if (!a || !a.name) return;
+  return exportSession(t, '', a.name);
+}
+// notice-* 归档是通知快照（{id,from,topic,body,state}），不是消息转录，导不出 HTML
+function archiveExportable(a) {
+  return !!a && !!a.name && !String(a.name).startsWith('notice-');
 }
 // 立刻压缩上下文（/compact 与顶栏按钮共用）；压缩在 worker 里跑，进度走
 // compact_begin / compact_end 事件，这里只负责投递
@@ -4369,6 +4398,8 @@ async function refreshArchives(ws, force) {
   if (out && out.ok !== false && Array.isArray(out.archives)) t2.archives = out.archives;
   else t2.archivesFor = ''; // 失败允许重试
   schedule('dock', renderDock);
+  // 正在敲 /export 的存档名 → 候选刚拉回来，重建一次面板
+  if (t2.composer && /^\/export\b/.test(t2.composer.text || '') && typeof buildSlash === 'function') buildSlash();
 }
 function markChatTeamwork(ws) { if (ws === S.active) schedule('dock', renderDock); }
 
@@ -8358,7 +8389,7 @@ function showReport(t, job, workerName) {
 }
 
 /* ---------- 浮窗骨架（子代理对话 / 历史存档共用） -------------------- */
-function makeFloatWin(t, key, roleLabel, title) {
+function makeFloatWin(t, key, roleLabel, title, actions) {
   const old = t.wins.get(key);
   if (old) { old.node.style.display = ''; old.node.classList.remove('min'); return null; }
   const node = el('div', 'wwin');
@@ -8368,6 +8399,13 @@ function makeFloatWin(t, key, roleLabel, title) {
   head.appendChild(el('span', 'wwin-title trunc', trunc(title, 24)));
   head.appendChild(el('span', 'grow'));
   const wctl = el('div', 'wwin-ctl');
+  for (const ac of (actions || [])) {
+    const b = el('button', 'icon-btn sm');
+    b.appendChild(iconEl(ac.icon, 'sm'));
+    b.title = ac.title || '';
+    b.onclick = ac.on;
+    wctl.appendChild(b);
+  }
   const mn = el('button', 'icon-btn sm');
   mn.appendChild(iconEl('chevronDown', 'sm'));
   mn.title = '最小化';
@@ -9093,6 +9131,7 @@ function renderDockArchives(body, t) {
   body.appendChild(list);
 }
 function renderArchiveCard(t, a) {
+  const row = el('div', 'archrow');
   const card = el('button', 'archcard');
   const ic = el('span', 'arch-ico');
   ic.appendChild(iconEl('archive', 'lg'));
@@ -9109,13 +9148,24 @@ function renderArchiveCard(t, a) {
   card.appendChild(chev);
   card.title = (a.name || '') + '  ·  点击在小窗中查看';
   card.onclick = () => openArchiveWindow(t, a);
-  return card;
+  row.appendChild(card);
+  // 每份存档都能单独导出成自包含 HTML（= /export saved NAME）
+  if (archiveExportable(a)) {
+    const dl = el('button', 'icon-btn sm arch-dl');
+    dl.appendChild(iconEl('download', 'sm'));
+    dl.title = '导出该存档为 HTML（/export saved ' + a.name + '）';
+    dl.onclick = ev => { ev.stopPropagation(); exportArchive(t, a); };
+    row.appendChild(dl);
+  }
+  return row;
 }
 // 存档浮窗：内容是静态的，一次拉全量，不需要轮询
 function openArchiveWindow(t, a) {
   if (!a || !a.name) return;
   const key = 'arch|' + a.name;
-  const w = makeFloatWin(t, key, '存档', a.name);
+  const w = makeFloatWin(t, key, '存档', a.name, archiveExportable(a) ? [
+    { icon: 'download', title: '导出该存档为 HTML（/export saved ' + a.name + '）', on: () => exportArchive(t, a) },
+  ] : []);
   if (!w) return;
   w.body.replaceChildren(el('div', 'dim small', '正在加载存档…'));
   cmd('session.archive', { ws: t.ws, id: t.session, name: a.name }).then(out => {
@@ -11009,6 +11059,21 @@ function slashArgItems(cmdName) {
       add('stop <id>', 'stop ', '停止任务');
       break;
     }
+    case 'export': {
+      // 参数候选 = 当前会话的压缩存档（/export saved NAME）。列表没拉过就先拉，
+      // 拉完 refreshArchives 会重建这个面板，候选自然补上
+      const t2 = curTab();
+      if (t2 && t2.archivesFor !== t2.session) refreshArchives(t2.ws, false);
+      for (const a of ((t2 && Array.isArray(t2.archives)) ? t2.archives : [])) {
+        if (!archiveExportable(a)) continue;
+        const bits = [];
+        if (a.msgs) bits.push(a.msgs + ' 条消息');
+        if (a.mtime) bits.push(relTime(a.mtime));
+        // label 直接写成插入后的样子（saved NAME），行里就不再重复一遍语法
+        add('saved ' + a.name, 'saved ' + a.name, '存档' + (bits.length ? ' · ' + bits.join(' · ') : ''));
+      }
+      break;
+    }
     case 'workspaces': {
       for (const w of S.workspaces) add(baseName(w.cwd), w.ws, w.cwd);
       for (const c2 of S.recentCwds) add(baseName(c2), c2, c2);
@@ -11640,7 +11705,15 @@ async function execSlash(t, name, arg) {
         toast('已加载技能：' + out.name + '（' + out.chars + ' 字符）', 'ok', 4200);
       });
     }
-    case '/export': return exportSession(t, arg);
+    case '/export': {
+      // 对齐 CLI：/export [path] | /export saved NAME [path]
+      const m = String(arg || '').trim().split(/\s+/).filter(Boolean);
+      if (m[0] === 'saved') {
+        if (!m[1]) { toast('用法：/export saved <存档名> [path]（存档名见右侧「存档」面板）', 'bad', 5200); break; }
+        return exportSession(t, m.slice(2).join(' '), m[1]);
+      }
+      return exportSession(t, arg, '');
+    }
     case '/ins': {
       // 对齐 CLI：文本作为用户消息发出去并触发一轮（GUI 里等同于直接输入）
       if (!arg) { toast('用法：/ins <message text>'); break; }
@@ -13911,12 +13984,15 @@ const Mock = {
         const tt = S.tabs.get(ws);
         return Promise.resolve({ ok: true, id: sid, msgs: (tt && tt.msgs ? tt.msgs.length : 0) });
       }
-      case 'session.export':
+      case 'session.export': {
+        // saved 给存档名时导出的是那份存档（对齐 /export saved NAME）
+        const nm = String(args.saved || '').trim().replace(/\.jsonl$/, '');
         return Promise.resolve({
           ok: true,
-          path: (this.cwdA + '\\cell-export-20261029-211500.html'),
-          msgs: 14, jobs: 0,
+          path: this.cwdA + '\\cell-export-20261029-211500' + (nm ? '-' + nm : '') + '.html',
+          what: nm || sid, saved: nm, msgs: nm ? 24 : 14, jobs: 0,
         });
+      }
       case 'turn.resume':
         return Promise.resolve({
           ok: false,

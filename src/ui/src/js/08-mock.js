@@ -464,12 +464,15 @@ const Mock = {
         const tt = S.tabs.get(ws);
         return Promise.resolve({ ok: true, id: sid, msgs: (tt && tt.msgs ? tt.msgs.length : 0) });
       }
-      case 'session.export':
+      case 'session.export': {
+        // saved 给存档名时导出的是那份存档（对齐 /export saved NAME）
+        const nm = String(args.saved || '').trim().replace(/\.jsonl$/, '');
         return Promise.resolve({
           ok: true,
-          path: (this.cwdA + '\\cell-export-20261029-211500.html'),
-          msgs: 14, jobs: 0,
+          path: this.cwdA + '\\cell-export-20261029-211500' + (nm ? '-' + nm : '') + '.html',
+          what: nm || sid, saved: nm, msgs: nm ? 24 : 14, jobs: 0,
         });
+      }
       case 'turn.resume':
         return Promise.resolve({
           ok: false,

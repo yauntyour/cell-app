@@ -474,7 +474,7 @@ function showReport(t, job, workerName) {
 }
 
 /* ---------- 浮窗骨架（子代理对话 / 历史存档共用） -------------------- */
-function makeFloatWin(t, key, roleLabel, title) {
+function makeFloatWin(t, key, roleLabel, title, actions) {
   const old = t.wins.get(key);
   if (old) { old.node.style.display = ''; old.node.classList.remove('min'); return null; }
   const node = el('div', 'wwin');
@@ -484,6 +484,13 @@ function makeFloatWin(t, key, roleLabel, title) {
   head.appendChild(el('span', 'wwin-title trunc', trunc(title, 24)));
   head.appendChild(el('span', 'grow'));
   const wctl = el('div', 'wwin-ctl');
+  for (const ac of (actions || [])) {
+    const b = el('button', 'icon-btn sm');
+    b.appendChild(iconEl(ac.icon, 'sm'));
+    b.title = ac.title || '';
+    b.onclick = ac.on;
+    wctl.appendChild(b);
+  }
   const mn = el('button', 'icon-btn sm');
   mn.appendChild(iconEl('chevronDown', 'sm'));
   mn.title = '最小化';
@@ -1209,6 +1216,7 @@ function renderDockArchives(body, t) {
   body.appendChild(list);
 }
 function renderArchiveCard(t, a) {
+  const row = el('div', 'archrow');
   const card = el('button', 'archcard');
   const ic = el('span', 'arch-ico');
   ic.appendChild(iconEl('archive', 'lg'));
@@ -1225,13 +1233,24 @@ function renderArchiveCard(t, a) {
   card.appendChild(chev);
   card.title = (a.name || '') + '  ·  点击在小窗中查看';
   card.onclick = () => openArchiveWindow(t, a);
-  return card;
+  row.appendChild(card);
+  // 每份存档都能单独导出成自包含 HTML（= /export saved NAME）
+  if (archiveExportable(a)) {
+    const dl = el('button', 'icon-btn sm arch-dl');
+    dl.appendChild(iconEl('download', 'sm'));
+    dl.title = '导出该存档为 HTML（/export saved ' + a.name + '）';
+    dl.onclick = ev => { ev.stopPropagation(); exportArchive(t, a); };
+    row.appendChild(dl);
+  }
+  return row;
 }
 // 存档浮窗：内容是静态的，一次拉全量，不需要轮询
 function openArchiveWindow(t, a) {
   if (!a || !a.name) return;
   const key = 'arch|' + a.name;
-  const w = makeFloatWin(t, key, '存档', a.name);
+  const w = makeFloatWin(t, key, '存档', a.name, archiveExportable(a) ? [
+    { icon: 'download', title: '导出该存档为 HTML（/export saved ' + a.name + '）', on: () => exportArchive(t, a) },
+  ] : []);
   if (!w) return;
   w.body.replaceChildren(el('div', 'dim small', '正在加载存档…'));
   cmd('session.archive', { ws: t.ws, id: t.session, name: a.name }).then(out => {

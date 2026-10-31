@@ -1504,6 +1504,21 @@ function slashArgItems(cmdName) {
       add('stop <id>', 'stop ', '停止任务');
       break;
     }
+    case 'export': {
+      // 参数候选 = 当前会话的压缩存档（/export saved NAME）。列表没拉过就先拉，
+      // 拉完 refreshArchives 会重建这个面板，候选自然补上
+      const t2 = curTab();
+      if (t2 && t2.archivesFor !== t2.session) refreshArchives(t2.ws, false);
+      for (const a of ((t2 && Array.isArray(t2.archives)) ? t2.archives : [])) {
+        if (!archiveExportable(a)) continue;
+        const bits = [];
+        if (a.msgs) bits.push(a.msgs + ' 条消息');
+        if (a.mtime) bits.push(relTime(a.mtime));
+        // label 直接写成插入后的样子（saved NAME），行里就不再重复一遍语法
+        add('saved ' + a.name, 'saved ' + a.name, '存档' + (bits.length ? ' · ' + bits.join(' · ') : ''));
+      }
+      break;
+    }
     case 'workspaces': {
       for (const w of S.workspaces) add(baseName(w.cwd), w.ws, w.cwd);
       for (const c2 of S.recentCwds) add(baseName(c2), c2, c2);
@@ -2135,7 +2150,15 @@ async function execSlash(t, name, arg) {
         toast('已加载技能：' + out.name + '（' + out.chars + ' 字符）', 'ok', 4200);
       });
     }
-    case '/export': return exportSession(t, arg);
+    case '/export': {
+      // 对齐 CLI：/export [path] | /export saved NAME [path]
+      const m = String(arg || '').trim().split(/\s+/).filter(Boolean);
+      if (m[0] === 'saved') {
+        if (!m[1]) { toast('用法：/export saved <存档名> [path]（存档名见右侧「存档」面板）', 'bad', 5200); break; }
+        return exportSession(t, m.slice(2).join(' '), m[1]);
+      }
+      return exportSession(t, arg, '');
+    }
     case '/ins': {
       // 对齐 CLI：文本作为用户消息发出去并触发一轮（GUI 里等同于直接输入）
       if (!arg) { toast('用法：/ins <message text>'); break; }

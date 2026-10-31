@@ -55,7 +55,7 @@ const COMMANDS = [
   { name: '/files', usage: '/files [path]', desc: '打开工作区文件面板；Ctrl+P 快速打开', run: () => openDock('files') },
   { name: '/terminal', usage: '/terminal', desc: '打开终端面板（在工作区运行命令）', run: () => openDock('terminal') },
   { name: '/save', usage: '/save', desc: '立即把当前会话写盘（对齐 CLI）', run: () => saveSession() },
-  { name: '/export', usage: '/export [path]', desc: '导出会话为自包含 HTML（默认落到工作区目录）', ctx: 'export' },
+  { name: '/export', usage: '/export [path] | /export saved <name> [path]', desc: '导出会话（或某个历史存档）为自包含 HTML（默认落到工作区目录）', ctx: 'export' },
   { name: '/reload', usage: '/reload', desc: '继续被中断的回合（对齐 CLI）', run: () => resumeTurn() },
   { name: '/help', usage: '/help', desc: '显示指令帮助', run: () => toast('输入 / 查看全部指令；↑↓ 选择，Tab 补全，Enter 执行', 'ok', 4200) },
   // ---- CLI 指令名别名：候选列表里不显示，输入完整名字照常执行 ----
@@ -403,12 +403,31 @@ function saveSession(ws) {
     toast('会话已保存（' + out.msgs + ' 条消息）', 'ok');
   });
 }
-function exportSession(t, path) {
+// 导出为自包含 HTML。saved 给存档名（对齐 CLI /export saved NAME）时导出的
+// 是那份压缩存档，而不是当前会话的完整转录。
+function exportSession(t, path, saved) {
   const ws = (t && t.ws) || S.active;
-  return cmd('session.export', { ws: ws, path: path || '' }).then(out => {
-    if (!out || out.ok === false) { toast((out && out.error) || '导出失败', 'bad', 5200); return; }
-    toast('已导出 ' + out.msgs + ' 条消息 → ' + out.path, 'ok', 7000);
+  const args = { ws: ws, path: path || '' };
+  if (saved) args.saved = saved;
+  return cmd('session.export', args).then(out => {
+    if (!out || out.ok === false) {
+      const err = String((out && out.error) || '');
+      toast(err.indexOf('a turn is running') >= 0 ? '回合进行中，结束后再导出' : (err || '导出失败'), 'bad', 5200);
+      return;
+    }
+    // 服务端回的 what 是真正命中的存档名（saved 支持前缀/子串匹配）
+    const hit = out.saved ? ('存档 ' + (out.what || saved) + ' 的 ') : '';
+    toast('已导出' + hit + out.msgs + ' 条消息 → ' + out.path, 'ok', 7000);
   });
+}
+// 存档卡 / 存档浮窗上的「导出」动作
+function exportArchive(t, a) {
+  if (!a || !a.name) return;
+  return exportSession(t, '', a.name);
+}
+// notice-* 归档是通知快照（{id,from,topic,body,state}），不是消息转录，导不出 HTML
+function archiveExportable(a) {
+  return !!a && !!a.name && !String(a.name).startsWith('notice-');
 }
 // 立刻压缩上下文（/compact 与顶栏按钮共用）；压缩在 worker 里跑，进度走
 // compact_begin / compact_end 事件，这里只负责投递
@@ -994,6 +1013,8 @@ async function refreshArchives(ws, force) {
   if (out && out.ok !== false && Array.isArray(out.archives)) t2.archives = out.archives;
   else t2.archivesFor = ''; // 失败允许重试
   schedule('dock', renderDock);
+  // 正在敲 /export 的存档名 → 候选刚拉回来，重建一次面板
+  if (t2.composer && /^\/export\b/.test(t2.composer.text || '') && typeof buildSlash === 'function') buildSlash();
 }
 function markChatTeamwork(ws) { if (ws === S.active) schedule('dock', renderDock); }
 
