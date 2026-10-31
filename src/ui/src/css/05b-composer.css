@@ -19,8 +19,10 @@
               法线压向中心，文字在边缘被弯折、出现重影，中间保持原样。
               管线与参考实现一致（见 05-composer.js 的 I1b）。
               后面再跟 blur()/contrast()/brightness()/saturate()，也是参考的做法。
-     ② 厚度   一圈跟着圆角走的亮边（::before 渐变环 + 内侧柔光）：顶亮 →
-              腰微亮 → 底回光，亮度**永不掉到 0**，左右两端才不会"断线"。
+     ② 厚度   只有内顶镜面 + 沿边柔光 + 底部内阴影，**不画描边**：没有 border、
+              没有内环、没有外暗线，也没有跟着圆角走的 conic 亮边（2026-10-31
+              用户要求「去掉输入栏液态玻璃的所有边框」）。边界只由 ① 的折射带
+              和顶部反光交代 —— 玻璃靠折射成形，不靠画线。
      ③ 面     极淡的「白 → 透明 → 黑」竖向渐变 + 参考实现那条
               `inset 0 -10px 25px rgba(0,0,0,.15)` 的底部内阴影。
    ⚠️ 引用 url(#cmp-lens) 的那条声明单独挂在 .glass-lens 上：滤镜元素是 JS
@@ -52,14 +54,16 @@
   /* ① 降级路径（滤镜还没建好 / 老引擎）：纯磨砂 */
   -webkit-backdrop-filter:blur(var(--cmp-glass-blur,3px)) saturate(1.1);
   backdrop-filter:blur(var(--cmp-glass-blur,3px)) saturate(1.1);
-  /* ② 厚度：内顶镜面 + 均匀内环 + 沿边柔光带 + 底部内阴影 + 外暗线 + 投影。
-     内环用 box-shadow 而不是 border —— border 会把圆角切出直角感。 */
+  /* ② 厚度：只有"顶部受光 + 底部内阴影 + 投影"三样，**一条描边都没有**。
+     顶部受光用大模糊+负扩散（0 20px 24px -20px）而不是 `inset 0 1px 0`：
+     后者在圆角处会描出一圈 1px 的亮弧，看起来仍然像描边（2026-10-31 实测），
+     现在它是一层往上渐隐的柔光，只交代"光从上面来"，不交代边界。
+     投影分两层：贴地的接触阴影负责"离面"，大而散的远影负责"浮起来"——
+     没有描边时，这两层影子就是卡片唯一的外形线索。 */
   box-shadow:
-    inset 0 1px 0 rgba(255,255,255,.22),
-    inset 0 0 0 1px rgba(255,255,255,.10),
-    inset 0 0 8px -2px rgba(255,255,255,.16),
+    inset 0 20px 24px -20px rgba(255,255,255,.22),
     inset 0 -10px 25px rgba(0,0,0,.15),
-    0 0 0 1px rgba(0,0,0,.45),
+    0 2px 10px -4px rgba(0,0,0,.55),
     0 20px 48px -28px rgba(0,0,0,.90);
 }
 /* ① 折射：与参考实现同一条滤镜链（url() 在最前，其余是参考里的那串） */
@@ -69,40 +73,17 @@
   backdrop-filter:url(#cmp-lens) blur(var(--cmp-glass-blur,3px))
                   contrast(1.2) brightness(1.05) saturate(1.1);
 }
-/* ② 圆滑边框：渐变环用 mask 掏空中间只留描边（随圆角走，不会画出直角）。
-   用 **conic** 而不是 linear：光从左上来，左上角最亮，沿顺时针绕一圈逐渐
-   变暗、到右下角最低、再从底部回光——这才是"液态玻璃"的受光方式；
-   linear 会让左右两条竖边亮度完全相同，看着像一张描边卡片。
-   最低也留 .13，左右两端不会断线；1.25px 而不是 1px —— 玻璃边缘是
-   一条有厚度的亮线，不是发丝。 */
-#composerInner::before{
-  content:"";position:absolute;inset:0;z-index:3;pointer-events:none;
-  border-radius:inherit;padding:1.25px;
-  background:conic-gradient(from 215deg at 50% 45%,
-    rgba(255,255,255,.50) 0deg,
-    rgba(255,255,255,.30) 34deg,
-    rgba(255,255,255,.19) 78deg,
-    rgba(255,255,255,.15) 118deg,
-    rgba(255,255,255,.13) 160deg,
-    rgba(255,255,255,.16) 205deg,
-    rgba(255,255,255,.22) 250deg,
-    rgba(255,255,255,.34) 300deg,
-    rgba(255,255,255,.50) 360deg);
-  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
-  -webkit-mask-composite:xor;
-          mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
-          mask-composite:exclude;
-}
+/* ② 描边：**没有**。原来的 conic 渐变环（mask 掏空只留 1.25px 亮边）与
+   内环/外暗线在 2026-10-31 一并删掉——用户要的是"没有边框"的玻璃：边缘由
+   折射带（①）+ 内顶镜面（受光）交代，不再画任何一圈线。 */
 /* 聚焦：**不加环、也不撤环**。撤掉 box-shadow 会让整块玻璃失去边界，
    上界瞬间"消失"（旧写法 :focus-within{box-shadow:none} 就是这个坑）；
-   只把边缘略微提亮，作为"可输入"的提示。 */
+   只把顶部柔光与底部内阴影略微加深，作为"可输入"的提示。 */
 #composerInner:focus-within{
   box-shadow:
-    inset 0 1px 0 rgba(255,255,255,.26),
-    inset 0 0 0 1px rgba(255,255,255,.13),
-    inset 0 0 8px -2px rgba(255,255,255,.19),
-    inset 0 -10px 25px rgba(0,0,0,.15),
-    0 0 0 1px rgba(0,0,0,.45),
+    inset 0 20px 24px -20px rgba(255,255,255,.28),
+    inset 0 -10px 25px rgba(0,0,0,.17),
+    0 2px 10px -4px rgba(0,0,0,.55),
     0 20px 48px -28px rgba(0,0,0,.90);
 }
 /* Teamwork 模式：工作流编辑器要更多纵向空间，高度直接给到 64vh（上界同样固定）；
@@ -140,7 +121,7 @@
 .cf-chip{
   display:inline-flex;align-items:center;gap:6px;max-width:270px;
   padding:3px 5px 3px 7px;border-radius:var(--radius-s);
-  background:var(--glass-face);border:1px solid var(--glass-line);
+  background:var(--glass-face);border:0;
   box-shadow:var(--glass-hi),var(--glass-lo);
   font-size:12px;color:var(--fg2);
   animation:msgIn var(--dur) var(--ease);
@@ -157,7 +138,9 @@
 .cf-x:hover{background:var(--raise2);color:var(--bad)}
 .cf-chip.up{opacity:.78}
 .cf-chip.up .cf-ico .uico{animation:spin 1.1s linear infinite}
-.cf-chip.err{border-color:color-mix(in srgb,var(--bad) 42%,var(--line))}
+/* 出错态：没有描边了，用一圈极淡的 red 外发光代替原来那条红边 */
+.cf-chip.err{box-shadow:var(--glass-hi),var(--glass-lo),
+  0 0 0 1.5px color-mix(in srgb,var(--bad) 30%,transparent)}
 .cf-chip.err .cf-size,.cf-chip.err .cf-ico{color:var(--bad)}
 
 /* 附件悬浮预览：贴在被悬浮的 chip 上方，图片按 320×240 装下，文本给前 4k 字符。
@@ -196,14 +179,13 @@
   width:28px;height:28px;flex:none;border-radius:var(--radius-full);
   display:inline-flex;align-items:center;justify-content:center;
   color:var(--fg2);
-  border:1px solid var(--glass-line);
+  border:0;
   background:var(--glass-face);
   box-shadow:var(--glass-hi),var(--glass-lo),var(--glass-drop);
   transition:background var(--dur) var(--ease),color var(--dur) var(--ease),
-             border-color var(--dur) var(--ease),box-shadow var(--dur) var(--ease);
+             box-shadow var(--dur) var(--ease);
 }
 .cmp-add:hover{background:var(--glass-face-hover);color:var(--fg);
-  border-color:var(--glass-line-hover);
   box-shadow:var(--glass-hi),var(--glass-lo),0 2px 6px -2px rgba(0,0,0,.5)}
 .cmp-add:active{background:var(--glass-face-on)}
 .cmp-add .uico{width:16px;height:16px;stroke-width:1.8}
@@ -212,21 +194,21 @@
 .cmp-chip{
   display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 8px;
   border-radius:var(--radius-full);
-  border:1px solid var(--glass-line);
+  border:0;
   background:var(--glass-face);
   box-shadow:var(--glass-hi),var(--glass-lo),var(--glass-drop);
   color:var(--fg2);font-size:12.5px;line-height:1;max-width:100%;min-width:0;
-  transition:background var(--dur) var(--ease),border-color var(--dur) var(--ease),
+  transition:background var(--dur) var(--ease),
              color var(--dur) var(--ease),box-shadow var(--dur) var(--ease);
 }
-.cmp-chip:hover{background:var(--glass-face-hover);border-color:var(--glass-line-hover);
+.cmp-chip:hover{background:var(--glass-face-hover);
   color:var(--fg);box-shadow:var(--glass-hi),var(--glass-lo),0 2px 6px -2px rgba(0,0,0,.5)}
 .cmp-chip:active{background:var(--glass-face-on)}
+/* 展开态：没有描边可染色，改用一圈极淡的 accent 外发光（不画线，只发光） */
 .cmp-chip[aria-expanded="true"]{
   background:var(--glass-face-on);color:var(--fg);
-  border-color:color-mix(in srgb,var(--accent) 44%,var(--glass-line-hover));
   box-shadow:var(--glass-hi),var(--glass-lo),
-             0 0 0 2px color-mix(in srgb,var(--accent) 10%,transparent);
+             0 0 0 2px color-mix(in srgb,var(--accent) 16%,transparent);
 }
 .cmp-chip[disabled]{opacity:.42;pointer-events:none}
 .cmp-chip .cmp-chip-ico{display:inline-flex;align-items:center;justify-content:center;flex:none}
@@ -243,10 +225,13 @@
   font-family:var(--mono);font-size:12px;color:var(--fg);
 }
 /* 未选模型（切供应商后后端会清空模型）：这枚 chip 必须持续报警，否则它看上去
-   跟「已选好」一模一样，用户会一直对着它发送、然后什么都收不到 */
+   跟「已选好」一模一样，用户会一直对着它发送、然后什么都收不到。
+   没有描边了，报警靠红底 + 一圈红发光（不是画线）。 */
 .cmp-chip-model.need{
-  color:var(--bad);border-color:color-mix(in srgb,var(--bad) 45%,rgba(255,255,255,.1));
+  color:var(--bad);
   background:color-mix(in srgb,var(--bad) 14%,rgba(255,255,255,.04));
+  box-shadow:var(--glass-hi),var(--glass-lo),
+             0 0 0 2px color-mix(in srgb,var(--bad) 22%,transparent);
 }
 .cmp-chip-model.need:hover{background:color-mix(in srgb,var(--bad) 22%,rgba(255,255,255,.04))}
 .cmp-chip-model.need .cmp-model-name,
@@ -256,7 +241,8 @@
 
 /* 供应商 chip：名字一般比模型名短，窄一点即够；未配置时走 need 红字 */
 .cmp-chip-prov .cmp-chip-txt{max-width:120px;font-size:12px;color:var(--fg)}
-.cmp-chip-prov.need{border-color:color-mix(in srgb,var(--bad) 45%,rgba(255,255,255,.1))}
+.cmp-chip-prov.need{box-shadow:var(--glass-hi),var(--glass-lo),
+  0 0 0 2px color-mix(in srgb,var(--bad) 22%,transparent)}
 .cmp-chip-prov.need .cmp-chip-txt,.cmp-chip-prov.need .cmp-chip-ico .uico{color:var(--bad)}
 
 /* 工具开关：文字是名词，状态靠右侧小圆点（亮=开），关闭时整体压暗 */
@@ -280,29 +266,29 @@
 .cmp-chip-think.off .cmp-think-lv{background:transparent;color:var(--fg4)}
 
 /* 发送钮：同一块玻璃，只是**掺了强调色**（可点的动作要有颜色才认得出来）。
-   做法与 chip 完全同源：半透明面 + 顶亮描边 + 内侧上高光/下暗边，
-   只是把白色换成了 accent 的半透明色 —— 所以它仍然是"玻璃"，不是贴纸。
+   做法与 chip 完全同源：半透明面 + 内侧上高光/下暗边，只是把白色换成了
+   accent 的半透明色 —— 所以它仍然是"玻璃"，不是贴纸。
+   **没有描边**（与整条输入栏一致，2026-10-31）：可点性靠 accent 面色表达，
+   状态（空输入/运行中）靠面色与柔光切换，不靠画圈。
    空输入（.dim）退回无色玻璃；运行中（.stop）换成 bad 调。 */
 .cmp-send{
   width:34px;height:34px;flex:none;border-radius:var(--radius-full);
   display:inline-flex;align-items:center;justify-content:center;
   color:#fff;
-  border:1px solid color-mix(in srgb,var(--accent-hi) 54%,rgba(255,255,255,.34));
+  border:0;
   background:linear-gradient(180deg,
     color-mix(in srgb,var(--accent) 80%,transparent),
     color-mix(in srgb,var(--accent) 96%,transparent));
   box-shadow:inset 0 1px 0 rgba(255,255,255,.40),inset 0 -1px 0 rgba(0,0,0,.26),
              0 6px 16px -10px color-mix(in srgb,var(--accent) 85%,transparent);
   transition:background var(--dur) var(--ease),transform 140ms var(--ease),
-             color var(--dur) var(--ease),box-shadow var(--dur) var(--ease),
-             border-color var(--dur) var(--ease);
+             color var(--dur) var(--ease),box-shadow var(--dur) var(--ease);
 }
 .cmp-send .uico{width:18px;height:18px;stroke-width:2}
 .cmp-send:hover{
   background:linear-gradient(180deg,
     color-mix(in srgb,var(--accent-hi) 78%,transparent),
     color-mix(in srgb,var(--accent-hi) 96%,transparent));
-  border-color:color-mix(in srgb,var(--accent-hi) 60%,rgba(255,255,255,.44));
   box-shadow:inset 0 1px 0 rgba(255,255,255,.48),inset 0 -1px 0 rgba(0,0,0,.26),
              0 8px 20px -10px color-mix(in srgb,var(--accent) 90%,transparent)}
 .cmp-send:active{transform:scale(.93)}
@@ -310,24 +296,23 @@
 /* 空输入：没有可发的动作，就退回「一块普通玻璃」——不再是实心浅灰圆饼 */
 .cmp-send.dim{
   background:var(--glass-face);color:var(--fg3);
-  border-color:var(--glass-line);
   box-shadow:var(--glass-hi),var(--glass-lo),var(--glass-drop);
 }
-.cmp-send.dim:hover{background:var(--glass-face-hover);color:var(--fg2);
-  border-color:var(--glass-line-hover)}
-/* 运行中：同一块玻璃，只把**描边与内高光**染成 bad 调（不整块填红——
-   那样会把玻璃变成一块警示牌，和旁边同一族材质对不上）。 */
+.cmp-send.dim:hover{background:var(--glass-face-hover);color:var(--fg2)}
+/* 运行中：同一块玻璃，只把**内高光与外发光**染成 bad 调（不整块填红——
+   那样会把玻璃变成一块警示牌，和旁边同一族材质对不上）。
+   没有描边，所以"停止"读起来靠一层红色内高光 + 外发光，而不是一圈红线。 */
 .cmp-send.stop{
   background:var(--glass-face);
   color:#fff;
-  border-color:color-mix(in srgb,var(--bad) 52%,var(--glass-line));
-  box-shadow:inset 0 1px 0 rgba(255,255,255,.20),inset 0 -1px 0 rgba(0,0,0,.26),
-             0 0 0 1px color-mix(in srgb,var(--bad) 18%,transparent),
+  box-shadow:inset 0 1px 0 color-mix(in srgb,var(--bad) 40%,rgba(255,255,255,.2)),
+             inset 0 -1px 0 rgba(0,0,0,.26),
+             0 0 0 3px color-mix(in srgb,var(--bad) 14%,transparent),
              0 6px 16px -10px color-mix(in srgb,var(--bad) 70%,transparent);
 }
-.cmp-send.stop:hover{color:#fff;border-color:var(--bad);
+.cmp-send.stop:hover{color:#fff;
   background:color-mix(in srgb,var(--bad) 20%,rgba(255,255,255,.06))}
-.cmp-send[disabled]{background:rgba(255,255,255,.05);color:var(--fg4);border-color:transparent;
+.cmp-send[disabled]{background:rgba(255,255,255,.05);color:var(--fg4);
   box-shadow:none;opacity:.6;pointer-events:none}
 
 /* ---------- 5b.4 弹出菜单（模式 / 沙箱 / 模型） --------------------- */
