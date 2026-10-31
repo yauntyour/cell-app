@@ -86,7 +86,7 @@
 
 - 右栏页签：`start 开始 / files 文件 / git Git / terminal 终端 / teamwork 团队 / notices 通知 / archives 存档`，用 `<button class="docktab" data-dock="…">` 静态写在 skeleton 里（图标 + 文字，窄宽降级为纯图标）；`#dockBody` 由 `renderDock()` 按 `S.dock` 分发。**用量统计不在右栏**：入口是侧栏底部的 `#navUsage` chip（见 §5.10）。
 - 侧栏收起后，顶栏左上角常驻「展开侧栏」按钮（也可 Ctrl+B）；右栏默认打开 `start`（首次/无记忆时），开合与页签记在 localStorage `cell.dock`；`?dock=<name>` 可覆盖。
-- 输入卡：宽度 `min(calc(100% - 56px), var(--composer-max))`，底部 22px，圆角 `--radius-xl`；**材质是液态玻璃**（见 §5.11）：淡色调（`rgba(19,19,24,.42)`）+ `backdrop-filter` 磨砂 + 顶部镜面高光 + 1px 折射描边 + 边缘位移折射；聚焦时描边转为 `--accent` 并加 `--accent-soft` 外环。卡片下不再有状态行。
+- 输入卡：宽度 `min(calc(100% - 56px), var(--composer-max))`，底部 18px，圆角 `--radius-xl`；**材质是液态玻璃**（见 §5.11）：无填充色的透镜玻璃 —— 边缘 `backdrop-filter: url(#cmp-lens)` 做真实折射、同一串滤镜里加磨砂、`::before` 一圈 1.25px 渐变亮边表达厚度；聚焦只把边缘提亮，**不撤环、不加外环**。卡片下不再有状态行。
 - 消息流列宽 `min(100% - 48px, var(--chat-max))` 居中；底部留白 `var(--composer-h) + 28px`。
 - 消息流**不画滚动条**（`scrollbar-width:none` + `::-webkit-scrollbar{width:0}`）：`.chat` 铺满主区，
   滚动条会贴着窗口右缘、正好落在透明输入卡外侧，看起来像一条悬空的细线/胶囊（2026-10-31 的
@@ -264,32 +264,55 @@ Ctrl+N 新会话、Ctrl+, 设置、Ctrl+Shift+F 会话搜索、Ctrl+P 快速打�
 
 ### 5.11 液态玻璃输入卡 + 流式运行时指标（2026-10-31）
 
-**材质（css/05b-composer.css §5b.1）** —— **完全无色的玻璃**：卡片没有任何填充色、
-没有描边、没有高光、没有阴影（连 1px 白边都没有），材质只剩两件事：
-1. **高斯模糊** `backdrop-filter: blur(var(--cmp-glass-blur))`，强度由设置页
-   「外观 → 输入卡材质 → 输入卡磨砂」控制（0% = 全清晰，100% = 20px 强磨砂；
-   默认 60% ≈ 9.3px）。偏好存本机 localStorage `cell.glass`，与主题/动画等级同级。
-2. **边缘折射** `backdrop-filter: url(#cmp-glass-ref)`（Chromium/WebView2 才有）。
+**材质（css/05b-composer.css §5b.1）** —— 复刻 shuding/liquid-glass
+（github.com/shuding/liquid-glass）的透镜玻璃，三件事叠出来：
+1. **边缘折射** `backdrop-filter: url(#cmp-lens) …`：贴边一圈把背后的内容沿内法线
+   压向中心 —— 文字在边缘被弯折、放大、出现重影，中间保持原样。这是"液态"的来源。
+2. **磨砂** 同一串滤镜里的 `blur(var(--cmp-glass-blur))`，强度由设置页
+   「外观 → 输入卡材质 → 输入卡磨砂」控制（0% = 完全通透、只剩折射；100% = 20px
+   强磨砂；默认 40% ≈ 5.1px）。偏好存本机 localStorage `cell.glass.v2`。
+   后面再跟参考实现那串 `contrast(1.2) brightness(1.05) saturate(1.1)`。
+3. **厚度** `::before` 的 1.25px conic 渐变环（左上亮 → 右下暗 → 底回光，最低 .13
+   不断线）+ 均匀内环 + 沿边柔光 + 参考那条 `inset 0 -10px 25px rgba(0,0,0,.15)`。
+   聚焦只提亮、**不撤环** —— 撤掉 box-shadow 会让整块玻璃失去边界，上界"消失"。
 
-卡片本身只是「一块被磨过、被弯折的透明区域」：背后有什么就只看到什么。
-**连聚焦环也不画**（`focus-within` 的 box-shadow 已去掉）—— 焦点靠光标表达，
-否则那圈 2px 的淡蓝会在视觉上把「一整块玻璃」切成一张带边框的卡片。
+**折射层（js/05-composer.js `setupLens` / `paintLens`）** 与参考实现同一条管线：
+1. canvas 逐像素算**圆角矩形 SDF**，离边越近采样点沿内法线推得越多（带宽 = 短边
+   12%，夹在 10–22px；贴边位移 = 带宽 × 0.6），编成 R/G 位移贴图（0.5 = 不动），
+   按 2×最大偏移归一化，`feDisplacementMap scale` 取同一个值；
+2. SVG 滤镜 `feImage → feDisplacementMap`，经 `backdrop-filter` 作用在**真实背景**上；
+3. 贴图在尺寸/圆角变化时重建（`ResizeObserver`），大卡片按 1/2 分辨率算
+   （位移场平滑，肉眼无差；678×600 的重绘从 18ms 降到 4ms）。
 
-**折射层（js/05-composer.js `setupGlassRefraction`）**：对齐 shuding/liquid-glass
-（github.com/shuding/liquid-glass）的透镜思路 —— 不是「贴边一条渐变」，而是逐像素算
-**圆角矩形 SDF**：离边越近，采样点沿边的**内法线**被推得越多（贴边 = 带宽 × 0.8），
-于是背后的文字在边缘被扯开、放大，出现两道重影，中间保持原样。实现：
-1. canvas 画位移贴图（R=横向、G=纵向偏移，0.5 不动），按 2×最大偏移归一化，
-   `feDisplacementMap scale` 取同一个值；
-2. SVG 滤镜链 `feImage → feGaussianBlur → feDisplacementMap`，经 `backdrop-filter`
-   作用在**真实背景内容**上。**模糊必须写在这条滤镜里**：一旦引用 `url(#…)`，
-   Chromium 会丢掉写在 backdrop-filter 里的 `blur()` 等函数。滤镜里**不做任何色彩
-   调整**（没有 saturate/brightness/contrast —— 材质要求无色）。
-3. 滤镜区域就是元素本身（外扩会让贴图错位）；位移是「向内取景」，边缘不会吸进透明像素。
-   ⚠️ **位移必须在贴边处渐隐到 0**（最后 40% 带宽做 smoothstep 收口）：滤镜止于元素边界，
-   若边界上还带着最大位移，位移区与未位移区硬碰硬，沿边——尤其圆角——会留下一条斜的
-   「分界线」。收口后圆角只剩柔和的弯折，没有接缝。
-   贴图在尺寸/圆角变化时重建；不支持 url() 的引擎只留纯 blur 磨砂。
+⚠️ **踩过的坑（别重犯）**：
+- `<filter>` 必须 `filterUnits="userSpaceOnUse"` 并给出**像素**的 `x/y/width/height`。
+  用默认的 `objectBoundingBox` + `width="100%"` 时 Chromium 会把整条滤镜吞掉 ——
+  既不模糊也不折射，背后文字原样透上来，看着就是"上界没固定、两端没渲染好"。
+  不要再据此判定"Chromium 不支持 backdrop-filter:url()"（它支持，见
+  `_scratch/composer-glass-2026-10-31/t-lens2.py` 的最小复现）。
+- 引用 `url(#…)` 的那条 `backdrop-filter` 单独挂在 `.glass-lens` 上：滤镜元素是 JS
+  建的，在它存在之前引用会让整条声明失效、首帧直接变透明。基类是纯 blur 降级。
+- 位移剖面必须**单调**（带内缘 0 → 边界 1）。若在边界回落到 0，压缩到一半又弹回去，
+  会折出一道硬缝。
+- 卡片上内边距给到 16px：折射带约 19px 高，文字压在带内会被"从下面拉上来"的
+  背后内容糊住。
+
+**流式运行时指标（js/02-render2-chat.js `RT`）**：卡片上方的「正在输出 / 正在推理」
+指示器多一行等宽读数 —— `tok/s · ITL · TTFT · 缓存命中`；等首个 token 时只显示
+`等待首字 Ns`。数据全部真实：
+- `progress`（引擎等首 token 时每 ~500ms 上报已等毫秒）→ 反推请求发出时刻 → 实测 **TTFT**；
+- 流中的 `reason/answer` 增量 → 首 token 时刻与已输出字符数；
+- `round`（本轮结束）→ 供应商回报的 `tok_in/tok_out/cache/sec/ttft`。
+
+流里没有 token 数，所以 **tok/s 与 ITL 用上一轮实测的「字符/词元」比换算**，每轮结束
+自动校准（`RT_DEFAULT_CPT=1.6` 只是首次兜底）；**缓存命中率沿用上一轮**（本轮的命中率要
+等本轮结束才回来）。指标行 tooltip 写明了这三条口径。轮次条（`.roundbar`）同样补上
+`tok/s · ITL`，`ttft` 按引擎契约是**秒**，显示时统一乘 1000 成毫秒。
+
+- 验收：`_scratch/composer-glass-2026-10-31/verify3.py`（两端材质/上界固定/拖拽/
+  空态，断言卡片上界与「回到底部」gap 恒为 16px）、`verify4.py`（聚焦/Teamwork/
+  旧存储超限高度）、`zoom4.py`（4x 两端）、`lens-probe.py`（把高对比背景塞到卡片
+  背后看折射）、`t-lens2.py`（backdrop-filter:url 的最小复现）。
 
 **流式运行时指标（js/02-render2-chat.js `RT`）**：卡片上方的「正在输出 / 正在推理」
 指示器多一行等宽读数 —— `tok/s · ITL · TTFT · 缓存命中`；等首个 token 时只显示

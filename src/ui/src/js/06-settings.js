@@ -806,8 +806,8 @@ function buildAppearance(st) {
       const v = Number(grange.value);
       gval.textContent = v + '%';
       const b = typeof glassBlur === 'function' ? glassBlur(v / 100) : 0;
-      gdesc.textContent = '高斯模糊 ' + b.toFixed(1) + 'px —— 卡片只把背后的内容模糊掉，'
-        + '圆角与玻璃亮边是固定的；拖到最左就是全清晰。';
+      gdesc.textContent = '高斯模糊 ' + b.toFixed(1) + 'px —— 边缘折射（透镜弯折）始终开启，'
+        + '这个滑块只加磨砂；拖到最左就是完全通透、只有折射。';
       for (const [tk, at] of gtickEls) tk.classList.toggle('on', Math.abs(at - v) <= 25);
     };
     grange.oninput = paintGlass;
@@ -818,7 +818,7 @@ function buildAppearance(st) {
     gfield.appendChild(grow);
     gfield.appendChild(gticks);
     gfield.appendChild(gdesc);
-    gfield.appendChild(el('div', 'set-hint', '卡内控件（+ / 模式 / 模型 / 发送）与卡片同一套玻璃材质。设置保存在本机浏览器。'));
+    gfield.appendChild(el('div', 'set-hint', '卡片与卡内控件（+ / 模式 / 模型 / 发送）同一套液态玻璃：边缘按圆角做真实折射，中间通透。设置保存在本机浏览器。'));
     s.appendChild(card([setCardHead('输入卡材质'), gfield]));
   }
 

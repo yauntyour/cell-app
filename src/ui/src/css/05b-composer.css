@@ -12,17 +12,20 @@
    里的 --glass-face / --glass-line / --glass-hi / --glass-lo，只是尺寸不同。
    ===================================================================== */
 
-/* ---------- 5b.1 卡片本体（液态玻璃） ------------------------------- */
-/* 材质只做三件事，而且三件都必须在 Chromium/WebView2 上**真实生效**：
-     ① 磨砂   backdrop-filter: blur(--cmp-glass-blur) saturate()。
-              ⚠️ 不要再用 backdrop-filter:url(#svg-filter) 做"边缘折射"：
-              Chromium 对 url() 只做解析检测（CSS.supports 返回 true），
-              渲染时整条滤镜被丢掉 —— 卡片于是既没模糊也没折射，背后
-              文字原样透上来，看着就是「上界没固定、两端没渲染好」
-              （2026-10-31 用户报的问题，见 _scratch/composer-glass-2026-10-31）。
+/* ---------- 5b.1 卡片本体（液态玻璃 · 复刻 shuding/liquid-glass） ----- */
+/* 材质分三层，全部在 Chromium/WebView2 上**真实生效**：
+     ① 折射   backdrop-filter: url(#cmp-lens) —— SVG feImage(位移贴图) +
+              feDisplacementMap 作用在真实背景上：贴边一圈把背后的内容沿内
+              法线压向中心，文字在边缘被弯折、出现重影，中间保持原样。
+              管线与参考实现一致（见 05-composer.js 的 I1b）。
+              后面再跟 blur()/contrast()/brightness()/saturate()，也是参考的做法。
      ② 厚度   一圈跟着圆角走的亮边（::before 渐变环 + 内侧柔光）：顶亮 →
               腰微亮 → 底回光，亮度**永不掉到 0**，左右两端才不会"断线"。
-     ③ 面     极淡的「白 → 透明 → 黑」竖向渐变，只表达受光，不带颜色。
+     ③ 面     极淡的「白 → 透明 → 黑」竖向渐变 + 参考实现那条
+              `inset 0 -10px 25px rgba(0,0,0,.15)` 的底部内阴影。
+   ⚠️ 引用 url(#cmp-lens) 的那条声明单独挂在 .glass-lens 上：滤镜元素是 JS
+   建的，在它存在之前引用一个不存在的 filter 会让整条 backdrop-filter 失效
+   （首帧直接变透明）。所以基类是纯 blur，JS 建好滤镜再加类。
    尺寸：**高度固定** = 拖拽设定的 --composer-h（Layout 已把它夹在 72vh 内，
    与 max-height 同一个数）。上界不随内容/附件移动，输入超出在编辑区内部
    滚动；「回到底部」按钮按卡片**实测**上界定位（见 02-render2-chat.js）。 */
@@ -34,7 +37,9 @@
   height:var(--composer-h,156px);
   max-height:72vh;
   border-radius:var(--radius-xl);
-  padding:10px 12px 8px;
+  /* 上内边距 20px：折射带（≈短边 12%，约 19px）落在这段空白里 ——
+     文字压在带内会被"从下面拉上来"的背后内容糊住（2026-10-31 实测） */
+  padding:20px 12px 8px;
   overflow:hidden;
   isolation:isolate;
   border:0;
@@ -44,20 +49,25 @@
     rgba(255,255,255,.022) 14%,
     rgba(255,255,255,.014) 44%,
     rgba(0,0,0,.055) 100%);
-  /* ① 磨砂：模糊量跟随「透明度」偏好 */
-  -webkit-backdrop-filter:blur(var(--cmp-glass-blur,8.8px)) saturate(1.12);
-  backdrop-filter:blur(var(--cmp-glass-blur,8.8px)) saturate(1.12);
-  /* ② 厚度：内顶镜面 + 均匀内环 + 沿边柔光带 + 底回光 + 外暗线 + 投影。
-     内环用 box-shadow 而不是 border —— border 会把圆角切出直角感；
-     均匀内环（不带方向）是左右两端不断线的保底，::before 的竖向渐变只负责
-     「顶亮 → 腰暗 → 底回光」的受光差别。 */
+  /* ① 降级路径（滤镜还没建好 / 老引擎）：纯磨砂 */
+  -webkit-backdrop-filter:blur(var(--cmp-glass-blur,3px)) saturate(1.1);
+  backdrop-filter:blur(var(--cmp-glass-blur,3px)) saturate(1.1);
+  /* ② 厚度：内顶镜面 + 均匀内环 + 沿边柔光带 + 底部内阴影 + 外暗线 + 投影。
+     内环用 box-shadow 而不是 border —— border 会把圆角切出直角感。 */
   box-shadow:
     inset 0 1px 0 rgba(255,255,255,.22),
     inset 0 0 0 1px rgba(255,255,255,.10),
     inset 0 0 8px -2px rgba(255,255,255,.16),
-    inset 0 -20px 26px -24px rgba(255,255,255,.20),
+    inset 0 -10px 25px rgba(0,0,0,.15),
     0 0 0 1px rgba(0,0,0,.45),
     0 20px 48px -28px rgba(0,0,0,.90);
+}
+/* ① 折射：与参考实现同一条滤镜链（url() 在最前，其余是参考里的那串） */
+#composerInner.glass-lens{
+  -webkit-backdrop-filter:url(#cmp-lens) blur(var(--cmp-glass-blur,3px))
+                          contrast(1.2) brightness(1.05) saturate(1.1);
+  backdrop-filter:url(#cmp-lens) blur(var(--cmp-glass-blur,3px))
+                  contrast(1.2) brightness(1.05) saturate(1.1);
 }
 /* ② 圆滑边框：渐变环用 mask 掏空中间只留描边（随圆角走，不会画出直角）。
    用 **conic** 而不是 linear：光从左上来，左上角最亮，沿顺时针绕一圈逐渐
@@ -91,7 +101,7 @@
     inset 0 1px 0 rgba(255,255,255,.26),
     inset 0 0 0 1px rgba(255,255,255,.13),
     inset 0 0 8px -2px rgba(255,255,255,.19),
-    inset 0 -20px 26px -24px rgba(255,255,255,.20),
+    inset 0 -10px 25px rgba(0,0,0,.15),
     0 0 0 1px rgba(0,0,0,.45),
     0 20px 48px -28px rgba(0,0,0,.90);
 }

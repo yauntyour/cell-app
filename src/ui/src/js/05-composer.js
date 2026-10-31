@@ -240,32 +240,159 @@ function buildComposerDom() {
   }
 
   ensureSlashPanel();
-  // 旧版本用 .glass-refract 走 SVG 折射滤镜；升级后残留在 DOM 上的类要清掉，
-  // 否则它会盖掉 CSS 里的 backdrop-filter:blur()（见下面 I1b 的说明）
-  host.classList.remove('glass-refract');
+  host.classList.remove('glass-refract');   // 旧类名（已废弃，见 I1b）
+  setupLens(host);
   host.__cmpBuilt = true;
   return true;
 }
 
-/* ---------- I1b. 液态玻璃：磨砂强度 -----------------------------------
-   ⚠️ 历史包袱（2026-10-31 排查）：这里原来用 SVG 滤镜做「边缘折射」——
-   圆角矩形 SDF 算位移贴图 → feImage + feDisplacementMap → 通过
-   backdrop-filter:url(#cmp-glass-ref) 作用在真实背景上。
-   Chromium / WebView2 对 url() **只做解析检测**（CSS.supports() 返回 true），
-   渲染时整条滤镜被丢掉，于是卡片既没有模糊也没有折射：背后文字原样透上来
-   盖在占位符上（看着像"上界没固定"），两端还留下一道位移硬缝（"没渲染好"）。
-   所以现在只保留纯 CSS 方案：磨砂 = backdrop-filter:blur()，
-   边缘厚度与圆滑亮边 = #composerInner::before 的渐变环（见 05b-composer.css）。
-   这里唯一还留给用户调的是「磨砂强度」，写进 --cmp-glass-blur。 */
+/* ---------- I1b. 液态玻璃：SVG 折射（复刻 shuding/liquid-glass）--------
+   管线与参考实现（github.com/shuding/liquid-glass，MIT）完全一致：
+     ① 逐像素算「采样点偏移」贴图：圆角矩形 SDF → 离边越近把采样点沿内法线
+        推得越多（= 边缘放大/压缩），编成 R/G 位移图（0.5 = 不动）；
+     ② <filter> 里 feImage 装贴图 + feDisplacementMap，经
+        backdrop-filter:url(#cmp-lens) 作用在**真实背景**上；
+     ③ 滤镜链后面再跟 blur()/contrast()/brightness()/saturate()，与参考一致。
+   ⚠️ 关键（第一版死在这里）：<filter> 必须 filterUnits="userSpaceOnUse" 并给出
+   **像素**的 x/y/width/height。用默认的 objectBoundingBox + width="100%" 时
+   Chromium 会把整条滤镜吞掉 —— 既不模糊也不折射，背后文字原样透上来，
+   看着就是"上界没固定、两端没渲染好"。别再误判成"Chromium 不支持 url()"。
+   贴图尺寸/圆角一变（拖手柄、Teamwork、窗口缩放）就重画，见 syncLens()。 */
+const LENS = {
+  w: 0, h: 0, r: 0,          // 上次画贴图时的尺寸（同尺寸不重画）
+  band: 0.12,                // 折射带宽度 = 短边 × 这个比例（夹在 [10,24]px）
+  strength: 0.90,            // 贴边位移 = 带宽 × 这个比例（≈短边的 11%，对齐参考观感）
+  filter: null, map: null, disp: null, host: null, raf: 0,
+};
+
+function lensSVG() {
+  const NS = 'http://www.w3.org/2000/svg';
+  if (LENS.filter) return LENS.filter;
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('aria-hidden', 'true');
+  svg.style.cssText = 'position:fixed;left:0;top:0;width:0;height:0;overflow:hidden;pointer-events:none';
+  const f = document.createElementNS(NS, 'filter');
+  f.setAttribute('id', 'cmp-lens');
+  // 单位必须是 userSpaceOnUse + 像素尺寸（见上面的说明）
+  f.setAttribute('filterUnits', 'userSpaceOnUse');
+  f.setAttribute('color-interpolation-filters', 'sRGB');
+  const img = document.createElementNS(NS, 'feImage');
+  img.setAttribute('result', 'map');
+  img.setAttribute('preserveAspectRatio', 'none');
+  const disp = document.createElementNS(NS, 'feDisplacementMap');
+  disp.setAttribute('in', 'SourceGraphic');
+  disp.setAttribute('in2', 'map');
+  disp.setAttribute('xChannelSelector', 'R');
+  disp.setAttribute('yChannelSelector', 'G');
+  disp.setAttribute('scale', '0');
+  f.appendChild(img);
+  f.appendChild(disp);
+  svg.appendChild(f);
+  document.body.appendChild(svg);
+  LENS.filter = f; LENS.map = img; LENS.disp = disp;
+  return f;
+}
+
+/* 圆角矩形 SDF：0 在边界，内部为负（与参考实现的 roundedRectSDF 同式） */
+function lensSDF(px, py, hw, hh, r) {
+  const qx = Math.abs(px) - hw + r;
+  const qy = Math.abs(py) - hh + r;
+  return Math.min(Math.max(qx, qy), 0) + Math.hypot(Math.max(qx, 0), Math.max(qy, 0)) - r;
+}
+function smoothstep01(t) { t = Math.min(1, Math.max(0, t)); return t * t * (3 - 2 * t); }
+
+function paintLens(w, h, radius) {
+  const cw = Math.max(8, Math.round(w)), ch = Math.max(8, Math.round(h));
+  if (LENS.w === cw && LENS.h === ch && LENS.r === radius) return;
+  LENS.w = cw; LENS.h = ch; LENS.r = radius;
+
+  const band = Math.min(24, Math.max(10, Math.min(cw, ch) * LENS.band));
+  // 位移场极平滑，大卡片按 1/2 分辨率算（贴图由 feImage 拉伸回原尺寸）：
+  // 678×600 的重绘从 ~18ms 降到 ~4ms，拖手柄时不会掉帧。
+  const step = Math.min(cw, ch) > 240 ? 2 : 1;
+  const mw = Math.ceil(cw / step), mh = Math.ceil(ch / step);
+  const cv = document.createElement('canvas');
+  cv.width = mw; cv.height = mh;
+  const g = cv.getContext('2d');
+  const img = g.createImageData(mw, mh);
+  const data = img.data;
+  const hw = cw / 2, hh = ch / 2;
+  const r = Math.max(0, Math.min(radius, Math.min(hw, hh)));
+  const dxs = new Float32Array(mw * mh), dys = new Float32Array(mw * mh);
+  let maxAbs = 0;
+  for (let y = 0; y < mh; y++) {
+    for (let x = 0; x < mw; x++) {
+      const px = (x + 0.5) * step - hw, py = (y + 0.5) * step - hh;
+      const d = lensSDF(px, py, hw, hh, r);        // 0 在边、内负
+      // 剖面与参考一致：带内缘 0 → 边界 1，单调不回弹（回弹会折出硬缝）
+      const t = smoothstep01(1 + d / band);
+      const mag = band * LENS.strength * t;
+      // 方向取 SDF 梯度（外法线），采样点反向（向里）= 边缘放大
+      const nx = lensSDF(px + 0.5, py, hw, hh, r) - lensSDF(px - 0.5, py, hw, hh, r);
+      const ny = lensSDF(px, py + 0.5, hw, hh, r) - lensSDF(px, py - 0.5, hw, hh, r);
+      const nl = Math.hypot(nx, ny) || 1;
+      const i = y * mw + x;
+      dxs[i] = -nx / nl * mag;
+      dys[i] = -ny / nl * mag;
+      if (mag > maxAbs) maxAbs = mag;
+    }
+  }
+  const scale = maxAbs > 0 ? maxAbs * 2 : 1;
+  for (let i = 0, j = 0; i < dxs.length; i++, j += 4) {
+    data[j] = (dxs[i] / scale + 0.5) * 255;
+    data[j + 1] = (dys[i] / scale + 0.5) * 255;
+    data[j + 2] = 0;
+    data[j + 3] = 255;
+  }
+  g.putImageData(img, 0, 0);
+  const url = cv.toDataURL();
+  LENS.map.setAttribute('href', url);
+  LENS.disp.setAttribute('scale', scale.toFixed(2));
+}
+
+/* 尺寸/圆角同步：滤镜区域是 userSpaceOnUse 的像素矩形，必须跟着元素走 */
+function syncLens() {
+  const host = LENS.host;
+  if (!host) return;
+  const rect = host.getBoundingClientRect();
+  if (rect.width < 16 || rect.height < 16) return;
+  const radius = parseFloat(getComputedStyle(host).borderTopLeftRadius) || 24;
+  const f = lensSVG();
+  const w = Math.round(rect.width), h = Math.round(rect.height);
+  f.setAttribute('x', '0'); f.setAttribute('y', '0');
+  f.setAttribute('width', String(w)); f.setAttribute('height', String(h));
+  LENS.map.setAttribute('width', String(w));
+  LENS.map.setAttribute('height', String(h));
+  paintLens(w, h, radius);
+}
+function scheduleLens() {
+  if (LENS.raf) return;
+  LENS.raf = requestAnimationFrame(() => { LENS.raf = 0; try { syncLens(); } catch (e) {} });
+}
+function setupLens(host) {
+  if (!host || LENS.host === host) return;
+  LENS.host = host;
+  lensSVG();
+  host.classList.add('glass-lens');   // 类名到位才启用 url()，避免首帧引用不存在的滤镜
+  syncLens();
+  if (typeof ResizeObserver !== 'undefined') {
+    new ResizeObserver(scheduleLens).observe(host);
+  }
+  window.addEventListener('resize', scheduleLens);
+}
+
+/* 磨砂强度偏好（本机 localStorage，不进后端设置）。折射始终开启；
+   这个滑块只改高斯模糊 —— 0 = 完全通透（只剩折射），100 = 强磨砂。 */
 const GLASS = {
-  t: 0.6,             // 透明度偏好（0=清晰 … 1=磨砂最强），见 applyGlassPref
-  blur: 9.3,          // 高斯模糊（CSS px）：由透明度推出来
+  t: 0.4,             // 透明度偏好（0=清晰 … 1=磨砂最强），见 applyGlassPref
+  blur: 5.06,         // 高斯模糊（CSS px）：由透明度推出来
 };
 
 /* 玻璃观感偏好（本机 localStorage，不进后端设置 —— 跟主题、动画等级一样只在
-   这台机器的浏览器里生效）。材质无色：只有白/黑透明度层次，不带任何颜色，
-   唯一随偏好变化的是高斯模糊强度 —— 越"磨砂"越糊。 */
-const GLASS_PREF_KEY = 'cell.glass';
+   这台机器的浏览器里生效）。材质无色：只有白/黑色层次，不带任何颜色。
+   键名带 .v2：v1 时代默认是"强磨砂"，换成折射材质后旧值会让卡片糊成一块，
+   直接换键 = 老用户也拿到新的默认观感（2.5px，接近参考实现的通透度）。 */
+const GLASS_PREF_KEY = 'cell.glass.v2';
 function glassBlur(t) { return 20 * Math.pow(Math.min(1, Math.max(0, t)), 1.5); }
 
 function loadGlassPref() {
