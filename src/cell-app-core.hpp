@@ -82,51 +82,102 @@ namespace app
     //  update — is this exe the newest published build?
     //
     //  The binary carries the short commit hash it was built from
-    //  (cell-build-info.hpp). Every release is tagged with exactly that hash
-    //  (v0320cc6, see the workflow's publish step), so one GET answers the
-    //  question: /releases/latest redirects to the newest tag, and the tag is
-    //  the commit it was built from. Same short hash = this build IS the
-    //  newest release. No tag format of its own to keep in sync — the tag and
-    //  the build identity are the same string.
+    //  (cell-build-info.hpp). A release is a commit whose first line is
+    //  exactly "release" — the workflow's gate publishes only those (see
+    //  .github/workflows/cmake-multi-platform.yml), and the release tag is
+    //  that commit's short hash (v0320cc6). So the newest release is the
+    //  newest "release"-titled commit on main, and that commit's hash is the
+    //  version hash this build is measured against: same short hash = this
+    //  build IS the newest release.
+    //
+    //  The question is answered from the commits feed — the machine-readable
+    //  twin of https://github.com/yauntyour/cell-app/commits/main — rather
+    //  than /releases/latest, so the prompt shows up as soon as the release
+    //  commit lands instead of waiting for CI to attach the binaries to it.
+    //  A build made from a commit after the last release therefore still
+    //  reports "available", which is the truth: it is not what the download
+    //  would give you.
     //
     //  Deliberately not the REST API: github.com needs no token and has none
     //  of the API's 60 requests/hour limit, which a desktop app restarting all
-    //  day would eventually hit.
+    //  day would eventually hit; the feed is plain XML, no HTML to scrape.
     // =====================================================================
     namespace update
     {
-        constexpr const char *kLatestUrl = "https://github.com/yauntyour/cell-app/releases/latest";
+        // the .atom twin of https://github.com/yauntyour/cell-app/commits/main
+        constexpr const char *kFeedUrl = "https://github.com/yauntyour/cell-app/commits/main.atom";
         constexpr const char *kTagUrl = "https://github.com/yauntyour/cell-app/releases/tag/";
 
-        // …/releases/tag/v0320cc6 → v0320cc6 (the tag is the build's short hash)
-        inline std::string tag_of(const std::string &url)
+        // the commit message the release gate compares (first line, exactly)
+        constexpr const char *kReleaseSubject = "release";
+
+        // <title>\n        release\n    </title> → "release": the feed indents
+        // the message, so take the first non-blank line. Entities are left
+        // alone — the subject is compared against a plain ASCII word.
+        inline std::string subject_of(std::string_view block)
         {
-            size_t at = url.find("/releases/tag/");
-            if (at == std::string::npos)
+            constexpr std::string_view open = "<title>", close = "</title>";
+            size_t at = block.find(open);
+            if (at == std::string_view::npos)
                 return "";
-            at += 14; // strlen("/releases/tag/")
-            size_t end = url.find_first_of("?#", at);
-            return url.substr(at, end == std::string::npos ? std::string::npos : end - at);
+            at += open.size();
+            size_t end = block.find(close, at);
+            std::string_view t = block.substr(
+                at, end == std::string_view::npos ? std::string_view::npos : end - at);
+            while (!t.empty() && (t.front() == ' ' || t.front() == '\t' ||
+                                  t.front() == '\n' || t.front() == '\r'))
+                t.remove_prefix(1);
+            if (size_t eol = t.find_first_of("\r\n"); eol != std::string_view::npos)
+                t = t.substr(0, eol);
+            while (!t.empty() && (t.back() == ' ' || t.back() == '\t'))
+                t.remove_suffix(1);
+            return std::string(t);
         }
 
-        // v0320cc6 → 0320cc6. Anything that is not "v" + hex is not a build
-        // identity: there is no second tag scheme to fall back to.
-        inline std::string hash_of(const std::string &tag)
+        // the entry's own link …/commit/<40 hex> → the full hash
+        inline std::string hash_of(std::string_view block)
         {
-            std::string_view h(tag);
-            if (h.starts_with('v'))
-                h.remove_prefix(1);
-            if (h.size() < 7 || h.size() > 40)
+            constexpr std::string_view marker = "/commit/";
+            size_t at = block.find(marker);
+            if (at == std::string_view::npos)
                 return "";
-            for (char c : h)
-                if (!std::isxdigit((unsigned char)c))
-                    return "";
-            return std::string(h);
+            at += marker.size();
+            size_t end = at;
+            while (end < block.size() && std::isxdigit((unsigned char)block[end]))
+                ++end;
+            std::string h(block.substr(at, end - at));
+            return h.size() == 40 ? h : ""; // a short hash is not an identity
+        }
+
+        // <entry> blocks of the commits feed, newest first
+        struct feed_entry
+        {
+            std::string subject; // first line of the commit message
+            std::string hash;    // full 40-hex hash
+        };
+
+        inline std::vector<feed_entry> entries_of(std::string_view xml)
+        {
+            std::vector<feed_entry> out;
+            constexpr std::string_view open = "<entry>", close = "</entry>";
+            for (size_t at = xml.find(open); at != std::string_view::npos;)
+            {
+                size_t end = xml.find(close, at);
+                if (end == std::string_view::npos)
+                    break;
+                std::string_view block = xml.substr(at, end - at);
+                at = end + close.size();
+                feed_entry e{subject_of(block), hash_of(block)};
+                if (!e.hash.empty())
+                    out.push_back(std::move(e));
+            }
+            return out;
         }
 
         // One probe. state: "current" (this build is the newest release) /
-        // "available" (a newer commit is published) / "error" (offline, or the
-        // tag carries no commit hash — no verdict rather than a guess).
+        // "available" (a newer release commit is on main) / "error" (offline,
+        // or the feed carries no "release"-titled commit — no verdict rather
+        // than a guess).
         inline nlohmann::json probe()
         {
             nlohmann::json r;
@@ -145,36 +196,32 @@ namespace app
                 r["error"] = "curl init failed";
                 return r;
             }
-            // the stable link answers 301 to the newest tag; CURL_get does not
-            // follow redirects, so read the target off the handle
             const std::vector<std::string> hdrs = {"User-Agent: cell-app/" + cur};
-            std::string body, err, tag;
+            std::string body, err, hash;
             long code = 0;
             // 8s cap: the app joins this thread on exit (curl must not outlive
             // curl_global_shutdown), so a dead link may delay a quit by at most
             // this much — the request is idempotent and silent when it fails
-            cell::net::CURL_get(c, kLatestUrl, hdrs, body, &code, &err, nullptr, 8);
-            if (code == 301 || code == 302 || code == 307 || code == 308)
-            {
-                char *loc = nullptr;
-                if (curl_easy_getinfo(c, CURLINFO_REDIRECT_URL, &loc) == CURLE_OK && loc)
-                    tag = tag_of(loc); // relative targets never happen on github.com
-            }
+            cell::net::CURL_get(c, kFeedUrl, hdrs, body, &code, &err, nullptr, 8);
             curl_easy_cleanup(c);
-            if (tag.empty())
-            {
-                r["error"] = err.empty() ? std::format("HTTP {} from {}", code, kLatestUrl) : err;
-                return r;
-            }
-            r["latest_tag"] = tag;
-            r["url"] = std::string(kTagUrl) + tag;
-            const std::string hash = hash_of(tag);
+            if (code == 200)
+                for (auto &e : entries_of(body)) // newest first: first match wins
+                    if (e.subject == kReleaseSubject)
+                    {
+                        hash = e.hash;
+                        break;
+                    }
             if (hash.empty())
             {
-                r["error"] = std::format("release tag '{}' is not a commit hash", tag);
+                r["error"] = code == 200
+                                 ? std::format("no commit titled '{}' in {}", kReleaseSubject, kFeedUrl)
+                                 : (err.empty() ? std::format("HTTP {} from {}", code, kFeedUrl) : err);
                 return r;
             }
-            r["latest_hash"] = hash.substr(0, std::min(hash.size(), cur.size()));
+            const std::string short_hash = hash.substr(0, std::min(hash.size(), cur.size()));
+            r["latest_tag"] = "v" + short_hash;
+            r["latest_hash"] = short_hash;
+            r["url"] = std::string(kTagUrl) + "v" + short_hash;
             r["state"] = hash.compare(0, cur.size(), cur) == 0 ? "current" : "available";
             return r;
         }

@@ -18468,8 +18468,9 @@ else boot();
 
 /* ---------- N. 更新提醒 / 桌面壳偏好 ---------------------------------
    后端在进程启动时只查一次（app_core::start_update_check）：本 exe 内置的
-   短提交号 vs GitHub 最新 release 上的 tag（tag 就是短哈希）。有新版本时把
-   左侧栏「用量」旁的 chip 点亮 —— 从托盘恢复窗口、页面重连都不会重新检查。
+   短提交号 vs GitHub main 上最新一条提交消息为 release 的 commit 的哈希
+   （版本哈希，release tag 就是它）。有新版本时把左侧栏「用量」旁的 chip
+   点亮 —— 从托盘恢复窗口、页面重连都不会重新检查。
    结论有两条到达路径：boot 的 state 快照，或检查稍晚完成时的 update 事件。
 
    开关属于「桌面壳偏好」（S.prefs，落盘 .cell/cell-app.json）：托盘驻留必须
