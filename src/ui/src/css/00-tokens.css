@@ -48,6 +48,18 @@
   --del:#f85149;
   --run:#a8abb2;
 
+  /* ---- 液态玻璃材质（输入卡本体与卡内控件共用一套） ---------------- */
+  /* 只有白/黑的透明度层次，不带任何颜色：玻璃是"介质"，颜色只留给强调色 */
+  --glass-face:linear-gradient(180deg,rgba(255,255,255,.13),rgba(255,255,255,.052));
+  --glass-face-hover:linear-gradient(180deg,rgba(255,255,255,.20),rgba(255,255,255,.085));
+  --glass-face-on:linear-gradient(180deg,rgba(255,255,255,.24),rgba(255,255,255,.12));
+  --glass-line:rgba(255,255,255,.16);
+  --glass-line-hover:rgba(255,255,255,.26);
+  --glass-hi:inset 0 1px 0 rgba(255,255,255,.22);   /* 顶面镜面反光 */
+  --glass-lo:inset 0 -1px 0 rgba(0,0,0,.26);        /* 底缘回光（暗） */
+  --glass-drop:0 1px 2px rgba(0,0,0,.26);           /* 离面一点点 */
+  --glass-blur:blur(10px) saturate(1.12);           /* 磨砂（控件层） */
+
   /* ---- 形状 / 字体 / 动效 ----------------------------------------- */
   --radius:14px; --radius-s:9px; --radius-xs:6px;
   --radius-lg:20px; --radius-xl:24px; --radius-full:999px;

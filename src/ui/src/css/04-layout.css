@@ -34,12 +34,17 @@
 .rz-v{width:6px;margin:0 -3px;cursor:col-resize}
 .rz-h{height:6px;margin:-3px 0;cursor:row-resize}
 .rz-composer{width:100%;height:12px;margin:0;flex:none}
-.rz::after{content:"";position:absolute;background:var(--accent);opacity:0;
-  transition:opacity var(--dur) var(--ease)}
+.rz::after{content:"";position:absolute;background:var(--fg4);opacity:0;
+  transition:opacity var(--dur) var(--ease),background var(--dur) var(--ease)}
 .rz-v::after{top:0;bottom:0;left:2px;right:2px}
 .rz-h::after{left:0;right:0;top:2px;bottom:2px}
-.rz:hover::after,.rz.dragging::after,.rz:focus-visible::after{opacity:.6}
-.rz:focus-visible{outline:2px solid var(--accent-soft);outline-offset:-2px;border-radius:0}
+/* 悬停只用一道很淡的中性线提示「这里能拖」；强调色留给真正拖动时。
+   注意：分隔条只有 6px 宽，若用 accent + 聚焦 outline，在窗口右缘会变成一条
+   悬空的紫线/紫框，看着像渲染错误（用户 2026-10-31 报的就是这个）。 */
+.rz:hover::after{opacity:.26}
+.rz.dragging::after{opacity:.6;background:var(--accent)}
+.rz:focus-visible{outline:none}
+.rz:focus-visible::after{opacity:.5}
 .rz-composer::after{left:0;right:0;top:5px;bottom:5px}
 
 /* 悬浮输入卡外壳：卡片本体外观由 05-composer.js/05b-composer.css 负责 */

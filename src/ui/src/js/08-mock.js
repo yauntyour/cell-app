@@ -274,6 +274,9 @@ const Mock = {
     const seqTool = ++this._seq;
 
     at(0, () => emit({ t: 'turn_begin', ws }));
+    // 引擎在等首个 token 时每 ~500ms 发一次 progress（参数=已等毫秒）：
+    // 前端用它反推请求发出时刻，实测 TTFT
+    at(120, () => emit({ t: 'progress', ws, ms: 120 }));
     at(220, () => { emit({ t: 'reason', ws, d: reasonText.slice(0, 26) }); });
     at(360, () => { emit({ t: 'reason', ws, d: reasonText.slice(26, 58) }); });
     at(480, () => { emit({ t: 'reason', ws, d: reasonText.slice(58) }); });
@@ -287,8 +290,8 @@ const Mock = {
       // 流式光标与「正在输出」状态。
       at(900, () => emit({ t: 'reason', ws, d: '渲染骨架已经清楚，直接把 mock 数据补齐，再跑一轮截图验证。' }));
       push({ role: 'assistant', kind: 'reasoning', text: '渲染骨架已经清楚，直接把 mock 数据补齐，再跑一轮截图验证。' });
-      at(980, () => emit({ t: 'round', ws, round: 1, tok_in: 1830, tok_out: 246, cache: 1024, sec: 2.1, ttft: 280 }));
-      push({ kind: 'round', round: 1, tok_in: 1830, tok_out: 246, cache: 1024, sec: 2.1, ttft: 280 });
+      at(980, () => emit({ t: 'round', ws, round: 1, tok_in: 1830, tok_out: 246, cache: 1024, sec: 2.1, ttft: 0.28 }));
+      push({ kind: 'round', round: 1, tok_in: 1830, tok_out: 246, cache: 1024, sec: 2.1, ttft: 0.28 });
       at(1040, () => emit({ t: 'answer_begin', ws }));
       Array.from(answer).forEach((ch, i) => {
         at(1060 + i * 34, () => {
@@ -308,8 +311,8 @@ const Mock = {
     });
     at(1250, () => emit({ t: 'tool_end', ws, seq: seqTool2, name: 'tw', status: 'ok', display: twResult, marker: '', sec: 0.28, chars: twResult.length, multimodal: false }));
     push({ role: 'assistant', kind: 'tool', name: 'tw', args: twArgs, result: twResult, status: 'ok', sec: 0.28 });
-    at(1560, () => emit({ t: 'round', ws, round: 1, tok_in: 1830, tok_out: 246, cache: 1024, sec: 2.1, ttft: 280 }));
-    push({ kind: 'round', round: 1, tok_in: 1830, tok_out: 246, cache: 1024, sec: 2.1, ttft: 280 });
+    at(1560, () => emit({ t: 'round', ws, round: 1, tok_in: 1830, tok_out: 246, cache: 1024, sec: 2.1, ttft: 0.28 }));
+    push({ kind: 'round', round: 1, tok_in: 1830, tok_out: 246, cache: 1024, sec: 2.1, ttft: 0.28 });
     // 回合中段的通知：也会作为聊天气泡出现
     at(1660, () => emit({
       t: 'notice', ws, d: '[notice] from=teamwork/tw-mockgate01/worker_0 topic=worker',
@@ -327,8 +330,8 @@ const Mock = {
       });
     });
     const answerDone = answerStart + chars.length * charDelay;
-    at(answerDone + 60, () => emit({ t: 'round', ws, round: 2, tok_in: 3920, tok_out: chars.length, cache: 2816, sec: 3.6, ttft: 210 }));
-    push({ kind: 'round', round: 2, tok_in: 3920, tok_out: chars.length, cache: 2816, sec: 3.6, ttft: 210 });
+    at(answerDone + 60, () => emit({ t: 'round', ws, round: 2, tok_in: 3920, tok_out: chars.length, cache: 2816, sec: 3.6, ttft: 0.21 }));
+    push({ kind: 'round', round: 2, tok_in: 3920, tok_out: chars.length, cache: 2816, sec: 3.6, ttft: 0.21 });
     push({ role: 'assistant', kind: 'assistant', text: answer });
     at(answerDone + 140, () => {
       // 落盘：回合结束后前端重载 transcript 时能看到这一回合（文件改动卡由

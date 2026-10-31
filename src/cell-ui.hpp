@@ -73,6 +73,18 @@ namespace app
   --del:#f85149;
   --run:#a8abb2;
 
+  /* ---- 液态玻璃材质（输入卡本体与卡内控件共用一套） ---------------- */
+  /* 只有白/黑的透明度层次，不带任何颜色：玻璃是"介质"，颜色只留给强调色 */
+  --glass-face:linear-gradient(180deg,rgba(255,255,255,.13),rgba(255,255,255,.052));
+  --glass-face-hover:linear-gradient(180deg,rgba(255,255,255,.20),rgba(255,255,255,.085));
+  --glass-face-on:linear-gradient(180deg,rgba(255,255,255,.24),rgba(255,255,255,.12));
+  --glass-line:rgba(255,255,255,.16);
+  --glass-line-hover:rgba(255,255,255,.26);
+  --glass-hi:inset 0 1px 0 rgba(255,255,255,.22);   /* 顶面镜面反光 */
+  --glass-lo:inset 0 -1px 0 rgba(0,0,0,.26);        /* 底缘回光（暗） */
+  --glass-drop:0 1px 2px rgba(0,0,0,.26);           /* 离面一点点 */
+  --glass-blur:blur(10px) saturate(1.12);           /* 磨砂（控件层） */
+
   /* ---- 形状 / 字体 / 动效 ----------------------------------------- */
   --radius:14px; --radius-s:9px; --radius-xs:6px;
   --radius-lg:20px; --radius-xl:24px; --radius-full:999px;
@@ -494,12 +506,17 @@ select{appearance:none;background-image:url("data:image/svg+xml;charset=utf-8,%3
 .rz-v{width:6px;margin:0 -3px;cursor:col-resize}
 .rz-h{height:6px;margin:-3px 0;cursor:row-resize}
 .rz-composer{width:100%;height:12px;margin:0;flex:none}
-.rz::after{content:"";position:absolute;background:var(--accent);opacity:0;
-  transition:opacity var(--dur) var(--ease)}
+.rz::after{content:"";position:absolute;background:var(--fg4);opacity:0;
+  transition:opacity var(--dur) var(--ease),background var(--dur) var(--ease)}
 .rz-v::after{top:0;bottom:0;left:2px;right:2px}
 .rz-h::after{left:0;right:0;top:2px;bottom:2px}
-.rz:hover::after,.rz.dragging::after,.rz:focus-visible::after{opacity:.6}
-.rz:focus-visible{outline:2px solid var(--accent-soft);outline-offset:-2px;border-radius:0}
+/* 悬停只用一道很淡的中性线提示「这里能拖」；强调色留给真正拖动时。
+   注意：分隔条只有 6px 宽，若用 accent + 聚焦 outline，在窗口右缘会变成一条
+   悬空的紫线/紫框，看着像渲染错误（用户 2026-10-31 报的就是这个）。 */
+.rz:hover::after{opacity:.26}
+.rz.dragging::after{opacity:.6;background:var(--accent)}
+.rz:focus-visible{outline:none}
+.rz:focus-visible::after{opacity:.5}
 .rz-composer::after{left:0;right:0;top:5px;bottom:5px}
 
 /* 悬浮输入卡外壳：卡片本体外观由 05-composer.js/05b-composer.css 负责 */
@@ -591,9 +608,16 @@ body.locked{overflow:hidden}
 .tabpane.hero .chathead{display:none}
 
 .chat{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;
-  /* 留白跟着输入卡的**实际**高度走（附件折行把卡片撑高时消息流不被盖住）；
-     卡片内的 JS 把 --cmp-card-h 写成实测像素，量不到时退回拖拽设定值 */
-  padding:22px 0 calc(max(var(--composer-h,156px),var(--cmp-card-h,0px)) + 34px)}
+  /* 底部留白读 --composer-pad（由 02-render2-chat.js 的 syncJumpAnchors 按卡片
+     **实测**上界写入）：卡片高度在 Teamwork 模式 / 72vh 限高下都不等于
+     --composer-h，用变量推算会把最后几条消息压在卡片底下。
+     202px = 156px 卡片 + 46px（距底 18 + 手柄 12 + 空隙 16），首帧兜底。 */
+  padding:22px 0 var(--composer-pad,202px);
+  /* 不画滚动条：.chat 铺满主区，滚动条会贴着窗口右缘、正好落在透明输入卡外侧，
+     看起来就是一条悬空的细线（2026-10-31 报的「右侧渲染错误」）。滚轮/触控板
+     照常滚，离底的提示由「回到底部」按钮负责。 */
+  scrollbar-width:none}
+.chat::-webkit-scrollbar{width:0;height:0}
 /* 窗口化占位：只撑滚动高度，不渲染、不命中、不进无障碍树 */
 .flowpad{display:block;height:0;pointer-events:none}
 /* 自动跟底用瞬时滚动（renderChat 直接写 scrollTop）：smooth 会让截图/流式
@@ -906,18 +930,37 @@ body.locked{overflow:hidden}
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .think-sec{flex:none;padding-left:12px;font-family:var(--mono);font-size:11.5px;color:var(--fg4);
   font-variant-numeric:tabular-nums}
+/* 运行时指标行（tok/s · ITL · TTFT · 缓存）：读数是主体，单位/标签退到背后，
+   等宽 + tabular-nums 保证数字跳动时宽度不抖 */
+.think-metrics{display:flex;align-items:baseline;flex-wrap:wrap;gap:0 12px;
+  margin-top:2px;font-variant-numeric:tabular-nums;min-width:0}
+.think-metrics[hidden]{display:none}
+.think-metrics .tm{display:inline-flex;align-items:baseline;gap:4px;white-space:nowrap}
+.think-metrics .tm-v{font-family:var(--mono);font-size:11.5px;line-height:1.4;color:var(--fg2)}
+.think-metrics .tm-k{font-size:10px;line-height:1.4;letter-spacing:.02em;color:var(--fg4)}
+.msg.thinking[data-phase="warn"] .think-metrics .tm-v{color:var(--warn)}
 .msg.thinking[data-phase="warn"] .think-title{color:var(--warn)}
 .msg.thinking[data-phase="warn"] .thinkdots .tdot{background:var(--warn)}
 
 /* ---- 5.13b 「回到底部」悬浮按钮（离开底部时出现，点击恢复跟底） --- */
-.jump-bottom{position:absolute;right:26px;
-  bottom:calc(max(var(--composer-h,156px),var(--cmp-card-h,0px)) + 6px);z-index:15;
+/* 位置：**由 JS 按卡片实测上界写 inline bottom**（paintJump / syncJumpAnchors）。
+   这里的 174px 只是首帧兜底 —— 卡片会被 72vh 上限、Teamwork 模式限高，
+   任何「用 --composer-h 推算」的写法都会在那些状态下和真实上界差几十像素，
+   按钮就飘在半空（2026-10-31 用户报的「按钮随上界拖动改变位置」）。
+   材质：与输入卡内的控件同一族玻璃（--glass-face / --glass-hi / --glass-lo），
+   它悬在消息流上，所以要自己带一层 backdrop-filter。 */
+.jump-bottom{position:absolute;right:32px;bottom:174px;z-index:15;
   display:none;align-items:center;gap:6px;height:30px;padding:0 13px 0 11px;
-  border-radius:var(--radius-full);background:var(--panel2);border:1px solid var(--line2);
-  color:var(--fg2);font-size:12px;font-weight:500;box-shadow:var(--shadow-sm);cursor:pointer;
-  transition:background var(--dur) var(--ease),color var(--dur) var(--ease),border-color var(--dur) var(--ease)}
+  border-radius:var(--radius-full);
+  background:var(--glass-face);border:1px solid var(--glass-line);
+  box-shadow:var(--glass-hi),var(--glass-lo),0 6px 18px -12px rgba(0,0,0,.9);
+  -webkit-backdrop-filter:var(--glass-blur);backdrop-filter:var(--glass-blur);
+  color:var(--fg2);font-size:12px;font-weight:500;cursor:pointer;
+  transition:background var(--dur) var(--ease),color var(--dur) var(--ease),
+             border-color var(--dur) var(--ease),box-shadow var(--dur) var(--ease)}
 .jump-bottom.show{display:inline-flex;animation:fadeUp 160ms var(--ease)}
-.jump-bottom:hover{background:var(--raise2);border-color:color-mix(in srgb,var(--accent) 45%,var(--line2));color:var(--fg)}
+.jump-bottom:hover{background:var(--glass-face-hover);border-color:var(--glass-line-hover);
+  color:var(--fg);box-shadow:var(--glass-hi),var(--glass-lo),0 8px 22px -12px rgba(0,0,0,.95)}
 .jump-bottom .uico{color:var(--accent)}
 
 /* ---- 5.13c Teamwork（tw）工具卡：结构化「团队任务」卡 -------------- */
@@ -999,77 +1042,139 @@ body.locked{overflow:hidden}
 /* ==== css/05b-composer.css ============================================ */
 
 /* =====================================================================
-   §5b Composer —— DSH 式悬浮输入卡
+   §5b Composer —— 液态玻璃输入卡
    ---------------------------------------------------------------------
    由 js/05-composer.js（ComposerUI）构建 DOM；本文件只负责视觉。
-     #composerInner   卡片本体：--elev-2 表面 + 1px --line2 + --radius-xl，
-                      focus-within 时 accent 描边 + 外环
+     #composerInner   卡片本体：液态玻璃（磨砂 + 圆滑亮边 + 顶面受光）
        #inputBox      编辑区（附件区（提示条 + chips，在输入框上方）+ textarea）
        #teamEditor    Teamwork 工作流编辑器
-       .cmp-bar       工具条：+ 附件 · 模式 chip · 沙箱 chip · 模型 chip · 发送钮
-     .cmp-stat        卡片下状态行（连接点 / 左状态 / 右 token·round）
+       .cmp-bar       工具条：+ 附件 · 模式 · 访问权限 · 工具开关 ‖ 供应商 · 模型 · 思考 · 发送
      #slashPanel      提示面板（定位在 .composer-stack 之上）：/ 指令 + @ 引用共用
      .cmp-menu        模式/沙箱/模型弹出菜单（fixed，不被卡片 overflow 裁切）
-   只引用 00-tokens.css 的令牌；旧 03-molecules 里的 .composer-inner/.inputbox
-   规则由本文件的高优先级选择器覆盖（Lead 正在移除旧样式）。
+   卡内的每个控件（+ / chip / 发送 / 回到底部）都用同一族材质：00-tokens.css
+   里的 --glass-face / --glass-line / --glass-hi / --glass-lo，只是尺寸不同。
    ===================================================================== */
 
-/* ---------- 5b.1 卡片本体 ------------------------------------------ */
+/* ---------- 5b.1 卡片本体（液态玻璃） ------------------------------- */
+/* 材质只做三件事，而且三件都必须在 Chromium/WebView2 上**真实生效**：
+     ① 磨砂   backdrop-filter: blur(--cmp-glass-blur) saturate()。
+              ⚠️ 不要再用 backdrop-filter:url(#svg-filter) 做"边缘折射"：
+              Chromium 对 url() 只做解析检测（CSS.supports 返回 true），
+              渲染时整条滤镜被丢掉 —— 卡片于是既没模糊也没折射，背后
+              文字原样透上来，看着就是「上界没固定、两端没渲染好」
+              （2026-10-31 用户报的问题，见 _scratch/composer-glass-2026-10-31）。
+     ② 厚度   一圈跟着圆角走的亮边（::before 渐变环 + 内侧柔光）：顶亮 →
+              腰微亮 → 底回光，亮度**永不掉到 0**，左右两端才不会"断线"。
+     ③ 面     极淡的「白 → 透明 → 黑」竖向渐变，只表达受光，不带颜色。
+   尺寸：**高度固定** = 拖拽设定的 --composer-h（Layout 已把它夹在 72vh 内，
+   与 max-height 同一个数）。上界不随内容/附件移动，输入超出在编辑区内部
+   滚动；「回到底部」按钮按卡片**实测**上界定位（见 02-render2-chat.js）。 */
 #composerInner{
   pointer-events:auto;
   position:relative;
   display:flex;flex-direction:column;gap:0;
   width:100%;
-  background:var(--elev-2);
-  border:1px solid var(--line);
+  height:var(--composer-h,156px);
+  max-height:72vh;
   border-radius:var(--radius-xl);
-  box-shadow:var(--shadow-sm);
   padding:10px 12px 8px;
-  /* 高度由内容决定：多行输入 / 多行附件都把它撑高。上限 = 拖拽设定的高度
-     + 附件区的自然高度（--cmp-attach-h 由 JS 量出），再兜一层视口比例，
-     于是「附件折行」永远不会挤压编辑区，也不会顶出屏幕 */
-  max-height:min(72vh,calc(var(--composer-h,156px) + var(--cmp-attach-h,0px)));
   overflow:hidden;
-  transition:border-color var(--dur) var(--ease),box-shadow var(--dur) var(--ease),background var(--dur) var(--ease);
+  isolation:isolate;
+  border:0;
+  /* ③ 面：顶部受光、底部略沉，全是白/黑透明度，没有彩色 */
+  background:linear-gradient(180deg,
+    rgba(255,255,255,.055) 0%,
+    rgba(255,255,255,.022) 14%,
+    rgba(255,255,255,.014) 44%,
+    rgba(0,0,0,.055) 100%);
+  /* ① 磨砂：模糊量跟随「透明度」偏好 */
+  -webkit-backdrop-filter:blur(var(--cmp-glass-blur,8.8px)) saturate(1.12);
+  backdrop-filter:blur(var(--cmp-glass-blur,8.8px)) saturate(1.12);
+  /* ② 厚度：内顶镜面 + 均匀内环 + 沿边柔光带 + 底回光 + 外暗线 + 投影。
+     内环用 box-shadow 而不是 border —— border 会把圆角切出直角感；
+     均匀内环（不带方向）是左右两端不断线的保底，::before 的竖向渐变只负责
+     「顶亮 → 腰暗 → 底回光」的受光差别。 */
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.22),
+    inset 0 0 0 1px rgba(255,255,255,.10),
+    inset 0 0 8px -2px rgba(255,255,255,.16),
+    inset 0 -20px 26px -24px rgba(255,255,255,.20),
+    0 0 0 1px rgba(0,0,0,.45),
+    0 20px 48px -28px rgba(0,0,0,.90);
 }
+/* ② 圆滑边框：渐变环用 mask 掏空中间只留描边（随圆角走，不会画出直角）。
+   用 **conic** 而不是 linear：光从左上来，左上角最亮，沿顺时针绕一圈逐渐
+   变暗、到右下角最低、再从底部回光——这才是"液态玻璃"的受光方式；
+   linear 会让左右两条竖边亮度完全相同，看着像一张描边卡片。
+   最低也留 .13，左右两端不会断线；1.25px 而不是 1px —— 玻璃边缘是
+   一条有厚度的亮线，不是发丝。 */
+#composerInner::before{
+  content:"";position:absolute;inset:0;z-index:3;pointer-events:none;
+  border-radius:inherit;padding:1.25px;
+  background:conic-gradient(from 215deg at 50% 45%,
+    rgba(255,255,255,.50) 0deg,
+    rgba(255,255,255,.30) 34deg,
+    rgba(255,255,255,.19) 78deg,
+    rgba(255,255,255,.15) 118deg,
+    rgba(255,255,255,.13) 160deg,
+    rgba(255,255,255,.16) 205deg,
+    rgba(255,255,255,.22) 250deg,
+    rgba(255,255,255,.34) 300deg,
+    rgba(255,255,255,.50) 360deg);
+  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+  -webkit-mask-composite:xor;
+          mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+          mask-composite:exclude;
+}
+/* 聚焦：**不加环、也不撤环**。撤掉 box-shadow 会让整块玻璃失去边界，
+   上界瞬间"消失"（旧写法 :focus-within{box-shadow:none} 就是这个坑）；
+   只把边缘略微提亮，作为"可输入"的提示。 */
 #composerInner:focus-within{
-  border-color:var(--accent);
-  box-shadow:0 0 0 3px var(--accent-soft),var(--shadow-sm);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.26),
+    inset 0 0 0 1px rgba(255,255,255,.13),
+    inset 0 0 8px -2px rgba(255,255,255,.19),
+    inset 0 -20px 26px -24px rgba(255,255,255,.20),
+    0 0 0 1px rgba(0,0,0,.45),
+    0 20px 48px -28px rgba(0,0,0,.90);
 }
-/* Teamwork 模式：工作流编辑器需要更多纵向空间（平时的高度上限见上一条：
-   拖拽设定的 --composer-h + 附件区）；这里只放宽到 64vh，避免挡住顶部标签栏 */
-#composer.team #composerInner{max-height:min(64vh,620px)}
-#composer.disabled #composerInner{border-color:var(--line);box-shadow:var(--shadow-sm)}
-#composerInner.dropping{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft),var(--shadow-sm)}
+/* Teamwork 模式：工作流编辑器要更多纵向空间，高度直接给到 64vh（上界同样固定）；
+   平时的高度见上一条 —— 拖拽值决定，内容不再参与 */
+#composer.team #composerInner{height:min(64vh,620px);max-height:none}
 #composerInner.dropping #inputBox{outline:1px dashed var(--accent);outline-offset:-4px;border-radius:var(--radius)}
 
 /* ---------- 5b.2 编辑区 -------------------------------------------- */
 .cmp-box{display:flex;flex-direction:column;min-height:0;flex:1;overflow:hidden}
+/* 卡片高度固定，编辑区就吃满剩余空间（与工具条之间的空白由它自己填），
+   文字超出在框内滚动 —— 卡片不再被内容撑高，上界也就不会动 */
 #composerInner #ta{
-  display:block;width:100%;flex:0 0 auto;
+  display:block;width:100%;flex:1;min-height:24px;
   margin:0;padding:3px 2px 2px;
   border:0;background:transparent;box-shadow:none;outline:none;
   color:var(--fg);font-family:var(--sans);font-size:14px;line-height:1.6;
-  min-height:24px;max-height:calc(var(--composer-h,156px) - 74px);
-  resize:none;overflow-y:hidden;
+  resize:none;overflow-y:auto;
 }
-#composerInner #ta::placeholder{color:var(--fg4)}
+/* 玻璃比旧的不透明卡亮一档，占位符用 fg3 才不至于糊在表面上 */
+#composerInner #ta::placeholder{color:var(--fg3)}
 #composerInner #ta:focus{border:0;box-shadow:none;outline:none}
 #composerInner #ta[disabled]{opacity:.55;cursor:default}
 
-/* 附件区：在编辑区上方（提示条 + chips）。两者都为空时高度为 0 */
-.cmp-attachwrap{display:flex;flex-direction:column;gap:4px;flex:0 0 auto;min-height:0}
+/* 附件区：在编辑区上方（提示条 + chips）。两者都为空时高度为 0。
+   卡片高度固定，chips 折行到装不下时**自己收缩 + 滚动**（不撑高卡片、也不把
+   编辑区挤没：编辑区保底 24px，其余空间先让给 chips） */
+.cmp-attachwrap{display:flex;flex-direction:column;gap:4px;flex:0 1 auto;min-height:0}
 .cmp-attach{display:flex;align-items:center;gap:8px;flex:none;flex-wrap:wrap;padding:0 2px 2px}
 .cmp-attach .btn{color:var(--fg2);flex:none}
 .cmp-attach-hint{font-size:11px;color:var(--fg4)}
 
-/* 附件 chips：折行到多行时由卡片撑高；再高就自己滚（不让输入卡无上限变高） */
-.cmp-chips{display:flex;flex-wrap:wrap;gap:6px;flex:none;min-height:0;
+/* 附件 chips：折行到多行时自己滚（卡片高度固定，不跟着变高） */
+.cmp-chips{display:flex;flex-wrap:wrap;gap:6px;flex:0 1 auto;min-height:0;
   padding:0 0 4px;max-height:min(26vh,150px);overflow-y:auto;overflow-x:hidden}
 .cf-chip{
   display:inline-flex;align-items:center;gap:6px;max-width:270px;
   padding:3px 5px 3px 7px;border-radius:var(--radius-s);
-  background:var(--raise);border:1px solid var(--line);
+  background:var(--glass-face);border:1px solid var(--glass-line);
+  box-shadow:var(--glass-hi),var(--glass-lo);
   font-size:12px;color:var(--fg2);
   animation:msgIn var(--dur) var(--ease);
 }
@@ -1108,30 +1213,54 @@ body.locked{overflow:hidden}
 .cmp-prev-none{font-size:11px;color:var(--fg4)}
 
 /* ---------- 5b.3 底部工具条 ---------------------------------------- */
+/* 左：+ 附件 · 模式 · 访问权限 · 工具开关
+   右：供应商 · 模型 · 思考强度 · 发送
+   分组靠间距（bar-l 吃掉剩余宽度）。条上的控件全部是**同一块玻璃**：
+   00-tokens.css 里的 --glass-face / --glass-line / --glass-hi / --glass-lo，
+   只有尺寸不同（圆钮 28px / 药丸 28px / 发送 34px）。没有任何实心色块。 */
 .cmp-bar{display:flex;align-items:center;gap:8px;flex:none;padding-top:6px;min-height:36px}
 .cmp-bar-l{display:flex;align-items:center;gap:4px;min-width:0;flex:1}
-.cmp-bar-r{display:flex;align-items:center;gap:8px;flex:none;min-width:0}
+.cmp-bar-r{display:flex;align-items:center;gap:6px;flex:none;min-width:0}
+/* chip 不参与收缩：宁可按实测宽度换档（js 的 applyComposerWidthClass），
+   也不要把「完全访问」压成「完…」——那种半截字比换个图标难认得多 */
+.cmp-bar .cmp-chip,.cmp-bar .cmp-add,.cmp-bar .cmp-send{flex:none}
 
 .cmp-add{
   width:28px;height:28px;flex:none;border-radius:var(--radius-full);
   display:inline-flex;align-items:center;justify-content:center;
-  color:var(--fg3);border:1px solid transparent;
-  transition:background var(--dur) var(--ease),color var(--dur) var(--ease);
+  color:var(--fg2);
+  border:1px solid var(--glass-line);
+  background:var(--glass-face);
+  box-shadow:var(--glass-hi),var(--glass-lo),var(--glass-drop);
+  transition:background var(--dur) var(--ease),color var(--dur) var(--ease),
+             border-color var(--dur) var(--ease),box-shadow var(--dur) var(--ease);
 }
-.cmp-add:hover{background:var(--raise);color:var(--fg)}
-.cmp-add:active{background:var(--raise2)}
+.cmp-add:hover{background:var(--glass-face-hover);color:var(--fg);
+  border-color:var(--glass-line-hover);
+  box-shadow:var(--glass-hi),var(--glass-lo),0 2px 6px -2px rgba(0,0,0,.5)}
+.cmp-add:active{background:var(--glass-face-on)}
 .cmp-add .uico{width:16px;height:16px;stroke-width:1.8}
 .cmp-add[disabled]{opacity:.4;pointer-events:none}
 
 .cmp-chip{
   display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 8px;
-  border-radius:var(--radius-full);border:1px solid transparent;
+  border-radius:var(--radius-full);
+  border:1px solid var(--glass-line);
+  background:var(--glass-face);
+  box-shadow:var(--glass-hi),var(--glass-lo),var(--glass-drop);
   color:var(--fg2);font-size:12.5px;line-height:1;max-width:100%;min-width:0;
-  transition:background var(--dur) var(--ease),border-color var(--dur) var(--ease),color var(--dur) var(--ease);
+  transition:background var(--dur) var(--ease),border-color var(--dur) var(--ease),
+             color var(--dur) var(--ease),box-shadow var(--dur) var(--ease);
 }
-.cmp-chip:hover{background:var(--raise);color:var(--fg)}
-.cmp-chip:active{background:var(--raise2)}
-.cmp-chip[aria-expanded="true"]{background:var(--raise2);color:var(--fg);border-color:var(--line2)}
+.cmp-chip:hover{background:var(--glass-face-hover);border-color:var(--glass-line-hover);
+  color:var(--fg);box-shadow:var(--glass-hi),var(--glass-lo),0 2px 6px -2px rgba(0,0,0,.5)}
+.cmp-chip:active{background:var(--glass-face-on)}
+.cmp-chip[aria-expanded="true"]{
+  background:var(--glass-face-on);color:var(--fg);
+  border-color:color-mix(in srgb,var(--accent) 44%,var(--glass-line-hover));
+  box-shadow:var(--glass-hi),var(--glass-lo),
+             0 0 0 2px color-mix(in srgb,var(--accent) 10%,transparent);
+}
 .cmp-chip[disabled]{opacity:.42;pointer-events:none}
 .cmp-chip .cmp-chip-ico{display:inline-flex;align-items:center;justify-content:center;flex:none}
 .cmp-chip .cmp-chip-ico .uico{width:14px;height:14px;stroke-width:1.7;color:var(--fg3)}
@@ -1140,41 +1269,99 @@ body.locked{overflow:hidden}
 .cmp-chip .cmp-chev .uico{width:12px;height:12px;stroke-width:1.9;color:var(--fg4)}
 .cmp-chip-txt{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
-.cmp-chip-model{max-width:min(52vw,380px);gap:7px;padding-right:6px}
-/* 只放模型名（供应商写在底部状态行里）：名字短，通常一眼能看全 */
+.cmp-chip-model{max-width:min(46vw,340px);gap:7px;padding-right:6px}
+/* 只放模型名（供应商有自己的 chip + 底部状态行）：名字短，通常一眼能看全 */
 .cmp-model-name{
-  max-width:190px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  max-width:180px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
   font-family:var(--mono);font-size:12px;color:var(--fg);
 }
 /* 未选模型（切供应商后后端会清空模型）：这枚 chip 必须持续报警，否则它看上去
    跟「已选好」一模一样，用户会一直对着它发送、然后什么都收不到 */
 .cmp-chip-model.need{
-  color:var(--bad);border-color:color-mix(in srgb,var(--bad) 45%,transparent);
-  background:color-mix(in srgb,var(--bad) 12%,transparent);
+  color:var(--bad);border-color:color-mix(in srgb,var(--bad) 45%,rgba(255,255,255,.1));
+  background:color-mix(in srgb,var(--bad) 14%,rgba(255,255,255,.04));
 }
-.cmp-chip-model.need:hover{background:color-mix(in srgb,var(--bad) 20%,transparent)}
+.cmp-chip-model.need:hover{background:color-mix(in srgb,var(--bad) 22%,rgba(255,255,255,.04))}
 .cmp-chip-model.need .cmp-model-name,
 .cmp-chip-model.need .cmp-chip-ico .uico,
 .cmp-chip-model.need .cmp-chev .uico{color:var(--bad)}
 .cmp-chip-model.shake{animation:cmpShake 560ms var(--ease)}
 
+/* 供应商 chip：名字一般比模型名短，窄一点即够；未配置时走 need 红字 */
+.cmp-chip-prov .cmp-chip-txt{max-width:120px;font-size:12px;color:var(--fg)}
+.cmp-chip-prov.need{border-color:color-mix(in srgb,var(--bad) 45%,rgba(255,255,255,.1))}
+.cmp-chip-prov.need .cmp-chip-txt,.cmp-chip-prov.need .cmp-chip-ico .uico{color:var(--bad)}
+
+/* 工具开关：文字是名词，状态靠右侧小圆点（亮=开），关闭时整体压暗 */
+.cmp-chip-tools .cmp-dot{
+  width:6px;height:6px;flex:none;border-radius:50%;
+  background:var(--fg4);transition:background var(--dur) var(--ease),box-shadow var(--dur) var(--ease);
+}
+.cmp-chip-tools .cmp-dot.on{background:var(--accent);box-shadow:0 0 0 2.5px var(--accent-soft)}
+.cmp-chip.off{color:var(--fg3)}
+.cmp-chip.off .cmp-chip-ico .uico{color:var(--fg4)}
+
+/* 思考强度：左边「思考」是固定名词，右边档位（关/低/中/高/极高）才是读数 */
+.cmp-chip-think .cmp-think-lv{
+  flex:none;display:inline-flex;align-items:center;justify-content:center;
+  min-width:16px;height:16px;padding:0 4px;border-radius:var(--radius-full);
+  background:rgba(255,255,255,.08);color:var(--fg3);
+  font-size:10.5px;font-weight:650;line-height:1;
+  transition:background var(--dur) var(--ease),color var(--dur) var(--ease);
+}
+.cmp-chip-think .cmp-think-lv.on{background:var(--accent-soft);color:var(--accent)}
+.cmp-chip-think.off .cmp-think-lv{background:transparent;color:var(--fg4)}
+
+/* 发送钮：同一块玻璃，只是**掺了强调色**（可点的动作要有颜色才认得出来）。
+   做法与 chip 完全同源：半透明面 + 顶亮描边 + 内侧上高光/下暗边，
+   只是把白色换成了 accent 的半透明色 —— 所以它仍然是"玻璃"，不是贴纸。
+   空输入（.dim）退回无色玻璃；运行中（.stop）换成 bad 调。 */
 .cmp-send{
   width:34px;height:34px;flex:none;border-radius:var(--radius-full);
   display:inline-flex;align-items:center;justify-content:center;
-  background:var(--accent);color:#fff;
-  box-shadow:0 1px 2px rgba(0,0,0,.35);
-  transition:background var(--dur) var(--ease),transform 140ms var(--ease),color var(--dur) var(--ease),box-shadow var(--dur) var(--ease);
+  color:#fff;
+  border:1px solid color-mix(in srgb,var(--accent-hi) 54%,rgba(255,255,255,.34));
+  background:linear-gradient(180deg,
+    color-mix(in srgb,var(--accent) 80%,transparent),
+    color-mix(in srgb,var(--accent) 96%,transparent));
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.40),inset 0 -1px 0 rgba(0,0,0,.26),
+             0 6px 16px -10px color-mix(in srgb,var(--accent) 85%,transparent);
+  transition:background var(--dur) var(--ease),transform 140ms var(--ease),
+             color var(--dur) var(--ease),box-shadow var(--dur) var(--ease),
+             border-color var(--dur) var(--ease);
 }
 .cmp-send .uico{width:18px;height:18px;stroke-width:2}
-.cmp-send:hover{background:var(--accent-hi)}
+.cmp-send:hover{
+  background:linear-gradient(180deg,
+    color-mix(in srgb,var(--accent-hi) 78%,transparent),
+    color-mix(in srgb,var(--accent-hi) 96%,transparent));
+  border-color:color-mix(in srgb,var(--accent-hi) 60%,rgba(255,255,255,.44));
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.48),inset 0 -1px 0 rgba(0,0,0,.26),
+             0 8px 20px -10px color-mix(in srgb,var(--accent) 90%,transparent)}
 .cmp-send:active{transform:scale(.93)}
 .cmp-send:focus-visible{outline:2px solid var(--accent-hi);outline-offset:2px}
-.cmp-send.dim{background:var(--raise2);color:var(--fg3);box-shadow:none}
-.cmp-send.dim:hover{background:var(--raise2);color:var(--fg2)}
-/* 运行中：深色圆钮 + 白色停止方块 + 红调描边，与蓝色发送态一眼可分 */
-.cmp-send.stop{background:var(--raise2);color:#fff;border:1px solid color-mix(in srgb,var(--bad) 46%,var(--line2));box-shadow:none}
-.cmp-send.stop:hover{background:color-mix(in srgb,var(--bad) 24%,var(--raise2));border-color:var(--bad);color:#fff}
-.cmp-send[disabled]{background:var(--raise);color:var(--fg4);box-shadow:none;opacity:.6;pointer-events:none}
+/* 空输入：没有可发的动作，就退回「一块普通玻璃」——不再是实心浅灰圆饼 */
+.cmp-send.dim{
+  background:var(--glass-face);color:var(--fg3);
+  border-color:var(--glass-line);
+  box-shadow:var(--glass-hi),var(--glass-lo),var(--glass-drop);
+}
+.cmp-send.dim:hover{background:var(--glass-face-hover);color:var(--fg2);
+  border-color:var(--glass-line-hover)}
+/* 运行中：同一块玻璃，只把**描边与内高光**染成 bad 调（不整块填红——
+   那样会把玻璃变成一块警示牌，和旁边同一族材质对不上）。 */
+.cmp-send.stop{
+  background:var(--glass-face);
+  color:#fff;
+  border-color:color-mix(in srgb,var(--bad) 52%,var(--glass-line));
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.20),inset 0 -1px 0 rgba(0,0,0,.26),
+             0 0 0 1px color-mix(in srgb,var(--bad) 18%,transparent),
+             0 6px 16px -10px color-mix(in srgb,var(--bad) 70%,transparent);
+}
+.cmp-send.stop:hover{color:#fff;border-color:var(--bad);
+  background:color-mix(in srgb,var(--bad) 20%,rgba(255,255,255,.06))}
+.cmp-send[disabled]{background:rgba(255,255,255,.05);color:var(--fg4);border-color:transparent;
+  box-shadow:none;opacity:.6;pointer-events:none}
 
 /* ---------- 5b.4 弹出菜单（模式 / 沙箱 / 模型） --------------------- */
 .cmp-menu{
@@ -1362,29 +1549,26 @@ body.locked{overflow:hidden}
 .tw-add,.tw-add-agent{align-self:flex-start;color:var(--fg3)}
 .tw-add:hover,.tw-add-agent:hover{color:var(--fg)}
 
-/* ---------- 5b.7 状态行 -------------------------------------------- */
-.cmp-stat{
-  display:flex;align-items:center;gap:8px;
-  padding:6px 14px 0;min-height:17px;
-  font-size:11px;line-height:1.5;color:var(--fg3);user-select:none;
-}
-.cmp-stat .grow{flex:1;min-width:0}
-.cmp-stat-l{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.5}
-.cmp-stat-r{
-  display:inline-flex;align-items:baseline;gap:8px;flex:none;
-  color:var(--fg3);font-size:11px;line-height:1.5;font-variant-numeric:tabular-nums;
-}
-.cmp-stat-meta{white-space:nowrap;color:var(--fg3);line-height:1.5}
-.cmp-stat-meta.busy{color:var(--fg3)}
-.cmp-stat .pulse{flex:none}
-.cmp-stat .thkbtn{height:22px;font-size:11px}
+/* ---------- 5b.7 卡片下方的旧状态行（已移除） ----------------------- */
+/* 模型 / 供应商 / 访问权限 / 工具开关都在工具条里，连接状态在侧栏底部账户行：
+   卡片下那行小字只剩重复，连同 .cmp-stat / #statLeft / #statRight 一起删掉。 */
 
-/* 宽度自适应（由 ResizeObserver 按卡片实际宽度打类，比媒体查询准：
-   右栏开合 / 侧栏拖宽都会改变主区宽度） */
-#composerInner.cmp-narrow .cmp-chip{padding:0 7px;gap:5px}
+/* 宽度自适应：档位由 js 按实测宽度选（applyComposerWidthClass），三档逐级收紧：
+     .cmp-snug    收掉装饰（chevron / 内边距）——文字全部保留
+     .cmp-narrow  文字标签收成图标（模型名保留）
+     .cmp-tiny    模型名再压短、发送钮小一号
+   比媒体查询准：分栏开合 / 侧栏拖宽都会变，供应商名与模型名的长度本身也会变。 */
+#composerInner.cmp-snug .cmp-chip{padding:0 7px;gap:5px}
+#composerInner.cmp-snug .cmp-chip .cmp-chev{display:none}
+#composerInner.cmp-snug #modelChip .cmp-chev{display:inline-flex}
+#composerInner.cmp-snug .cmp-bar-l{gap:3px}
+#composerInner.cmp-snug .cmp-bar-r{gap:4px}
+
+#composerInner.cmp-narrow .cmp-chip .cmp-chev{display:none}
 #composerInner.cmp-narrow .cmp-chip-txt{display:none}
-#composerInner.cmp-narrow .cmp-model-name{max-width:150px}
+#composerInner.cmp-narrow .cmp-model-name{max-width:148px}
 #composerInner.cmp-narrow .cmp-bar-l{gap:2px}
+
 #composerInner.cmp-tiny .cmp-model-name{max-width:104px}
 #composerInner.cmp-tiny .cmp-send{width:32px;height:32px}
 #composerInner.cmp-tiny .cmp-add{width:26px}
@@ -3131,12 +3315,6 @@ mark{background:var(--accent-soft);color:var(--accent);border-radius:3px;padding
                   <div class="chips" id="chips"></div>
                   <input type="file" id="fileInput" multiple hidden>
                 </div>
-                <div class="cstat">
-                  <span class="pulse" id="connDot" title="连接状态"></span>
-                  <span id="statLeft" class="trunc">就绪</span>
-                  <span class="grow"></span>
-                  <span id="statRight"></span>
-                </div>
               </div>
             </div>
           </div>
@@ -3719,6 +3897,8 @@ function handleEvent(e) {
     case 'compact_begin': onCompactBegin(e.ws); break;
     case 'compact_end': onCompactEnd(e); break;
     case 'answer_begin': onAnswerBegin(e.ws); break;
+    // 引擎等首个 token 时的 500ms 心跳：反推请求发出时刻，用于实测 TTFT
+    case 'progress': if (window.RT) RT.progress(e.ws, e.ms); break;
     // 引擎的 answer 流就是助手正文：统一按 assistant 归档（其余前端同义）
     case 'answer': onStream(e.ws, 'assistant', e.d); break;
     case 'reason': onStream(e.ws, 'reason', e.d); break;
@@ -3912,6 +4092,7 @@ function onTurnBegin(ws) {
   const t = ensureTab(ws);
   t.busy = true;
   if (window.ChatTurns && ChatTurns.begin) { try { ChatTurns.begin(ws); } catch (e) {} }
+  if (window.RT) { RT.begin(ws); RT.mark(ws); }  // 运行时指标：回合起点即本回合第 1 轮的请求起点上界
   t.thinkingSince = Date.now();
   t._live = { assistant: null, reason: null, summary: null };
   t._liveMsgId = null;
@@ -3996,6 +4177,7 @@ function onStream(ws, role, d) {
     t._liveMsgId = role === 'assistant' ? msg.id : t._liveMsgId;
   }
   streamAppend(ws, msg, d || '');
+  if (window.RT) RT.delta(ws, role, (d || '').length);  // 运行时指标：首个 token 时刻 / 字符数
   markChat(ws);
 }
 function streamAppend(ws, msg, d) {
@@ -4015,6 +4197,7 @@ function onRound(e) {
   // 本轮 LLM 响应已完整结束：思考流随之收尾。清掉 live reason，回合间的等待
   // 才能重新显示「思考中」指示器（它只在没有流式内容时出现）
   if (t._live) t._live.reason = null;
+  if (window.RT) RT.round(e.ws, e);  // 用本轮实测的用量校准 tok/s、缓存命中率
   pushMsg(e.ws, { role: 'round', round: e.round, tok_in: e.tok_in, tok_out: e.tok_out, cache: e.cache, sec: e.sec, ttft: e.ttft });
   markChat(e.ws);
 }
@@ -4040,6 +4223,7 @@ function onToolEnd(e) {
   }
   tool.status = e.status; tool.display = e.display; tool.marker = e.marker;
   tool.sec = e.sec; tool.chars = e.chars; tool.multimodal = e.multimodal;
+  if (window.RT) RT.mark(e.ws);  // 工具跑完通常紧跟下一轮请求：作为 TTFT 的起点兜底
   markChat(e.ws);
   // LLM 通过 tw 工具建/跑团队任务时没有 SSE 事件：工具一结束就重拉一次，
   // 新任务出现且右栏关着就自动展开 Teamwork——用户提交后能立刻看到卡片
@@ -5305,6 +5489,48 @@ function paintJump(ws) {
   const scrollable = chat.scrollHeight > chat.clientHeight + 8;
   const show = !!scrollable && !t._stick && !chat.classList.contains('hero-mode');
   btn.classList.toggle('show', show);
+  placeJump(btn, t._pane);
+}
+/* 按钮贴在卡片上界之上 16px —— 用**实测**矩形算，不读 --composer-h 推算：
+   卡片会被 72vh 上限、Teamwork 模式限高，推算值会和真实上界差出几十像素，
+   按钮就飘在消息流中间（2026-10-31 用户报的「按钮随上界拖动改变位置」）。
+   bottom 相对 pane 的 padding box，所以要用 pane 自己的矩形换算，
+   不假设 pane 底边一定等于视口底边。 */
+const JUMP_GAP = 16;
+function placeJump(btn, pane) {
+  const card = $('#composerInner');
+  if (!btn || !pane || !card) return;
+  const cr = card.getBoundingClientRect();
+  if (cr.height < 8) return;
+  const pr = pane.getBoundingClientRect();
+  btn.style.bottom = Math.max(8, Math.round(pr.bottom - cr.top + JUMP_GAP)) + 'px';
+}
+/* 卡片高度/位置变化时（拖手柄、切 Teamwork、窗口缩放、hero 态切换）重新贴一次：
+   ① 「回到底部」按钮贴在卡片上界之上；
+   ② 消息流的底部留白 --composer-pad 也跟着**实测**高度走 —— Teamwork 模式的
+      卡片是 64vh、不看 --composer-h，用变量推算会把最后几条消息压在卡片底下，
+      看着就像"上界没固定"（2026-10-31 报的问题）。 */
+function syncJumpAnchors() {
+  const card = $('#composerInner');
+  if (card) {
+    const cr = card.getBoundingClientRect();
+    const centre = $('#centre');
+    const cb = centre ? centre.getBoundingClientRect().bottom : window.innerHeight;
+    // hero / no-ws 态卡片在视口中部，留白由 hero 自己管，别写一个巨大的值
+    const heroish = !!(centre && (centre.classList.contains('hero') || centre.classList.contains('no-ws')));
+    if (cr.height > 8 && !heroish) {
+      // cb - cr.top = 卡片上界离容器底边多远；再留 28px（手柄 12 + 空隙 16）
+      // 让最后一条消息不贴着卡片。156px 卡片算出来正好是原来的 202px。
+      document.documentElement.style.setProperty('--composer-pad',
+        Math.round(cb - cr.top + 28) + 'px');
+    }
+  }
+  for (const ws of S.tabOrder) {
+    const t = S.tabs.get(ws);
+    if (!t || !t._pane) continue;
+    const btn = t._pane.querySelector('.jump-bottom');
+    if (btn) placeJump(btn, t._pane);
+  }
 }
 // 窗口尺寸变化时重新判断是否显示（内容高度随之变化）
 window.addEventListener('resize', () => {
@@ -6043,10 +6269,92 @@ function makeNotice(m) {
   return w;
 }
 
+/* ---- 流式运行时指标：tok/s · TTFT · ITL · 缓存命中 -------------------
+   全部来自真实数据，不做假数：
+     · progress  引擎在等首个 token 时每 ~500ms 上报「已等多少毫秒」→ 反推请求发出时刻
+     · reason/answer 增量 → 首个 token 时刻、本轮输出字符数、最后一块时刻
+     · round     本轮结束 → 供应商回报的 tok_in / tok_out / cache / sec / ttft
+   流式期间的 tok/s 与 ITL 需要 token 数，而流中只有字符数：用上一轮实测的
+   「字符/词元」比换算，每轮结束自动校准（RT_DEFAULT_CPT 只是首次的兜底）。
+   缓存命中率同理沿用上一轮 —— 当前这轮的命中率要等本轮结束供应商才会报回来。 */
+const RT_DEFAULT_CPT = 1.6;   // 字符/词元：中英混排的首个兜底值
+function rtOf(t) {
+  if (!t) return null;
+  if (!t._rt) t._rt = { reqAt: 0, firstAt: 0, chars: 0, mark: 0, cpt: RT_DEFAULT_CPT, cacheHit: -1 };
+  return t._rt;
+}
+// 新一轮请求：只清本轮计时，保留校准系数与缓存命中率
+function rtReset(t) { const rt = rtOf(t); if (rt) { rt.reqAt = 0; rt.firstAt = 0; rt.chars = 0; } }
+// 本轮可能发出请求的时刻（回合开始 / 工具跑完 / 上一轮结束）：无 progress 时的兜底
+function rtMark(ws) { const rt = rtOf(ensureTab(ws)); if (rt) rt.mark = Date.now(); }
+function rtBegin(ws) { rtReset(ensureTab(ws)); rtMark(ws); }
+function rtProgress(ws, ms) {
+  const rt = rtOf(ensureTab(ws));
+  if (!rt || rt.firstAt) return;
+  rt.reqAt = Date.now() - Math.max(0, Number(ms) || 0);
+}
+function rtDelta(ws, role, n) {
+  if (role === 'summary') return;   // 上下文摘要不是模型输出
+  const rt = rtOf(ensureTab(ws));
+  if (!rt) return;
+  const now = Date.now();
+  if (!rt.firstAt) { rt.firstAt = now; if (!rt.reqAt) rt.reqAt = rt.mark || now; }
+  rt.chars += Math.max(0, n || 0);
+}
+function rtRound(ws, e) {
+  const t = ensureTab(ws);
+  const rt = rtOf(t);
+  if (!rt) return;
+  const out = Number(e && e.tok_out), tin = Number(e && e.tok_in), cache = Number(e && e.cache);
+  // 校准「字符/词元」：样本越少权重越低，避免把上一轮的结论整个冲掉
+  if (out > 0 && rt.chars > 0) {
+    const w = Math.min(0.6, rt.chars / 400);
+    rt.cpt = rt.cpt * (1 - w) + (rt.chars / out) * w;
+  }
+  if (tin > 0 && cache >= 0) rt.cacheHit = Math.min(1, cache / tin);
+  rtReset(t);
+  rt.mark = Date.now();
+}
+/* 本轮实时视图：null = 还没有任何可显示的数据 */
+function rtView(t) {
+  const rt = rtOf(t);
+  if (!rt) return null;
+  const now = Date.now();
+  if (!rt.firstAt) {
+    const from = rt.reqAt || rt.mark || Number(t.thinkingSince) || now;
+    return { waiting: Math.max(0, now - from), cacheHit: rt.cacheHit };
+  }
+  const sec = Math.max(0.001, (now - rt.firstAt) / 1000);
+  const tokens = rt.chars / (rt.cpt > 0 ? rt.cpt : RT_DEFAULT_CPT);
+  return {
+    chars: rt.chars,
+    tokens: tokens,
+    tps: tokens >= 4 ? tokens / sec : 0,
+    itl: tokens >= 4 ? (sec * 1000) / Math.max(1, tokens - 1) : 0,
+    ttft: rt.reqAt ? Math.max(0, rt.firstAt - rt.reqAt) : -1,
+    cacheHit: rt.cacheHit,
+  };
+}
+/* 时长 / 速率格式化（指标行专用：够短、够稳，宽度不跳） */
+function rtMs(ms) {
+  ms = Number(ms) || 0;
+  if (ms <= 0) return '—';
+  if (ms < 1000) return Math.round(ms) + 'ms';
+  if (ms < 10000) return (ms / 1000).toFixed(2) + 's';
+  return Math.round(ms / 1000) + 's';
+}
+function rtTps(v) {
+  if (!(v > 0)) return '—';
+  return v >= 100 ? String(Math.round(v)) : v.toFixed(1);
+}
+function rtPct(v) { return v >= 0 ? Math.round(v * 100) + '%' : '—'; }
+// 00-core.js 的事件分发用：progress / 增量 / 轮次结束 / 回合开始
+window.RT = { begin: rtBegin, mark: rtMark, progress: rtProgress, delta: rtDelta, round: rtRound };
+
 /* ---- 等待 / 思考指示器：阶段标题 + 副标题 + 秒表 --------------------
    一个回合会经过多个阶段（准备上下文 → 等模型 → 推理 → 工具 → 审批 →
    下一轮…）。只显示「正在思考中」看不出卡在哪，这里按实时状态生成阶段
-   文案，并由 250ms 定时器更新副标题（字符数）与秒表。                 */
+   文案，并由 250ms 定时器更新副标题（字符数）、运行时指标与秒表。      */
 function fmtWaitSec(sec) {
   sec = Math.max(0, Number(sec) || 0);
   if (sec < 60) return sec.toFixed(1) + 's';
@@ -6088,16 +6396,16 @@ function thinkingPhase(t) {
   const live = t._live || {};
   const last = t.msgs.length ? t.msgs[t.msgs.length - 1] : null;
   if (t.approval) {
-    return { tone: 'warn', title: '等待审批', sub: '「' + toolZh(t.approval.tool) + '」需要你的确认' };
+    return { tone: 'warn', stage: 'approval', title: '等待审批', sub: '「' + toolZh(t.approval.tool) + '」需要你的确认' };
   }
   if (live.reason && last === live.reason) {
     const n = String(live.reason.text || '').length;
-    return { tone: 'run', title: '正在推理',
+    return { tone: 'run', stage: 'reason', title: '正在推理',
       sub: (n ? '已思考 ' + fmtTok(n) + ' 字符' : '模型正在推理') + (roundTxt ? ' · ' + roundTxt : '') };
   }
   if (live.assistant && last === live.assistant) {
     const n = String(live.assistant.text || '').length;
-    return { tone: 'run', title: '正在输出',
+    return { tone: 'run', stage: 'answer', title: '正在输出',
       sub: '已输出 ' + fmtTok(n) + ' 字符' + (roundTxt ? ' · ' + roundTxt : '') };
   }
   const tool = lastRunningTool(t);
@@ -6105,17 +6413,17 @@ function thinkingPhase(t) {
     if (isTwTool(tool)) {
       const op = String((twArgsOf(tool) || {}).operation || '').toLowerCase();
       const twTitle = (op === 'run' || op === 'resume') ? '正在运行团队任务' : '正在创建团队任务';
-      return { tone: 'run', title: twTitle, sub: roundTxt + ' · tw' };
+      return { tone: 'run', stage: 'tool', title: twTitle, sub: roundTxt + ' · tw' };
     }
     const bits = [];
     if (tool.name && tool.name !== toolZh(tool.name)) bits.push(tool.name);
     if (roundTxt) bits.push(roundTxt);
-    return { tone: 'run', title: '正在执行 ' + toolZh(tool.name), sub: bits.join(' · ') || '工具调用进行中' };
+    return { tone: 'run', stage: 'tool', title: '正在执行 ' + toolZh(tool.name), sub: bits.join(' · ') || '工具调用进行中' };
   }
   const status = lastTurnStatus(t);
-  if (status) return { tone: 'run', title: status.slice(0, 60), sub: roundTxt };
-  if (done > 0 || turnHasWork(t)) return { tone: 'run', title: '等待模型响应', sub: roundTxt + ' · 模型正在处理工具结果' };
-  return { tone: 'run', title: '正在准备上下文', sub: '整理历史消息与提示词' };
+  if (status) return { tone: 'run', stage: 'status', title: status.slice(0, 60), sub: roundTxt };
+  if (done > 0 || turnHasWork(t)) return { tone: 'run', stage: 'wait', title: '等待模型响应', sub: roundTxt + ' · 模型正在处理工具结果' };
+  return { tone: 'run', stage: 'prep', title: '正在准备上下文', sub: '整理历史消息与提示词' };
 }
 function makeThinking() {
   const w = el('div', 'msg assistant thinking');
@@ -6129,12 +6437,14 @@ function makeThinking() {
   const main = el('span', 'think-main');
   const title = el('span', 'think-title', '正在准备上下文');
   const sub = el('span', 'think-sub', '');
-  main.appendChild(title); main.appendChild(sub);
+  const metrics = el('span', 'think-metrics');
+  metrics.hidden = true;
+  main.appendChild(title); main.appendChild(sub); main.appendChild(metrics);
   const sec = el('span', 'think-sec mono', '');
   row.appendChild(dots); row.appendChild(main); row.appendChild(sec);
   body.appendChild(row);
   w.appendChild(body);
-  w._think = { title: title, sub: sub, sec: sec, dots: dots };
+  w._think = { title: title, sub: sub, metrics: metrics, sec: sec, dots: dots };
   w.__since = Date.now();
   ensureThinkTicker();
   return w;
@@ -6159,11 +6469,44 @@ function paintThinking(node, t) {
   const ti = node._think.title, sub = node._think.sub, sec = node._think.sec;
   if (ti.textContent !== ph.title) ti.textContent = ph.title;
   if (sub.textContent !== ph.sub) sub.textContent = ph.sub;
+  paintThinkMetrics(node, t, ph.stage);
   const start = Number(t.thinkingSince) || node.__since || Date.now();
   const elapsed = fmtWaitSec((Date.now() - start) / 1000);
   if (sec.textContent !== elapsed) sec.textContent = elapsed;
   node.dataset.phase = ph.tone || 'run';
   node.setAttribute('aria-label', ph.title + (ph.sub ? '：' + ph.sub : '') + ' · ' + elapsed);
+}
+/* 指标行：推理 / 输出阶段给完整读数；等首个 token 时只给等待时长；
+   工具 / 审批阶段与模型无关，直接收起（上次输出的数字留着只会误导）。 */
+const RT_TIP = 'tok/s 与 ITL 由本轮已输出字符按上一轮 字符/词元 比换算；'
+  + 'TTFT 为客户端实测（请求发出 → 首个 token）；缓存命中率取上一轮供应商回报值。';
+function paintThinkMetrics(node, t, stage) {
+  const box = node._think.metrics;
+  if (!box) return;
+  const streaming = stage === 'reason' || stage === 'answer';
+  const waiting = stage === 'prep' || stage === 'wait';
+  const v = (streaming || waiting) ? rtView(t) : null;
+  if (!v) { if (!box.hidden) { box.hidden = true; box.__sig = ''; } return; }
+  const bits = [];
+  if (v.waiting != null) {
+    bits.push(['等待首字', rtMs(v.waiting)]);
+  } else {
+    if (v.tps > 0) bits.push([rtTps(v.tps), 'tok/s']);
+    if (v.itl > 0) bits.push(['ITL', rtMs(v.itl)]);
+    bits.push(['TTFT', rtMs(v.ttft)]);
+    if (v.cacheHit >= 0) bits.push(['缓存', rtPct(v.cacheHit)]);
+  }
+  const sig = bits.map(b => b[0] + '|' + b[1]).join(';');
+  if (box.__sig === sig) return;
+  box.__sig = sig;
+  box.hidden = false;
+  box.title = RT_TIP;
+  let html = '';
+  for (const [a, b] of bits) {
+    html += '<span class="tm"><span class="tm-v">' + esc(a) + '</span>'
+      + '<span class="tm-k">' + esc(b) + '</span></span>';
+  }
+  box.innerHTML = html;
 }
 
 /* ---- 系统提示 / 上下文摘要（卡片） --------------------------------- */
@@ -6230,6 +6573,13 @@ function makeReasonCard(m) {
 }
 
 /* ---- 轮次条：一行元信息，不抢正文视觉 ------------------------------ */
+/* 本轮实测吞吐：ttft 之后才是纯解码时间，tok_out-1 个间隔摊到这段上 */
+function roundRates(m) {
+  const out = Number(m.tok_out || 0), sec = Number(m.sec || 0), ttft = Number(m.ttft || 0);
+  const decode = sec - (ttft > 0 ? ttft : 0);
+  if (!(out > 1) || !(decode > 0.02)) return null;
+  return { tps: out / decode, itl: (decode * 1000) / (out - 1) };
+}
 function makeRound(m) {
   const bar = el('div', 'roundbar');
   const ic = el('span', 'rb-ico');
@@ -6242,7 +6592,15 @@ function makeRound(m) {
   }
   if (m.cache) { bar.appendChild(el('span', 'rb-sep', '·')); bar.appendChild(el('span', 'rb-i', '缓存 ' + fmtTok(m.cache))); }
   if (m.sec) { bar.appendChild(el('span', 'rb-sep', '·')); bar.appendChild(el('span', 'rb-i', fmtDur(m.sec))); }
-  if (m.ttft) { bar.appendChild(el('span', 'rb-sep', '·')); bar.appendChild(el('span', 'rb-i', '首字 ' + Math.round(m.ttft) + 'ms')); }
+  // 引擎的 ttft 是秒（demo 数据也是秒）：这里统一成毫秒显示
+  if (m.ttft > 0) { bar.appendChild(el('span', 'rb-sep', '·')); bar.appendChild(el('span', 'rb-i', 'TTFT ' + rtMs(m.ttft * 1000))); }
+  const rt = roundRates(m);
+  if (rt) {
+    bar.appendChild(el('span', 'rb-sep', '·'));
+    bar.appendChild(el('span', 'rb-i', rtTps(rt.tps) + ' tok/s'));
+    bar.appendChild(el('span', 'rb-sep', '·'));
+    bar.appendChild(el('span', 'rb-i', 'ITL ' + rtMs(rt.itl)));
+  }
   return bar;
 }
 
@@ -7377,24 +7735,35 @@ const Layout = {
         JSON.stringify({ __v: 2, sidebar: v.sidebar, dock: v.dock, composer: v.composer }));
     } catch (e) {}
   },
+  // 输入栏高度（像素，已夹在 [min, 72vh] 内）。72vh 必须和 05b-composer.css 里
+  // #composerInner 的 max-height 是**同一个数**：两边不一致时，拖过 72vh 后卡片
+  // 已经停住、--composer-h 却还在涨 —— 拖拽手柄与卡片脱节，「回到底部」也会
+  // 按涨出来的假高度飘走（2026-10-31 用户报的问题）。唯一写 --composer-h 的地方。
+  composerH() {
+    const v = this.load();
+    const hi = Math.max(this.min.composer, Math.round(window.innerHeight * 0.72));
+    return Math.round(clamp(Number(v.composer) || this.def.composer, this.min.composer, hi));
+  },
   // 夹取并落盘：v 是本轮拖动算出的原始比例
   set(key, v, commit) {
     const vals = this.load();
-    const hi = key === 'composer' ? Math.max(this.min.composer, window.innerHeight - 200) : this.max[key];
+    const hi = key === 'composer' ? Math.max(this.min.composer, Math.round(window.innerHeight * 0.72))
+                                 : this.max[key];
     vals[key] = key === 'composer' ? Math.round(clamp(v, this.min[key], hi))
                                    : clamp(v, this.min[key], hi);
     this.apply();
     if (commit) this.save();
   },
   apply() {
-    const v = this.load();
     const sb = $('#sidebar'), dk = $('#rightdock');
     // 比例 → 像素。dock 收起时宽度 0，但记下的比例保留给再次打开。
     const px = this.sizes();
     if (sb) sb.style.width = px.sidebar + 'px';
     if (dk) dk.style.width = px.dock + 'px';
     // 输入栏是悬浮卡片：高度写成 CSS 变量，消息流的底部留白读同一个值
-    document.documentElement.style.setProperty('--composer-h', v.composer + 'px');
+    document.documentElement.style.setProperty('--composer-h', this.composerH() + 'px');
+    // 卡片上界变了，「回到底部」按钮要跟着重新贴（它按实测矩形定位）
+    if (typeof syncJumpAnchors === 'function') { try { syncJumpAnchors(); } catch (e) {} }
   },
   // 🔴 两个侧栏必须**一起**算，不能各算各的：它们各自的百分比基数都是整个
   // shell（dock 虽然在 DOM 里是 #main 的后代，但宽度由这里给死），分开算会
@@ -9135,8 +9504,7 @@ function highlightBody(body) {
    I. 输入栏（Composer）· DSH 式悬浮输入卡
    ---------------------------------------------------------------------
    结构（全部由 ComposerUI.init() 建在骨架的 #composerInner 内）：
-     #composerInner  ← 卡片本体（--elev-2 / --radius-xl / 1px --line2，
-                        :focus-within 时 accent 边 + 外环）
+     #composerInner  ← 卡片本体（液态玻璃：半透明 + backdrop-filter + 高光/折射）
        #inputBox     ← 编辑区（附件区 + textarea），拖拽落点
          #attachWrap ← 附件区（在编辑区上方，可多行折行，卡片随之变高）
            #attachBar（#btnPickFile）
@@ -9144,15 +9512,13 @@ function highlightBody(body) {
          #ta
          #fileInput
        #teamEditor   ← Teamwork 工作流编辑器（team 模式显示）
-       .cmp-bar      ← 底部工具条：
-         + 添加附件 · 模式 chip · 沙箱 chip  ……  模型+思考 chip · accent 发送钮
-     .cmp-stat       ← 卡片外的状态行（连接点 / 左侧状态 / 右侧 token·round）
-                       由 Lead 的 renderStatLine 写 #statLeft/#connDot，
-                       这里只负责右侧 token/round（#statRight）。
+       .cmp-bar      ← 底部工具条（卡片下方不再有状态行）：
+         左：+ 添加附件 · 模式 · 访问权限 · 工具开关
+         右：供应商 · 模型 · 思考强度 · accent 发送钮
 
    兼容契约（docs/ui-redesign.md §7.1）：保留全部旧全局函数
    renderComposer / syncComposerInput / setComposerMode / sendCurrent /
-   focusInput / autosize / buildSlash / renderChips / syncComposerText /
+   focusInput / buildSlash / renderChips / syncComposerText /
    addFiles / enterSlash / applySlash / execSlash / layoutSlash / slashSel；
    并新增 window.ComposerUI = { init, render, refresh, ... } 供 boot 优先调用。
 
@@ -9204,7 +9570,6 @@ const CMP_ICON_RUN = '<svg class="uico" viewBox="0 0 24 24" aria-hidden="true">'
 let slashSel = 0;
 let cmpMenu = null;        // 当前打开的 composer 弹出菜单
 let cmpModelFetching = false;
-let cmpMetaSig = '';       // 状态行右侧 token/round 的缓存签名
 
 /* @ 引用面板：与斜杠面板共用同一个浮层（#slashPanel），只是候选来源不同。
    候选分两页，表头就是页签（←→ 或鼠标点击翻页）：
@@ -9326,13 +9691,35 @@ function buildComposerDom() {
   sandboxChip.setAttribute('aria-haspopup', 'menu');
   left.appendChild(sandboxChip);
 
+  /* 工具调用开关：紧挨访问权限（两者都是「这一回合能做什么」的边界），
+     点一下直接开/关（弹菜单反而多一步），状态用文字 + 小圆点表达 */
+  const toolsChip = el('button', 'cmp-chip cmp-chip-tools');
+  toolsChip.id = 'toolsChip';
+  toolsChip.type = 'button';
+  toolsChip.setAttribute('aria-pressed', 'true');
+  left.appendChild(toolsChip);
+
   const right = el('div', 'cmp-bar-r');
+  const providerChip = el('button', 'cmp-chip cmp-chip-prov');
+  providerChip.id = 'providerChip';
+  providerChip.type = 'button';
+  providerChip.title = '模型供应商';
+  providerChip.setAttribute('aria-haspopup', 'menu');
+  right.appendChild(providerChip);
+
   const modelChip = el('button', 'cmp-chip cmp-chip-model');
   modelChip.id = 'modelChip';
   modelChip.type = 'button';
-  modelChip.title = '模型 / 供应商 / 思考级别';
+  modelChip.title = '模型';
   modelChip.setAttribute('aria-haspopup', 'menu');
   right.appendChild(modelChip);
+
+  const thinkChip = el('button', 'cmp-chip cmp-chip-think');
+  thinkChip.id = 'thinkChip';
+  thinkChip.type = 'button';
+  thinkChip.title = '思考强度';
+  thinkChip.setAttribute('aria-haspopup', 'menu');
+  right.appendChild(thinkChip);
 
   const send = el('button', 'cmp-send');
   send.id = 'sendBtn';
@@ -9346,34 +9733,64 @@ function buildComposerDom() {
   bar.appendChild(right);
   host.appendChild(bar);
 
-  /* — 状态行：放在卡片外（.composer-stack 末尾），视觉上是漂浮卡下的细行 — */
+  /* 卡片下方不再有状态行：模型 / 供应商 / 访问权限 / 工具开关都已经在工具条里，
+     再挂一行小字只会重复（连接状态在左侧栏底部的账户行，断线另有浮动横幅）。 */
   const stack = cmpStack(host);
-  let stat = null;
-  if (stack) stat = stack.querySelector('.cmp-stat, .cstat');
-  if (stat && host.contains(stat)) stat = null;
-  if (!stat) stat = el('div', 'cmp-stat');
-  stat.className = 'cmp-stat';
-  stat.replaceChildren();
-  const dot = el('span', 'pulse');
-  dot.id = 'connDot';
-  dot.title = '连接状态';
-  const statL = el('span', 'cmp-stat-l trunc');
-  statL.id = 'statLeft';
-  statL.textContent = '就绪';
-  const statR = el('span', 'cmp-stat-r');
-  statR.id = 'statRight';
-  stat.appendChild(dot);
-  stat.appendChild(statL);
-  stat.appendChild(el('span', 'grow'));
-  stat.appendChild(statR);
-  if (stack) { if (stat.parentElement !== stack) stack.appendChild(stat); }
-  else host.appendChild(stat);
+  if (stack) {
+    const stale = stack.querySelector('.cmp-stat, .cstat');
+    if (stale && !host.contains(stale)) stale.remove();
+  }
 
   ensureSlashPanel();
-  autosize(ta);
+  // 旧版本用 .glass-refract 走 SVG 折射滤镜；升级后残留在 DOM 上的类要清掉，
+  // 否则它会盖掉 CSS 里的 backdrop-filter:blur()（见下面 I1b 的说明）
+  host.classList.remove('glass-refract');
   host.__cmpBuilt = true;
   return true;
 }
+
+/* ---------- I1b. 液态玻璃：磨砂强度 -----------------------------------
+   ⚠️ 历史包袱（2026-10-31 排查）：这里原来用 SVG 滤镜做「边缘折射」——
+   圆角矩形 SDF 算位移贴图 → feImage + feDisplacementMap → 通过
+   backdrop-filter:url(#cmp-glass-ref) 作用在真实背景上。
+   Chromium / WebView2 对 url() **只做解析检测**（CSS.supports() 返回 true），
+   渲染时整条滤镜被丢掉，于是卡片既没有模糊也没有折射：背后文字原样透上来
+   盖在占位符上（看着像"上界没固定"），两端还留下一道位移硬缝（"没渲染好"）。
+   所以现在只保留纯 CSS 方案：磨砂 = backdrop-filter:blur()，
+   边缘厚度与圆滑亮边 = #composerInner::before 的渐变环（见 05b-composer.css）。
+   这里唯一还留给用户调的是「磨砂强度」，写进 --cmp-glass-blur。 */
+const GLASS = {
+  t: 0.6,             // 透明度偏好（0=清晰 … 1=磨砂最强），见 applyGlassPref
+  blur: 9.3,          // 高斯模糊（CSS px）：由透明度推出来
+};
+
+/* 玻璃观感偏好（本机 localStorage，不进后端设置 —— 跟主题、动画等级一样只在
+   这台机器的浏览器里生效）。材质无色：只有白/黑透明度层次，不带任何颜色，
+   唯一随偏好变化的是高斯模糊强度 —— 越"磨砂"越糊。 */
+const GLASS_PREF_KEY = 'cell.glass';
+function glassBlur(t) { return 20 * Math.pow(Math.min(1, Math.max(0, t)), 1.5); }
+
+function loadGlassPref() {
+  let t = GLASS.t;
+  try {
+    const v = Number((JSON.parse(localStorage.getItem(GLASS_PREF_KEY) || '{}') || {}).t);
+    if (isFinite(v)) t = v;
+  } catch (e) {}
+  applyGlassPref(t, true);
+}
+/* 立即生效：只改一个 CSS 变量，卡片与卡内控件共用它 */
+function applyGlassPref(t, silent) {
+  if (t != null) GLASS.t = Math.min(1, Math.max(0, Number(t) || 0));
+  const px = glassBlur(GLASS.t);
+  GLASS.blur = px;
+  document.documentElement.style.setProperty('--cmp-glass-blur', px.toFixed(2) + 'px');
+}
+function setGlassPref(t) {
+  applyGlassPref(t, false);
+  try { localStorage.setItem(GLASS_PREF_KEY, JSON.stringify({ t: Number(GLASS.t.toFixed(3)) })); } catch (e) {}
+}
+window.setGlassTransparency = pct => setGlassPref((Number(pct) || 0) / 100);
+loadGlassPref();
 
 /* ---------- I2. 事件绑定 ------------------------------------------- */
 function bindComposer() {
@@ -9393,8 +9810,7 @@ function bindComposer() {
       if (!t) return;
       t.composer.text = ta.value;
       slashSel = 0;
-      autosize(ta);
-      buildSlash();
+          buildSlash();
       paintSendState(t);
     });
     ta.addEventListener('keydown', onComposerKeydown);
@@ -9411,8 +9827,14 @@ function bindComposer() {
   if (modeChip) modeChip.addEventListener('click', () => toggleModeMenu(modeChip));
   const sandboxChip = $('#sandboxChip');
   if (sandboxChip) sandboxChip.addEventListener('click', () => toggleSandboxMenu(sandboxChip));
+  const toolsChip = $('#toolsChip');
+  if (toolsChip) toolsChip.addEventListener('click', () => toggleTools());
+  const providerChip = $('#providerChip');
+  if (providerChip) providerChip.addEventListener('click', () => toggleProviderMenu(providerChip));
   const modelChip = $('#modelChip');
   if (modelChip) modelChip.addEventListener('click', () => toggleModelMenu(modelChip));
+  const thinkChip = $('#thinkChip');
+  if (thinkChip) thinkChip.addEventListener('click', () => toggleThinkLevelMenu(thinkChip));
 
   /* 拖拽入卡：整张卡片都是落点（编辑区高亮） */
   const stop = ev => { ev.preventDefault(); ev.stopPropagation(); };
@@ -9464,17 +9886,20 @@ function bindComposer() {
 
   /* 宽度自适应：主区变窄（分栏/窗口）时把 chip 收成图标，避免文字挤成「文…」 */
   applyComposerWidthClass();
-  paintComposerMetrics();
   if (typeof ResizeObserver !== 'undefined') {
     // 回调里同步改类名会再次改变被观察元素的大小，Chromium 因此报
     // "ResizeObserver loop completed with undelivered notifications"；
     // 延到下一帧处理即可（终端面板改变宽度时会命中这条路）
-    const ro = new ResizeObserver(() => window.requestAnimationFrame(() => {
-      applyComposerWidthClass();
-      paintComposerMetrics();
-    }));
+    const ro = new ResizeObserver(() => window.requestAnimationFrame(applyComposerWidthClass));
     ro.observe(host);
     host.__cmpRO = ro;
+    // 卡片高度/位置上界一变（拖手柄、Teamwork 模式、72vh 限高、hero 态），
+    // 「回到底部」就重新贴一次 —— 它按卡片实测矩形定位，不读 --composer-h
+    if (typeof syncJumpAnchors === 'function') {
+      new ResizeObserver(() => window.requestAnimationFrame(() => {
+        try { syncJumpAnchors(); } catch (e) {}
+      })).observe(host);
+    }
   }
 
   /* 附件预览小窗：任何点击/缩放都先收起，避免残留在半空 */
@@ -9490,29 +9915,39 @@ function bindComposer() {
   window.addEventListener('resize', () => { try { renderComposer(); } catch (e) {} });
 }
 
+/* 宽度自适应：chip 里的文字不再被压成「文…」——先量「按自然宽度排下来要多少
+   地方」，放不下就把文字标签收成图标（.cmp-narrow），还放不下再缩短模型名
+   （.cmp-tiny）。比媒体查询准：分栏开合 / 侧栏拖宽 / 抽屉展开都会改变主区宽度，
+   而供应商名、模型名的长度本身也会变（换模型后要重新量一次）。 */
+function barSpace(node) {
+  const cs = getComputedStyle(node);
+  const gap = parseFloat(cs.columnGap || cs.gap) || 0;
+  let sum = 0, n = 0;
+  for (const c of node.children) {
+    if (!c || c.hidden || c.offsetWidth === 0) continue;
+    sum += c.offsetWidth; n++;
+  }
+  return sum + Math.max(0, n - 1) * gap;
+}
+function composerOverflow(host) {
+  const bar = host.querySelector('.cmp-bar');
+  if (!bar || !bar.clientWidth) return false;
+  const l = bar.querySelector('.cmp-bar-l'), r = bar.querySelector('.cmp-bar-r');
+  const gap = parseFloat(getComputedStyle(bar).columnGap || getComputedStyle(bar).gap) || 0;
+  // 两个分组的自然宽度 + 组间间距 > 工具条可用宽度 → 该收标签了
+  return barSpace(l) + gap + barSpace(r) > bar.clientWidth + 1;
+}
+/* 宽度自适应三档（CSS 里各档做了什么）：snug 收装饰 → narrow 收文字标签 →
+   tiny 压模型名。放得下就停在最小档，避免「明明够宽还把文字藏掉」。 */
+const CMP_TIERS = ['cmp-snug', 'cmp-narrow', 'cmp-tiny'];
 function applyComposerWidthClass() {
   const host = $('#composerInner');
   if (!host) return;
-  const w = host.getBoundingClientRect().width || 0;
-  host.classList.toggle('cmp-narrow', w > 0 && w < 650);
-  host.classList.toggle('cmp-tiny', w > 0 && w < 520);
-}
-
-/* 量一次卡片的真实高度，写进两个 CSS 变量（纯 CSS 取不到「元素自然高度」）：
-     --cmp-card-h    整个 .composer-stack 的高度 → 消息流底部留白 /「回到底部」按钮
-                     跟着卡片走，附件折行把卡片撑高时消息流不会被盖住
-     --cmp-attach-h  附件区的高度 → 卡片 max-height 允许超出拖拽高度的部分，
-                     保证多行附件始终有位置，不会把编辑区挤扁 */
-function paintComposerMetrics() {
-  const host = $('#composerInner');
-  if (!host) return;
-  const root = document.documentElement;
-  const stack = cmpStack(host);
-  const cardH = Math.round((stack || host).getBoundingClientRect().height);
-  root.style.setProperty('--cmp-card-h', cardH + 'px');
-  const wrap = $('#attachWrap');
-  const attachH = wrap ? Math.round(wrap.getBoundingClientRect().height) : 0;
-  root.style.setProperty('--cmp-attach-h', Math.max(0, attachH) + 'px');
+  host.classList.remove(...CMP_TIERS);
+  for (const tier of CMP_TIERS) {
+    if (!composerOverflow(host)) break;
+    host.classList.add(tier);
+  }
 }
 
 function hasFileDrag(ev) {
@@ -9599,7 +10034,7 @@ function paintSandboxChip(mode) {
 }
 
 /* S.model 是「供应商:模型」（核心的 model_label），但输入栏的圆钮只放模型名：
-   供应商在底部状态行里已经写着了，再塞进按钮只会把名字挤成省略号。 */
+   供应商有自己的 chip，模型名再带上只会被挤成省略号。 */
 function modelShortName() {
   // 未选模型时 model_label() 只剩供应商名，当成模型名显示会让人以为已选好
   if (!S.modelSet) return '';
@@ -9634,12 +10069,8 @@ function demandModel(msg) {
 function paintModelChip(t) {
   const chip = $('#modelChip');
   if (!chip) return;
-  const lv = Number((S.settings || {}).think_level || 0);
-  const lvl = THINK_LEVELS[lv] || THINK_LEVELS[0];
   const need = !!t && needsModel(); // 有工作区才谈得上「开始会话」
   const name = need ? '选择模型' : (modelShortName() || '(未选择模型)');
-  const qual = String(S.model || '');
-  const prov = S.provider || (qual.indexOf(':') > 0 ? qual.slice(0, qual.indexOf(':')) : '');
   chip.innerHTML = '<span class="cmp-chip-ico">' + iconHtml('cpu') + '</span>'
     + '<span class="cmp-model-name trunc"></span>'
     + '<span class="cmp-chev">' + iconHtml('chevronDown') + '</span>';
@@ -9647,13 +10078,83 @@ function paintModelChip(t) {
   if (nm) nm.textContent = name;
   chip.classList.toggle('need', need);
   chip.title = need
-    ? '未选择模型：供应商 ' + (prov || '?') + ' 已切换，但还没有指定模型\n点这里选一个模型后才能开始会话'
-    : '模型：' + name
-      + (prov ? '\n供应商：' + prov : '')
-      + '\n思考：' + (lv > 0 ? lvl.name + ' (' + lvl.v + ') · ' + lvl.desc : '关闭')
-      + '\n点击切换模型 / 供应商 / 思考级别';
+    ? '未选择模型：供应商 ' + (providerName() || '?') + ' 已切换，但还没有指定模型\n点这里选一个模型后才能开始会话'
+    : '模型：' + name + '\n点击切换模型';
   chip.disabled = !t;
   chip.setAttribute('aria-expanded', cmpMenu && cmpMenu.kind === 'model' ? 'true' : 'false');
+}
+
+/* 当前供应商名：state 的 provider 优先，缺字段时从「供应商:模型」里切 */
+function providerName() {
+  if (S.provider) return String(S.provider);
+  const q = String(S.model || '');
+  const i = q.indexOf(':');
+  return i > 0 ? q.slice(0, i) : '';
+}
+
+/* 供应商 chip：只在左边显示「模型来自哪里」，点开换供应商 */
+function paintProviderChip(t) {
+  const chip = $('#providerChip');
+  if (!chip) return;
+  const p = providerName();
+  chip.innerHTML = '<span class="cmp-chip-ico">' + iconHtml('database') + '</span>'
+    + '<span class="cmp-chip-txt trunc"></span>'
+    + '<span class="cmp-chev">' + iconHtml('chevronDown') + '</span>';
+  const txt = chip.querySelector('.cmp-chip-txt');
+  if (txt) txt.textContent = p || '供应商';
+  chip.classList.toggle('need', !!t && !p);
+  chip.title = p ? '供应商：' + p + '\n点击切换供应商（会清空当前模型）' : '还没有选择供应商';
+  chip.disabled = !t;
+  chip.setAttribute('aria-expanded', cmpMenu && cmpMenu.kind === 'provider' ? 'true' : 'false');
+}
+
+/* 思考强度 chip：读数（关/低/中/高/极高）+ 菜单里选 0-4 */
+const THINK_SHORT = ['关', '低', '中', '高', '极高'];
+function thinkLevel() {
+  const v = Number((S.settings || {}).think_level || 0);
+  return THINK_LEVELS[v] ? v : 0;
+}
+function paintThinkChip(t) {
+  const chip = $('#thinkChip');
+  if (!chip) return;
+  const v = thinkLevel();
+  const lvl = THINK_LEVELS[v];
+  chip.innerHTML = '<span class="cmp-chip-ico">' + iconHtml('bulb') + '</span>'
+    + '<span class="cmp-chip-txt">思考</span>'
+    + '<span class="cmp-think-lv' + (v ? ' on' : '') + '">' + THINK_SHORT[v] + '</span>'
+    + '<span class="cmp-chev">' + iconHtml('chevronDown') + '</span>';
+  chip.classList.toggle('off', v === 0);
+  chip.title = '思考强度：' + (v ? lvl.name + ' (' + v + ') · ' + lvl.desc : '关闭（不推理，最快）');
+  chip.disabled = !t;
+  chip.setAttribute('aria-expanded', cmpMenu && cmpMenu.kind === 'think' ? 'true' : 'false');
+}
+
+/* 工具调用开关：点击直接翻转（与 /tools on|off 同一命令路径） */
+function paintToolsChip(t) {
+  const chip = $('#toolsChip');
+  if (!chip) return;
+  const on = S.tools !== false;
+  chip.innerHTML = '<span class="cmp-chip-ico">' + iconHtml('sliders') + '</span>'
+    + '<span class="cmp-chip-txt">工具</span>'
+    + '<span class="cmp-dot' + (on ? ' on' : '') + '"></span>';
+  chip.classList.toggle('off', !on);
+  chip.setAttribute('aria-pressed', on ? 'true' : 'false');
+  chip.title = '工具调用：' + (on ? '开（可读写文件 / 执行命令）' : '关（模型只能回复文本）')
+    + '\n点击' + (on ? '关闭' : '开启');
+  chip.disabled = !t;
+}
+function toggleTools() {
+  const t = curTab();
+  if (!t) return;
+  const on = S.tools === false;
+  cmd('settings.set', { patch: { tools: on } }).then(out => {
+    if (!out || out.ok === false) return;
+    S.tools = on;
+    paintToolsChip(t);
+    if (typeof renderStatLine === 'function') renderStatLine();
+    toast('工具调用：' + (on ? '开' : '关'), 'ok');
+    focusInput();
+  });
 }
 
 function paintSendState(t) {
@@ -9705,14 +10206,17 @@ function renderComposer() {
     if (attachBar) attachBar.hidden = true;
     renderChips(null);
     if (send) { send.disabled = true; send.classList.remove('stop'); send.innerHTML = CMP_ICON_SEND; send.title = '先打开一个工作区'; }
-    ['#modeChip', '#sandboxChip', '#btnAttach'].forEach(s => { const b = $(s); if (b) b.disabled = true; });
+    ['#modeChip', '#sandboxChip', '#toolsChip', '#providerChip', '#modelChip', '#thinkChip', '#btnAttach']
+      .forEach(s => { const b = $(s); if (b) b.disabled = true; });
     paintModeChip('text');
     paintSandboxChip(S.sandbox || 'full-access');
+    paintToolsChip(null);
+    paintProviderChip(null);
     paintModelChip(null);
+    paintThinkChip(null);
     closeComposerMenu();
     closeSlash();
-    paintStatRight(null);
-    paintComposerMetrics();
+    applyComposerWidthClass();
     // 状态行左侧（#statLeft）归 Lead 的 renderStatLine；这里顺带刷新，
     // 避免 composer 重建后左侧还停在上一次（如「没有打开的工作区」）的文案
     if (typeof renderStatLine === 'function') renderStatLine();
@@ -9722,10 +10226,14 @@ function renderComposer() {
   ta.disabled = false;
   const mode = t.composer.mode || 'text';
   if (composer) composer.classList.toggle('team', mode === 'team');
-  ['#modeChip', '#sandboxChip', '#btnAttach'].forEach(s => { const b = $(s); if (b) b.disabled = false; });
+  ['#modeChip', '#sandboxChip', '#toolsChip', '#providerChip', '#modelChip', '#thinkChip', '#btnAttach']
+    .forEach(s => { const b = $(s); if (b) b.disabled = false; });
   paintModeChip(mode);
   paintSandboxChip(S.sandbox || 'full-access');
+  paintToolsChip(t);
+  paintProviderChip(t);
   paintModelChip(t);
+  paintThinkChip(t);
 
   if (mode === 'team') {
     if (box) box.hidden = true;
@@ -9741,14 +10249,18 @@ function renderComposer() {
     if (ta) {
       if (ta.value !== (t.composer.text || '')) ta.value = t.composer.text || '';
       ta.placeholder = mode === 'attach' ? CMP_ATTACH_PLACEHOLDER : CMP_PLACEHOLDER;
-      autosize(ta);
-    }
+        }
   }
 
-  renderChips(t); // 内部会重算 --cmp-card-h / --cmp-attach-h
+  renderChips(t);
   paintSendState(t);
-  paintStatRight(t);
+  applyComposerWidthClass(); // 文案变了（换模型 / 换供应商）要重新量一次宽度档位
   if (typeof renderStatLine === 'function') renderStatLine();
+  // 卡片高度可能刚被模式切换改掉（Teamwork 是 64vh，不看 --composer-h）：
+  // 等这一帧布局落定后把「回到底部」重新贴到实测上界
+  if (typeof syncJumpAnchors === 'function') {
+    requestAnimationFrame(() => { try { syncJumpAnchors(); } catch (e) {} });
+  }
 }
 
 function syncComposerInput() { renderComposer(); }
@@ -9758,7 +10270,7 @@ function syncComposerText(txt) {
   if (!t) return;
   t.composer.text = txt;
   const ta = $('#ta');
-  if (ta) { ta.value = txt; autosize(ta); }
+  if (ta) ta.value = txt;
   paintSendState(t);
   buildSlash();
 }
@@ -9771,19 +10283,6 @@ function focusInput() {
   }
   const ta = $('#ta');
   if (ta && !ta.disabled) ta.focus();
-}
-
-function autosize(ta) {
-  if (!ta) return;
-  ta.style.height = 'auto';
-  let cap = 200;
-  try {
-    const h = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--composer-h')) || 156;
-    cap = Math.max(44, Math.round(h - 74));
-  } catch (e) {}
-  const want = Math.max(24, Math.min(cap, ta.scrollHeight));
-  ta.style.height = want + 'px';
-  ta.style.overflowY = ta.scrollHeight > cap ? 'auto' : 'hidden';
 }
 
 function setComposerMode(mode) {
@@ -9808,7 +10307,7 @@ function renderChips(t) {
   const list = (t && t.composer && t.composer.attachments) || [];
   wrap.replaceChildren();
   hideAttachPreview();
-  if (!list.length) { wrap.hidden = true; paintComposerMetrics(); return; }
+  if (!list.length) { wrap.hidden = true; return; }
   wrap.hidden = false;
   list.forEach((a, i) => {
     const c = el('div', 'cf-chip' + (a.uploading ? ' up' : '') + (a.error ? ' err' : ''));
@@ -9835,7 +10334,6 @@ function renderChips(t) {
     c.addEventListener('mouseleave', hideAttachPreview);
     wrap.appendChild(c);
   });
-  paintComposerMetrics();
 }
 
 /* 附件预览数据：图片给 object URL，文本给前 4k 字符（都只在内存里，发送/移除即释放）。
@@ -9987,7 +10485,7 @@ async function sendCurrent() {
   t.composer.text = '';
   t.composer.attachments = [];
   const ta = $('#ta');
-  if (ta) { ta.value = ''; autosize(ta); }
+  if (ta) ta.value = '';
   renderChips(t);
   paintSendState(t);
   buildSlash(true);
@@ -10017,67 +10515,7 @@ async function stopAllActivity(t) {
   setTimeout(() => { if (S.tabs.get(t.ws) === t) refreshTeamworkNow(t.ws, true); }, 600);
 }
 
-/* ---------- I6. 状态行右侧：token / round -------------------------- */
-function cmpTurnUsage(t) {
-  let start = 0;
-  for (let i = t.msgs.length - 1; i >= 0; i--) {
-    if (t.msgs[i] && t.msgs[i].role === 'user') { start = i; break; }
-  }
-  let tin = 0, tout = 0, cache = 0, rounds = 0;
-  for (let i = start; i < t.msgs.length; i++) {
-    const m = t.msgs[i];
-    if (!m || m.role !== 'round') continue;
-    rounds++;
-    tin += Number(m.tok_in || 0);
-    tout += Number(m.tok_out || 0);
-    cache += Number(m.cache || 0);
-  }
-  return { tin: tin, tout: tout, cache: cache, rounds: rounds };
-}
-function cmpFmtTok(n) {
-  n = Number(n) || 0;
-  if (n >= 1000000) return (n / 1000000).toFixed(n >= 10000000 ? 0 : 1) + 'M';
-  if (n >= 10000) return Math.round(n / 1000) + 'k';
-  if (n >= 1000) return (n / 1000).toFixed(1) + 'k';
-  return String(n);
-}
-function paintStatRight(t) {
-  const box = $('#statRight');
-  if (!box) return;
-  let meta = box.querySelector('.cmp-stat-meta');
-  if (!t) { if (meta) { meta.textContent = ''; meta.hidden = true; } cmpMetaSig = ''; return; }
-  const u = cmpTurnUsage(t);
-  const parts = [];
-  if (t.busy) parts.push('运行中');
-  if (u.rounds) parts.push('第 ' + u.rounds + ' 轮');
-  if (u.tin || u.tout) parts.push('↑' + cmpFmtTok(u.tin) + ' ↓' + cmpFmtTok(u.tout));
-  const txt = parts.join(' · ');
-  const sig = [t.busy ? 1 : 0, u.rounds, u.tin, u.tout, u.cache].join('|');
-  if (!txt) { if (meta) { meta.textContent = ''; meta.hidden = true; } cmpMetaSig = sig; return; }
-  if (!meta) {
-    meta = el('span', 'cmp-stat-meta');
-    meta.hidden = false;
-    box.appendChild(meta);
-  }
-  meta.hidden = false;
-  if (meta.textContent !== txt) meta.textContent = txt;
-  meta.title = '本回合 tokens —— 输入 ' + u.tin + ' · 输出 ' + u.tout
-    + (u.cache ? ' · 缓存命中 ' + u.cache : '') + (u.rounds ? ' · 共 ' + u.rounds + ' 轮' : '');
-  meta.classList.toggle('busy', !!t.busy);
-  cmpMetaSig = sig;
-}
-// 回合进行中轮次事件不触发 composer 重绘：用极廉价的心跳补上 token/round
-setInterval(() => {
-  if (document.hidden) return;
-  const t = curTab();
-  if (!t) return;
-  const u = cmpTurnUsage(t);
-  const sig = [t.busy ? 1 : 0, u.rounds, u.tin, u.tout, u.cache].join('|');
-  if (sig === cmpMetaSig) return;
-  paintStatRight(t);
-}, 700);
-
-/* ---------- I7. 弹出菜单（模式 / 沙箱 / 模型） --------------------- */
+/* ---------- I6. 弹出菜单（模式 / 沙箱 / 模型） --------------------- */
 function closeComposerMenu(restoreFocus) {
   if (!cmpMenu) return;
   const m = cmpMenu;
@@ -10212,7 +10650,6 @@ function toggleSandboxMenu(anchor) {
 function toggleModelMenu(anchor) {
   const t = curTab();
   if (!t) return;
-  const lv = Number((S.settings || {}).think_level || 0);
   openComposerMenu(anchor, {
     kind: 'model',
     align: 'right',
@@ -10234,31 +10671,62 @@ function toggleModelMenu(anchor) {
       const setRow = cmpMenuRow('settings', '打开模型设置…', '设置 · 模型', false);
       setRow.onclick = () => { closeComposerMenu(false); openSettings('models'); };
       menu.appendChild(setRow);
+    },
+  });
+  autoFetchModels();
+}
 
-      menu.appendChild(cmpMenuSep());
+/* 供应商菜单：换供应商会清空当前模型，走 /provider 同一条路径（resync + 重拉列表） */
+function toggleProviderMenu(anchor) {
+  const t = curTab();
+  if (!t) return;
+  const cur = providerName();
+  openComposerMenu(anchor, {
+    kind: 'provider',
+    align: 'right',
+    build: menu => {
       menu.appendChild(cmpMenuHead('供应商'));
       if (S.providers.length) {
         for (const p of S.providers) {
-          const row = cmpMenuRow('database', p.name, p.current ? '当前供应商' : (p.api_style || ''), !!p.current);
+          const on = p.name === cur || !!p.current;
+          const row = cmpMenuRow('database', p.name, on ? '当前供应商' : (p.api_style || ''), on);
           row.onclick = () => { closeComposerMenu(false); execSlash(t, '/provider', p.name); focusInput(); };
           menu.appendChild(row);
         }
       } else {
-        const row = cmpMenuRow('database', '打开供应商设置…', '', false);
+        const row = cmpMenuRow('database', '打开供应商设置…', '还没有配置供应商', false);
         row.onclick = () => { closeComposerMenu(false); openSettings('providers'); };
         menu.appendChild(row);
       }
-
       menu.appendChild(cmpMenuSep());
-      menu.appendChild(cmpMenuHead('思考级别'));
+      const setRow = cmpMenuRow('settings', '管理供应商…', '设置 · 供应商', false);
+      setRow.onclick = () => { closeComposerMenu(false); openSettings('providers'); };
+      menu.appendChild(setRow);
+    },
+  });
+}
+
+/* 思考强度菜单（0-4；与 /think 同一命令路径） */
+function toggleThinkLevelMenu(anchor) {
+  const t = curTab();
+  if (!t) return;
+  const cur = thinkLevel();
+  openComposerMenu(anchor, {
+    kind: 'think',
+    align: 'right',
+    build: menu => {
+      menu.appendChild(cmpMenuHead('思考强度'));
       for (const l of THINK_LEVELS) {
-        const row = cmpMenuRow('bulb', l.name + ' (' + l.v + ')', l.desc, lv === l.v);
+        const row = cmpMenuRow('bulb', THINK_SHORT[l.v] + ' · ' + l.name, l.desc, cur === l.v);
         row.onclick = () => { closeComposerMenu(false); execSlash(t, '/think', String(l.v)); focusInput(); };
         menu.appendChild(row);
       }
+      menu.appendChild(cmpMenuSep());
+      const hint = el('div', 'cmp-menu-hint');
+      hint.innerHTML = '也可用 <kbd>/think</kbd> 直接设置';
+      menu.appendChild(hint);
     },
   });
-  autoFetchModels();
 }
 
 function autoFetchModels() {
@@ -12125,6 +12593,46 @@ function buildAppearance(st) {
   animField.appendChild(el('div', 'set-hint', '跟随系统 prefers-reduced-motion；选择保存在本机浏览器。'));
   s.appendChild(card([setCardHead('动效'), animField]));
 
+  /* 输入卡玻璃：完全无色的材质，唯一可调的是高斯模糊（跟随"透明度"） */
+  if (typeof GLASS !== 'undefined' && typeof setGlassPref === 'function') {
+    const gt = Math.round(GLASS.t * 100);
+    const grange = el('input');
+    grange.type = 'range';
+    grange.min = '0'; grange.max = '100'; grange.step = '5';
+    grange.value = String(gt);
+    grange.className = 'set-range';
+    const gval = el('span', 'rangeval', gt + '%');
+    const grow = el('div', 'think-row');
+    grow.appendChild(grange);
+    grow.appendChild(gval);
+    const gdesc = el('div', 'set-hint');
+    const gticks = el('div', 'range-ticks');
+    const gtickEls = [];
+    for (const [txt, at] of [['清晰', 0], ['磨砂', 50], ['强磨砂', 100]]) {
+      const tk = el('span', 'range-tick' + (Math.abs(at - gt) <= 25 ? ' on' : ''), txt);
+      gtickEls.push([tk, at]);
+      gticks.appendChild(tk);
+    }
+    const paintGlass = () => {
+      const v = Number(grange.value);
+      gval.textContent = v + '%';
+      const b = typeof glassBlur === 'function' ? glassBlur(v / 100) : 0;
+      gdesc.textContent = '高斯模糊 ' + b.toFixed(1) + 'px —— 卡片只把背后的内容模糊掉，'
+        + '圆角与玻璃亮边是固定的；拖到最左就是全清晰。';
+      for (const [tk, at] of gtickEls) tk.classList.toggle('on', Math.abs(at - v) <= 25);
+    };
+    grange.oninput = paintGlass;
+    grange.onchange = () => setGlassPref(Number(grange.value) / 100);
+    paintGlass();
+    const gfield = el('div', 'set-field');
+    gfield.appendChild(el('label', 'set-label', '输入卡磨砂'));
+    gfield.appendChild(grow);
+    gfield.appendChild(gticks);
+    gfield.appendChild(gdesc);
+    gfield.appendChild(el('div', 'set-hint', '卡内控件（+ / 模式 / 模型 / 发送）与卡片同一套玻璃材质。设置保存在本机浏览器。'));
+    s.appendChild(card([setCardHead('输入卡材质'), gfield]));
+  }
+
   const note = el('div', 'themenote');
   note.appendChild(el('span', null, '第三方主题：在 exe 目录的 '));
   note.appendChild(el('code', null, '.cell/theme/<名称>/'));
@@ -13083,6 +13591,9 @@ const Mock = {
     const seqTool = ++this._seq;
 
     at(0, () => emit({ t: 'turn_begin', ws }));
+    // 引擎在等首个 token 时每 ~500ms 发一次 progress（参数=已等毫秒）：
+    // 前端用它反推请求发出时刻，实测 TTFT
+    at(120, () => emit({ t: 'progress', ws, ms: 120 }));
     at(220, () => { emit({ t: 'reason', ws, d: reasonText.slice(0, 26) }); });
     at(360, () => { emit({ t: 'reason', ws, d: reasonText.slice(26, 58) }); });
     at(480, () => { emit({ t: 'reason', ws, d: reasonText.slice(58) }); });
@@ -13096,8 +13607,8 @@ const Mock = {
       // 流式光标与「正在输出」状态。
       at(900, () => emit({ t: 'reason', ws, d: '渲染骨架已经清楚，直接把 mock 数据补齐，再跑一轮截图验证。' }));
       push({ role: 'assistant', kind: 'reasoning', text: '渲染骨架已经清楚，直接把 mock 数据补齐，再跑一轮截图验证。' });
-      at(980, () => emit({ t: 'round', ws, round: 1, tok_in: 1830, tok_out: 246, cache: 1024, sec: 2.1, ttft: 280 }));
-      push({ kind: 'round', round: 1, tok_in: 1830, tok_out: 246, cache: 1024, sec: 2.1, ttft: 280 });
+      at(980, () => emit({ t: 'round', ws, round: 1, tok_in: 1830, tok_out: 246, cache: 1024, sec: 2.1, ttft: 0.28 }));
+      push({ kind: 'round', round: 1, tok_in: 1830, tok_out: 246, cache: 1024, sec: 2.1, ttft: 0.28 });
       at(1040, () => emit({ t: 'answer_begin', ws }));
       Array.from(answer).forEach((ch, i) => {
         at(1060 + i * 34, () => {
@@ -13117,8 +13628,8 @@ const Mock = {
     });
     at(1250, () => emit({ t: 'tool_end', ws, seq: seqTool2, name: 'tw', status: 'ok', display: twResult, marker: '', sec: 0.28, chars: twResult.length, multimodal: false }));
     push({ role: 'assistant', kind: 'tool', name: 'tw', args: twArgs, result: twResult, status: 'ok', sec: 0.28 });
-    at(1560, () => emit({ t: 'round', ws, round: 1, tok_in: 1830, tok_out: 246, cache: 1024, sec: 2.1, ttft: 280 }));
-    push({ kind: 'round', round: 1, tok_in: 1830, tok_out: 246, cache: 1024, sec: 2.1, ttft: 280 });
+    at(1560, () => emit({ t: 'round', ws, round: 1, tok_in: 1830, tok_out: 246, cache: 1024, sec: 2.1, ttft: 0.28 }));
+    push({ kind: 'round', round: 1, tok_in: 1830, tok_out: 246, cache: 1024, sec: 2.1, ttft: 0.28 });
     // 回合中段的通知：也会作为聊天气泡出现
     at(1660, () => emit({
       t: 'notice', ws, d: '[notice] from=teamwork/tw-mockgate01/worker_0 topic=worker',
@@ -13136,8 +13647,8 @@ const Mock = {
       });
     });
     const answerDone = answerStart + chars.length * charDelay;
-    at(answerDone + 60, () => emit({ t: 'round', ws, round: 2, tok_in: 3920, tok_out: chars.length, cache: 2816, sec: 3.6, ttft: 210 }));
-    push({ kind: 'round', round: 2, tok_in: 3920, tok_out: chars.length, cache: 2816, sec: 3.6, ttft: 210 });
+    at(answerDone + 60, () => emit({ t: 'round', ws, round: 2, tok_in: 3920, tok_out: chars.length, cache: 2816, sec: 3.6, ttft: 0.21 }));
+    push({ kind: 'round', round: 2, tok_in: 3920, tok_out: chars.length, cache: 2816, sec: 3.6, ttft: 0.21 });
     push({ role: 'assistant', kind: 'assistant', text: answer });
     at(answerDone + 140, () => {
       // 落盘：回合结束后前端重载 transcript 时能看到这一回合（文件改动卡由
@@ -17608,7 +18119,7 @@ function wireComposerLegacy() {
   if (ta) {
     ta.addEventListener('input', () => {
       const t = S.tabs.get(S.active); if (t) t.composer.text = ta.value;
-      autosize(ta); slashSel = 0; buildSlash();
+      slashSel = 0; buildSlash();
     });
     ta.addEventListener('keydown', onComposerKey);
   }

@@ -58,7 +58,7 @@ function wireComposerLegacy() {
   if (ta) {
     ta.addEventListener('input', () => {
       const t = S.tabs.get(S.active); if (t) t.composer.text = ta.value;
-      autosize(ta); slashSel = 0; buildSlash();
+      slashSel = 0; buildSlash();
     });
     ta.addEventListener('keydown', onComposerKey);
   }

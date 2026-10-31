@@ -2,8 +2,7 @@
    I. 输入栏（Composer）· DSH 式悬浮输入卡
    ---------------------------------------------------------------------
    结构（全部由 ComposerUI.init() 建在骨架的 #composerInner 内）：
-     #composerInner  ← 卡片本体（--elev-2 / --radius-xl / 1px --line2，
-                        :focus-within 时 accent 边 + 外环）
+     #composerInner  ← 卡片本体（液态玻璃：半透明 + backdrop-filter + 高光/折射）
        #inputBox     ← 编辑区（附件区 + textarea），拖拽落点
          #attachWrap ← 附件区（在编辑区上方，可多行折行，卡片随之变高）
            #attachBar（#btnPickFile）
@@ -11,15 +10,13 @@
          #ta
          #fileInput
        #teamEditor   ← Teamwork 工作流编辑器（team 模式显示）
-       .cmp-bar      ← 底部工具条：
-         + 添加附件 · 模式 chip · 沙箱 chip  ……  模型+思考 chip · accent 发送钮
-     .cmp-stat       ← 卡片外的状态行（连接点 / 左侧状态 / 右侧 token·round）
-                       由 Lead 的 renderStatLine 写 #statLeft/#connDot，
-                       这里只负责右侧 token/round（#statRight）。
+       .cmp-bar      ← 底部工具条（卡片下方不再有状态行）：
+         左：+ 添加附件 · 模式 · 访问权限 · 工具开关
+         右：供应商 · 模型 · 思考强度 · accent 发送钮
 
    兼容契约（docs/ui-redesign.md §7.1）：保留全部旧全局函数
    renderComposer / syncComposerInput / setComposerMode / sendCurrent /
-   focusInput / autosize / buildSlash / renderChips / syncComposerText /
+   focusInput / buildSlash / renderChips / syncComposerText /
    addFiles / enterSlash / applySlash / execSlash / layoutSlash / slashSel；
    并新增 window.ComposerUI = { init, render, refresh, ... } 供 boot 优先调用。
 
@@ -71,7 +68,6 @@ const CMP_ICON_RUN = '<svg class="uico" viewBox="0 0 24 24" aria-hidden="true">'
 let slashSel = 0;
 let cmpMenu = null;        // 当前打开的 composer 弹出菜单
 let cmpModelFetching = false;
-let cmpMetaSig = '';       // 状态行右侧 token/round 的缓存签名
 
 /* @ 引用面板：与斜杠面板共用同一个浮层（#slashPanel），只是候选来源不同。
    候选分两页，表头就是页签（←→ 或鼠标点击翻页）：
@@ -193,13 +189,35 @@ function buildComposerDom() {
   sandboxChip.setAttribute('aria-haspopup', 'menu');
   left.appendChild(sandboxChip);
 
+  /* 工具调用开关：紧挨访问权限（两者都是「这一回合能做什么」的边界），
+     点一下直接开/关（弹菜单反而多一步），状态用文字 + 小圆点表达 */
+  const toolsChip = el('button', 'cmp-chip cmp-chip-tools');
+  toolsChip.id = 'toolsChip';
+  toolsChip.type = 'button';
+  toolsChip.setAttribute('aria-pressed', 'true');
+  left.appendChild(toolsChip);
+
   const right = el('div', 'cmp-bar-r');
+  const providerChip = el('button', 'cmp-chip cmp-chip-prov');
+  providerChip.id = 'providerChip';
+  providerChip.type = 'button';
+  providerChip.title = '模型供应商';
+  providerChip.setAttribute('aria-haspopup', 'menu');
+  right.appendChild(providerChip);
+
   const modelChip = el('button', 'cmp-chip cmp-chip-model');
   modelChip.id = 'modelChip';
   modelChip.type = 'button';
-  modelChip.title = '模型 / 供应商 / 思考级别';
+  modelChip.title = '模型';
   modelChip.setAttribute('aria-haspopup', 'menu');
   right.appendChild(modelChip);
+
+  const thinkChip = el('button', 'cmp-chip cmp-chip-think');
+  thinkChip.id = 'thinkChip';
+  thinkChip.type = 'button';
+  thinkChip.title = '思考强度';
+  thinkChip.setAttribute('aria-haspopup', 'menu');
+  right.appendChild(thinkChip);
 
   const send = el('button', 'cmp-send');
   send.id = 'sendBtn';
@@ -213,34 +231,64 @@ function buildComposerDom() {
   bar.appendChild(right);
   host.appendChild(bar);
 
-  /* — 状态行：放在卡片外（.composer-stack 末尾），视觉上是漂浮卡下的细行 — */
+  /* 卡片下方不再有状态行：模型 / 供应商 / 访问权限 / 工具开关都已经在工具条里，
+     再挂一行小字只会重复（连接状态在左侧栏底部的账户行，断线另有浮动横幅）。 */
   const stack = cmpStack(host);
-  let stat = null;
-  if (stack) stat = stack.querySelector('.cmp-stat, .cstat');
-  if (stat && host.contains(stat)) stat = null;
-  if (!stat) stat = el('div', 'cmp-stat');
-  stat.className = 'cmp-stat';
-  stat.replaceChildren();
-  const dot = el('span', 'pulse');
-  dot.id = 'connDot';
-  dot.title = '连接状态';
-  const statL = el('span', 'cmp-stat-l trunc');
-  statL.id = 'statLeft';
-  statL.textContent = '就绪';
-  const statR = el('span', 'cmp-stat-r');
-  statR.id = 'statRight';
-  stat.appendChild(dot);
-  stat.appendChild(statL);
-  stat.appendChild(el('span', 'grow'));
-  stat.appendChild(statR);
-  if (stack) { if (stat.parentElement !== stack) stack.appendChild(stat); }
-  else host.appendChild(stat);
+  if (stack) {
+    const stale = stack.querySelector('.cmp-stat, .cstat');
+    if (stale && !host.contains(stale)) stale.remove();
+  }
 
   ensureSlashPanel();
-  autosize(ta);
+  // 旧版本用 .glass-refract 走 SVG 折射滤镜；升级后残留在 DOM 上的类要清掉，
+  // 否则它会盖掉 CSS 里的 backdrop-filter:blur()（见下面 I1b 的说明）
+  host.classList.remove('glass-refract');
   host.__cmpBuilt = true;
   return true;
 }
+
+/* ---------- I1b. 液态玻璃：磨砂强度 -----------------------------------
+   ⚠️ 历史包袱（2026-10-31 排查）：这里原来用 SVG 滤镜做「边缘折射」——
+   圆角矩形 SDF 算位移贴图 → feImage + feDisplacementMap → 通过
+   backdrop-filter:url(#cmp-glass-ref) 作用在真实背景上。
+   Chromium / WebView2 对 url() **只做解析检测**（CSS.supports() 返回 true），
+   渲染时整条滤镜被丢掉，于是卡片既没有模糊也没有折射：背后文字原样透上来
+   盖在占位符上（看着像"上界没固定"），两端还留下一道位移硬缝（"没渲染好"）。
+   所以现在只保留纯 CSS 方案：磨砂 = backdrop-filter:blur()，
+   边缘厚度与圆滑亮边 = #composerInner::before 的渐变环（见 05b-composer.css）。
+   这里唯一还留给用户调的是「磨砂强度」，写进 --cmp-glass-blur。 */
+const GLASS = {
+  t: 0.6,             // 透明度偏好（0=清晰 … 1=磨砂最强），见 applyGlassPref
+  blur: 9.3,          // 高斯模糊（CSS px）：由透明度推出来
+};
+
+/* 玻璃观感偏好（本机 localStorage，不进后端设置 —— 跟主题、动画等级一样只在
+   这台机器的浏览器里生效）。材质无色：只有白/黑透明度层次，不带任何颜色，
+   唯一随偏好变化的是高斯模糊强度 —— 越"磨砂"越糊。 */
+const GLASS_PREF_KEY = 'cell.glass';
+function glassBlur(t) { return 20 * Math.pow(Math.min(1, Math.max(0, t)), 1.5); }
+
+function loadGlassPref() {
+  let t = GLASS.t;
+  try {
+    const v = Number((JSON.parse(localStorage.getItem(GLASS_PREF_KEY) || '{}') || {}).t);
+    if (isFinite(v)) t = v;
+  } catch (e) {}
+  applyGlassPref(t, true);
+}
+/* 立即生效：只改一个 CSS 变量，卡片与卡内控件共用它 */
+function applyGlassPref(t, silent) {
+  if (t != null) GLASS.t = Math.min(1, Math.max(0, Number(t) || 0));
+  const px = glassBlur(GLASS.t);
+  GLASS.blur = px;
+  document.documentElement.style.setProperty('--cmp-glass-blur', px.toFixed(2) + 'px');
+}
+function setGlassPref(t) {
+  applyGlassPref(t, false);
+  try { localStorage.setItem(GLASS_PREF_KEY, JSON.stringify({ t: Number(GLASS.t.toFixed(3)) })); } catch (e) {}
+}
+window.setGlassTransparency = pct => setGlassPref((Number(pct) || 0) / 100);
+loadGlassPref();
 
 /* ---------- I2. 事件绑定 ------------------------------------------- */
 function bindComposer() {
@@ -260,8 +308,7 @@ function bindComposer() {
       if (!t) return;
       t.composer.text = ta.value;
       slashSel = 0;
-      autosize(ta);
-      buildSlash();
+          buildSlash();
       paintSendState(t);
     });
     ta.addEventListener('keydown', onComposerKeydown);
@@ -278,8 +325,14 @@ function bindComposer() {
   if (modeChip) modeChip.addEventListener('click', () => toggleModeMenu(modeChip));
   const sandboxChip = $('#sandboxChip');
   if (sandboxChip) sandboxChip.addEventListener('click', () => toggleSandboxMenu(sandboxChip));
+  const toolsChip = $('#toolsChip');
+  if (toolsChip) toolsChip.addEventListener('click', () => toggleTools());
+  const providerChip = $('#providerChip');
+  if (providerChip) providerChip.addEventListener('click', () => toggleProviderMenu(providerChip));
   const modelChip = $('#modelChip');
   if (modelChip) modelChip.addEventListener('click', () => toggleModelMenu(modelChip));
+  const thinkChip = $('#thinkChip');
+  if (thinkChip) thinkChip.addEventListener('click', () => toggleThinkLevelMenu(thinkChip));
 
   /* 拖拽入卡：整张卡片都是落点（编辑区高亮） */
   const stop = ev => { ev.preventDefault(); ev.stopPropagation(); };
@@ -331,17 +384,20 @@ function bindComposer() {
 
   /* 宽度自适应：主区变窄（分栏/窗口）时把 chip 收成图标，避免文字挤成「文…」 */
   applyComposerWidthClass();
-  paintComposerMetrics();
   if (typeof ResizeObserver !== 'undefined') {
     // 回调里同步改类名会再次改变被观察元素的大小，Chromium 因此报
     // "ResizeObserver loop completed with undelivered notifications"；
     // 延到下一帧处理即可（终端面板改变宽度时会命中这条路）
-    const ro = new ResizeObserver(() => window.requestAnimationFrame(() => {
-      applyComposerWidthClass();
-      paintComposerMetrics();
-    }));
+    const ro = new ResizeObserver(() => window.requestAnimationFrame(applyComposerWidthClass));
     ro.observe(host);
     host.__cmpRO = ro;
+    // 卡片高度/位置上界一变（拖手柄、Teamwork 模式、72vh 限高、hero 态），
+    // 「回到底部」就重新贴一次 —— 它按卡片实测矩形定位，不读 --composer-h
+    if (typeof syncJumpAnchors === 'function') {
+      new ResizeObserver(() => window.requestAnimationFrame(() => {
+        try { syncJumpAnchors(); } catch (e) {}
+      })).observe(host);
+    }
   }
 
   /* 附件预览小窗：任何点击/缩放都先收起，避免残留在半空 */
@@ -357,29 +413,39 @@ function bindComposer() {
   window.addEventListener('resize', () => { try { renderComposer(); } catch (e) {} });
 }
 
+/* 宽度自适应：chip 里的文字不再被压成「文…」——先量「按自然宽度排下来要多少
+   地方」，放不下就把文字标签收成图标（.cmp-narrow），还放不下再缩短模型名
+   （.cmp-tiny）。比媒体查询准：分栏开合 / 侧栏拖宽 / 抽屉展开都会改变主区宽度，
+   而供应商名、模型名的长度本身也会变（换模型后要重新量一次）。 */
+function barSpace(node) {
+  const cs = getComputedStyle(node);
+  const gap = parseFloat(cs.columnGap || cs.gap) || 0;
+  let sum = 0, n = 0;
+  for (const c of node.children) {
+    if (!c || c.hidden || c.offsetWidth === 0) continue;
+    sum += c.offsetWidth; n++;
+  }
+  return sum + Math.max(0, n - 1) * gap;
+}
+function composerOverflow(host) {
+  const bar = host.querySelector('.cmp-bar');
+  if (!bar || !bar.clientWidth) return false;
+  const l = bar.querySelector('.cmp-bar-l'), r = bar.querySelector('.cmp-bar-r');
+  const gap = parseFloat(getComputedStyle(bar).columnGap || getComputedStyle(bar).gap) || 0;
+  // 两个分组的自然宽度 + 组间间距 > 工具条可用宽度 → 该收标签了
+  return barSpace(l) + gap + barSpace(r) > bar.clientWidth + 1;
+}
+/* 宽度自适应三档（CSS 里各档做了什么）：snug 收装饰 → narrow 收文字标签 →
+   tiny 压模型名。放得下就停在最小档，避免「明明够宽还把文字藏掉」。 */
+const CMP_TIERS = ['cmp-snug', 'cmp-narrow', 'cmp-tiny'];
 function applyComposerWidthClass() {
   const host = $('#composerInner');
   if (!host) return;
-  const w = host.getBoundingClientRect().width || 0;
-  host.classList.toggle('cmp-narrow', w > 0 && w < 650);
-  host.classList.toggle('cmp-tiny', w > 0 && w < 520);
-}
-
-/* 量一次卡片的真实高度，写进两个 CSS 变量（纯 CSS 取不到「元素自然高度」）：
-     --cmp-card-h    整个 .composer-stack 的高度 → 消息流底部留白 /「回到底部」按钮
-                     跟着卡片走，附件折行把卡片撑高时消息流不会被盖住
-     --cmp-attach-h  附件区的高度 → 卡片 max-height 允许超出拖拽高度的部分，
-                     保证多行附件始终有位置，不会把编辑区挤扁 */
-function paintComposerMetrics() {
-  const host = $('#composerInner');
-  if (!host) return;
-  const root = document.documentElement;
-  const stack = cmpStack(host);
-  const cardH = Math.round((stack || host).getBoundingClientRect().height);
-  root.style.setProperty('--cmp-card-h', cardH + 'px');
-  const wrap = $('#attachWrap');
-  const attachH = wrap ? Math.round(wrap.getBoundingClientRect().height) : 0;
-  root.style.setProperty('--cmp-attach-h', Math.max(0, attachH) + 'px');
+  host.classList.remove(...CMP_TIERS);
+  for (const tier of CMP_TIERS) {
+    if (!composerOverflow(host)) break;
+    host.classList.add(tier);
+  }
 }
 
 function hasFileDrag(ev) {
@@ -466,7 +532,7 @@ function paintSandboxChip(mode) {
 }
 
 /* S.model 是「供应商:模型」（核心的 model_label），但输入栏的圆钮只放模型名：
-   供应商在底部状态行里已经写着了，再塞进按钮只会把名字挤成省略号。 */
+   供应商有自己的 chip，模型名再带上只会被挤成省略号。 */
 function modelShortName() {
   // 未选模型时 model_label() 只剩供应商名，当成模型名显示会让人以为已选好
   if (!S.modelSet) return '';
@@ -501,12 +567,8 @@ function demandModel(msg) {
 function paintModelChip(t) {
   const chip = $('#modelChip');
   if (!chip) return;
-  const lv = Number((S.settings || {}).think_level || 0);
-  const lvl = THINK_LEVELS[lv] || THINK_LEVELS[0];
   const need = !!t && needsModel(); // 有工作区才谈得上「开始会话」
   const name = need ? '选择模型' : (modelShortName() || '(未选择模型)');
-  const qual = String(S.model || '');
-  const prov = S.provider || (qual.indexOf(':') > 0 ? qual.slice(0, qual.indexOf(':')) : '');
   chip.innerHTML = '<span class="cmp-chip-ico">' + iconHtml('cpu') + '</span>'
     + '<span class="cmp-model-name trunc"></span>'
     + '<span class="cmp-chev">' + iconHtml('chevronDown') + '</span>';
@@ -514,13 +576,83 @@ function paintModelChip(t) {
   if (nm) nm.textContent = name;
   chip.classList.toggle('need', need);
   chip.title = need
-    ? '未选择模型：供应商 ' + (prov || '?') + ' 已切换，但还没有指定模型\n点这里选一个模型后才能开始会话'
-    : '模型：' + name
-      + (prov ? '\n供应商：' + prov : '')
-      + '\n思考：' + (lv > 0 ? lvl.name + ' (' + lvl.v + ') · ' + lvl.desc : '关闭')
-      + '\n点击切换模型 / 供应商 / 思考级别';
+    ? '未选择模型：供应商 ' + (providerName() || '?') + ' 已切换，但还没有指定模型\n点这里选一个模型后才能开始会话'
+    : '模型：' + name + '\n点击切换模型';
   chip.disabled = !t;
   chip.setAttribute('aria-expanded', cmpMenu && cmpMenu.kind === 'model' ? 'true' : 'false');
+}
+
+/* 当前供应商名：state 的 provider 优先，缺字段时从「供应商:模型」里切 */
+function providerName() {
+  if (S.provider) return String(S.provider);
+  const q = String(S.model || '');
+  const i = q.indexOf(':');
+  return i > 0 ? q.slice(0, i) : '';
+}
+
+/* 供应商 chip：只在左边显示「模型来自哪里」，点开换供应商 */
+function paintProviderChip(t) {
+  const chip = $('#providerChip');
+  if (!chip) return;
+  const p = providerName();
+  chip.innerHTML = '<span class="cmp-chip-ico">' + iconHtml('database') + '</span>'
+    + '<span class="cmp-chip-txt trunc"></span>'
+    + '<span class="cmp-chev">' + iconHtml('chevronDown') + '</span>';
+  const txt = chip.querySelector('.cmp-chip-txt');
+  if (txt) txt.textContent = p || '供应商';
+  chip.classList.toggle('need', !!t && !p);
+  chip.title = p ? '供应商：' + p + '\n点击切换供应商（会清空当前模型）' : '还没有选择供应商';
+  chip.disabled = !t;
+  chip.setAttribute('aria-expanded', cmpMenu && cmpMenu.kind === 'provider' ? 'true' : 'false');
+}
+
+/* 思考强度 chip：读数（关/低/中/高/极高）+ 菜单里选 0-4 */
+const THINK_SHORT = ['关', '低', '中', '高', '极高'];
+function thinkLevel() {
+  const v = Number((S.settings || {}).think_level || 0);
+  return THINK_LEVELS[v] ? v : 0;
+}
+function paintThinkChip(t) {
+  const chip = $('#thinkChip');
+  if (!chip) return;
+  const v = thinkLevel();
+  const lvl = THINK_LEVELS[v];
+  chip.innerHTML = '<span class="cmp-chip-ico">' + iconHtml('bulb') + '</span>'
+    + '<span class="cmp-chip-txt">思考</span>'
+    + '<span class="cmp-think-lv' + (v ? ' on' : '') + '">' + THINK_SHORT[v] + '</span>'
+    + '<span class="cmp-chev">' + iconHtml('chevronDown') + '</span>';
+  chip.classList.toggle('off', v === 0);
+  chip.title = '思考强度：' + (v ? lvl.name + ' (' + v + ') · ' + lvl.desc : '关闭（不推理，最快）');
+  chip.disabled = !t;
+  chip.setAttribute('aria-expanded', cmpMenu && cmpMenu.kind === 'think' ? 'true' : 'false');
+}
+
+/* 工具调用开关：点击直接翻转（与 /tools on|off 同一命令路径） */
+function paintToolsChip(t) {
+  const chip = $('#toolsChip');
+  if (!chip) return;
+  const on = S.tools !== false;
+  chip.innerHTML = '<span class="cmp-chip-ico">' + iconHtml('sliders') + '</span>'
+    + '<span class="cmp-chip-txt">工具</span>'
+    + '<span class="cmp-dot' + (on ? ' on' : '') + '"></span>';
+  chip.classList.toggle('off', !on);
+  chip.setAttribute('aria-pressed', on ? 'true' : 'false');
+  chip.title = '工具调用：' + (on ? '开（可读写文件 / 执行命令）' : '关（模型只能回复文本）')
+    + '\n点击' + (on ? '关闭' : '开启');
+  chip.disabled = !t;
+}
+function toggleTools() {
+  const t = curTab();
+  if (!t) return;
+  const on = S.tools === false;
+  cmd('settings.set', { patch: { tools: on } }).then(out => {
+    if (!out || out.ok === false) return;
+    S.tools = on;
+    paintToolsChip(t);
+    if (typeof renderStatLine === 'function') renderStatLine();
+    toast('工具调用：' + (on ? '开' : '关'), 'ok');
+    focusInput();
+  });
 }
 
 function paintSendState(t) {
@@ -572,14 +704,17 @@ function renderComposer() {
     if (attachBar) attachBar.hidden = true;
     renderChips(null);
     if (send) { send.disabled = true; send.classList.remove('stop'); send.innerHTML = CMP_ICON_SEND; send.title = '先打开一个工作区'; }
-    ['#modeChip', '#sandboxChip', '#btnAttach'].forEach(s => { const b = $(s); if (b) b.disabled = true; });
+    ['#modeChip', '#sandboxChip', '#toolsChip', '#providerChip', '#modelChip', '#thinkChip', '#btnAttach']
+      .forEach(s => { const b = $(s); if (b) b.disabled = true; });
     paintModeChip('text');
     paintSandboxChip(S.sandbox || 'full-access');
+    paintToolsChip(null);
+    paintProviderChip(null);
     paintModelChip(null);
+    paintThinkChip(null);
     closeComposerMenu();
     closeSlash();
-    paintStatRight(null);
-    paintComposerMetrics();
+    applyComposerWidthClass();
     // 状态行左侧（#statLeft）归 Lead 的 renderStatLine；这里顺带刷新，
     // 避免 composer 重建后左侧还停在上一次（如「没有打开的工作区」）的文案
     if (typeof renderStatLine === 'function') renderStatLine();
@@ -589,10 +724,14 @@ function renderComposer() {
   ta.disabled = false;
   const mode = t.composer.mode || 'text';
   if (composer) composer.classList.toggle('team', mode === 'team');
-  ['#modeChip', '#sandboxChip', '#btnAttach'].forEach(s => { const b = $(s); if (b) b.disabled = false; });
+  ['#modeChip', '#sandboxChip', '#toolsChip', '#providerChip', '#modelChip', '#thinkChip', '#btnAttach']
+    .forEach(s => { const b = $(s); if (b) b.disabled = false; });
   paintModeChip(mode);
   paintSandboxChip(S.sandbox || 'full-access');
+  paintToolsChip(t);
+  paintProviderChip(t);
   paintModelChip(t);
+  paintThinkChip(t);
 
   if (mode === 'team') {
     if (box) box.hidden = true;
@@ -608,14 +747,18 @@ function renderComposer() {
     if (ta) {
       if (ta.value !== (t.composer.text || '')) ta.value = t.composer.text || '';
       ta.placeholder = mode === 'attach' ? CMP_ATTACH_PLACEHOLDER : CMP_PLACEHOLDER;
-      autosize(ta);
-    }
+        }
   }
 
-  renderChips(t); // 内部会重算 --cmp-card-h / --cmp-attach-h
+  renderChips(t);
   paintSendState(t);
-  paintStatRight(t);
+  applyComposerWidthClass(); // 文案变了（换模型 / 换供应商）要重新量一次宽度档位
   if (typeof renderStatLine === 'function') renderStatLine();
+  // 卡片高度可能刚被模式切换改掉（Teamwork 是 64vh，不看 --composer-h）：
+  // 等这一帧布局落定后把「回到底部」重新贴到实测上界
+  if (typeof syncJumpAnchors === 'function') {
+    requestAnimationFrame(() => { try { syncJumpAnchors(); } catch (e) {} });
+  }
 }
 
 function syncComposerInput() { renderComposer(); }
@@ -625,7 +768,7 @@ function syncComposerText(txt) {
   if (!t) return;
   t.composer.text = txt;
   const ta = $('#ta');
-  if (ta) { ta.value = txt; autosize(ta); }
+  if (ta) ta.value = txt;
   paintSendState(t);
   buildSlash();
 }
@@ -638,19 +781,6 @@ function focusInput() {
   }
   const ta = $('#ta');
   if (ta && !ta.disabled) ta.focus();
-}
-
-function autosize(ta) {
-  if (!ta) return;
-  ta.style.height = 'auto';
-  let cap = 200;
-  try {
-    const h = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--composer-h')) || 156;
-    cap = Math.max(44, Math.round(h - 74));
-  } catch (e) {}
-  const want = Math.max(24, Math.min(cap, ta.scrollHeight));
-  ta.style.height = want + 'px';
-  ta.style.overflowY = ta.scrollHeight > cap ? 'auto' : 'hidden';
 }
 
 function setComposerMode(mode) {
@@ -675,7 +805,7 @@ function renderChips(t) {
   const list = (t && t.composer && t.composer.attachments) || [];
   wrap.replaceChildren();
   hideAttachPreview();
-  if (!list.length) { wrap.hidden = true; paintComposerMetrics(); return; }
+  if (!list.length) { wrap.hidden = true; return; }
   wrap.hidden = false;
   list.forEach((a, i) => {
     const c = el('div', 'cf-chip' + (a.uploading ? ' up' : '') + (a.error ? ' err' : ''));
@@ -702,7 +832,6 @@ function renderChips(t) {
     c.addEventListener('mouseleave', hideAttachPreview);
     wrap.appendChild(c);
   });
-  paintComposerMetrics();
 }
 
 /* 附件预览数据：图片给 object URL，文本给前 4k 字符（都只在内存里，发送/移除即释放）。
@@ -854,7 +983,7 @@ async function sendCurrent() {
   t.composer.text = '';
   t.composer.attachments = [];
   const ta = $('#ta');
-  if (ta) { ta.value = ''; autosize(ta); }
+  if (ta) ta.value = '';
   renderChips(t);
   paintSendState(t);
   buildSlash(true);
@@ -884,67 +1013,7 @@ async function stopAllActivity(t) {
   setTimeout(() => { if (S.tabs.get(t.ws) === t) refreshTeamworkNow(t.ws, true); }, 600);
 }
 
-/* ---------- I6. 状态行右侧：token / round -------------------------- */
-function cmpTurnUsage(t) {
-  let start = 0;
-  for (let i = t.msgs.length - 1; i >= 0; i--) {
-    if (t.msgs[i] && t.msgs[i].role === 'user') { start = i; break; }
-  }
-  let tin = 0, tout = 0, cache = 0, rounds = 0;
-  for (let i = start; i < t.msgs.length; i++) {
-    const m = t.msgs[i];
-    if (!m || m.role !== 'round') continue;
-    rounds++;
-    tin += Number(m.tok_in || 0);
-    tout += Number(m.tok_out || 0);
-    cache += Number(m.cache || 0);
-  }
-  return { tin: tin, tout: tout, cache: cache, rounds: rounds };
-}
-function cmpFmtTok(n) {
-  n = Number(n) || 0;
-  if (n >= 1000000) return (n / 1000000).toFixed(n >= 10000000 ? 0 : 1) + 'M';
-  if (n >= 10000) return Math.round(n / 1000) + 'k';
-  if (n >= 1000) return (n / 1000).toFixed(1) + 'k';
-  return String(n);
-}
-function paintStatRight(t) {
-  const box = $('#statRight');
-  if (!box) return;
-  let meta = box.querySelector('.cmp-stat-meta');
-  if (!t) { if (meta) { meta.textContent = ''; meta.hidden = true; } cmpMetaSig = ''; return; }
-  const u = cmpTurnUsage(t);
-  const parts = [];
-  if (t.busy) parts.push('运行中');
-  if (u.rounds) parts.push('第 ' + u.rounds + ' 轮');
-  if (u.tin || u.tout) parts.push('↑' + cmpFmtTok(u.tin) + ' ↓' + cmpFmtTok(u.tout));
-  const txt = parts.join(' · ');
-  const sig = [t.busy ? 1 : 0, u.rounds, u.tin, u.tout, u.cache].join('|');
-  if (!txt) { if (meta) { meta.textContent = ''; meta.hidden = true; } cmpMetaSig = sig; return; }
-  if (!meta) {
-    meta = el('span', 'cmp-stat-meta');
-    meta.hidden = false;
-    box.appendChild(meta);
-  }
-  meta.hidden = false;
-  if (meta.textContent !== txt) meta.textContent = txt;
-  meta.title = '本回合 tokens —— 输入 ' + u.tin + ' · 输出 ' + u.tout
-    + (u.cache ? ' · 缓存命中 ' + u.cache : '') + (u.rounds ? ' · 共 ' + u.rounds + ' 轮' : '');
-  meta.classList.toggle('busy', !!t.busy);
-  cmpMetaSig = sig;
-}
-// 回合进行中轮次事件不触发 composer 重绘：用极廉价的心跳补上 token/round
-setInterval(() => {
-  if (document.hidden) return;
-  const t = curTab();
-  if (!t) return;
-  const u = cmpTurnUsage(t);
-  const sig = [t.busy ? 1 : 0, u.rounds, u.tin, u.tout, u.cache].join('|');
-  if (sig === cmpMetaSig) return;
-  paintStatRight(t);
-}, 700);
-
-/* ---------- I7. 弹出菜单（模式 / 沙箱 / 模型） --------------------- */
+/* ---------- I6. 弹出菜单（模式 / 沙箱 / 模型） --------------------- */
 function closeComposerMenu(restoreFocus) {
   if (!cmpMenu) return;
   const m = cmpMenu;
@@ -1079,7 +1148,6 @@ function toggleSandboxMenu(anchor) {
 function toggleModelMenu(anchor) {
   const t = curTab();
   if (!t) return;
-  const lv = Number((S.settings || {}).think_level || 0);
   openComposerMenu(anchor, {
     kind: 'model',
     align: 'right',
@@ -1101,31 +1169,62 @@ function toggleModelMenu(anchor) {
       const setRow = cmpMenuRow('settings', '打开模型设置…', '设置 · 模型', false);
       setRow.onclick = () => { closeComposerMenu(false); openSettings('models'); };
       menu.appendChild(setRow);
+    },
+  });
+  autoFetchModels();
+}
 
-      menu.appendChild(cmpMenuSep());
+/* 供应商菜单：换供应商会清空当前模型，走 /provider 同一条路径（resync + 重拉列表） */
+function toggleProviderMenu(anchor) {
+  const t = curTab();
+  if (!t) return;
+  const cur = providerName();
+  openComposerMenu(anchor, {
+    kind: 'provider',
+    align: 'right',
+    build: menu => {
       menu.appendChild(cmpMenuHead('供应商'));
       if (S.providers.length) {
         for (const p of S.providers) {
-          const row = cmpMenuRow('database', p.name, p.current ? '当前供应商' : (p.api_style || ''), !!p.current);
+          const on = p.name === cur || !!p.current;
+          const row = cmpMenuRow('database', p.name, on ? '当前供应商' : (p.api_style || ''), on);
           row.onclick = () => { closeComposerMenu(false); execSlash(t, '/provider', p.name); focusInput(); };
           menu.appendChild(row);
         }
       } else {
-        const row = cmpMenuRow('database', '打开供应商设置…', '', false);
+        const row = cmpMenuRow('database', '打开供应商设置…', '还没有配置供应商', false);
         row.onclick = () => { closeComposerMenu(false); openSettings('providers'); };
         menu.appendChild(row);
       }
-
       menu.appendChild(cmpMenuSep());
-      menu.appendChild(cmpMenuHead('思考级别'));
+      const setRow = cmpMenuRow('settings', '管理供应商…', '设置 · 供应商', false);
+      setRow.onclick = () => { closeComposerMenu(false); openSettings('providers'); };
+      menu.appendChild(setRow);
+    },
+  });
+}
+
+/* 思考强度菜单（0-4；与 /think 同一命令路径） */
+function toggleThinkLevelMenu(anchor) {
+  const t = curTab();
+  if (!t) return;
+  const cur = thinkLevel();
+  openComposerMenu(anchor, {
+    kind: 'think',
+    align: 'right',
+    build: menu => {
+      menu.appendChild(cmpMenuHead('思考强度'));
       for (const l of THINK_LEVELS) {
-        const row = cmpMenuRow('bulb', l.name + ' (' + l.v + ')', l.desc, lv === l.v);
+        const row = cmpMenuRow('bulb', THINK_SHORT[l.v] + ' · ' + l.name, l.desc, cur === l.v);
         row.onclick = () => { closeComposerMenu(false); execSlash(t, '/think', String(l.v)); focusInput(); };
         menu.appendChild(row);
       }
+      menu.appendChild(cmpMenuSep());
+      const hint = el('div', 'cmp-menu-hint');
+      hint.innerHTML = '也可用 <kbd>/think</kbd> 直接设置';
+      menu.appendChild(hint);
     },
   });
-  autoFetchModels();
 }
 
 function autoFetchModels() {

@@ -86,8 +86,13 @@
 
 - 右栏页签：`start 开始 / files 文件 / git Git / terminal 终端 / teamwork 团队 / notices 通知 / archives 存档`，用 `<button class="docktab" data-dock="…">` 静态写在 skeleton 里（图标 + 文字，窄宽降级为纯图标）；`#dockBody` 由 `renderDock()` 按 `S.dock` 分发。**用量统计不在右栏**：入口是侧栏底部的 `#navUsage` chip（见 §5.10）。
 - 侧栏收起后，顶栏左上角常驻「展开侧栏」按钮（也可 Ctrl+B）；右栏默认打开 `start`（首次/无记忆时），开合与页签记在 localStorage `cell.dock`；`?dock=<name>` 可覆盖。
-- 输入卡：宽度 `min(calc(100% - 56px), var(--composer-max))`，底部 22px，圆角 `--radius-xl`，表面 `--elev-2` + 1px `--line2` 描边；聚焦时描边 `--accent` + 外环 `--accent-soft`。
+- 输入卡：宽度 `min(calc(100% - 56px), var(--composer-max))`，底部 22px，圆角 `--radius-xl`；**材质是液态玻璃**（见 §5.11）：淡色调（`rgba(19,19,24,.42)`）+ `backdrop-filter` 磨砂 + 顶部镜面高光 + 1px 折射描边 + 边缘位移折射；聚焦时描边转为 `--accent` 并加 `--accent-soft` 外环。卡片下不再有状态行。
 - 消息流列宽 `min(100% - 48px, var(--chat-max))` 居中；底部留白 `var(--composer-h) + 28px`。
+- 消息流**不画滚动条**（`scrollbar-width:none` + `::-webkit-scrollbar{width:0}`）：`.chat` 铺满主区，
+  滚动条会贴着窗口右缘、正好落在透明输入卡外侧，看起来像一条悬空的细线/胶囊（2026-10-31 的
+  「右侧渲染错误」）。离底提示由「回到底部」按钮负责。
+- 分隔条 `.rz` 悬停只给一道很淡的中性线（`--fg4`，26%），强调色只在拖动时出现；也不画聚焦 outline
+  —— 6px 宽的全高元素上一个圆角框，在窗口边缘同样是「悬空紫线」的观感。
 - 响应式：<1100px 侧栏可降到 240px；<980px 右栏改为覆盖式且首次启动默认收起（宽->窄跨档时自动收起）；侧栏容器查询的阈值按 **content-box** 计（侧栏有 10px 内边距，264px 最小宽度对应 content 244px，阈值 224px），避免未最大化窗口被误判成窄态而隐藏全部文字标签。
 - 拖拽分隔条机制沿用 `03-layout.js`（比例 + 像素护栏），只调默认值与上下限。
 
@@ -225,9 +230,16 @@ Ctrl+N 新会话、Ctrl+, 设置、Ctrl+Shift+F 会话搜索、Ctrl+P 快速打�
 
   会话可以来自其他工作区（ws 由会话 id 反推），选中的是「当时那份上下文」的快照。
 - 普通文本里的 `@`（如邮箱 `a@b.com`）不触发面板；team 模式（工作流编辑器）下同样不弹。
-- 输入卡的**模型按钮只显示模型名**：状态里的 `model` 是核心 `model_label()` 的
-  「供应商:模型」，供应商已经在底部状态行里写了，按钮再带上只会把名字挤成省略号；
-  思考级别也不再塞进按钮，改为悬停 tooltip + 模型菜单里的「思考级别」一节。
+- 输入卡的工具条分成两组（中间留白自然分开）：
+  **左**`+ 附件 · 模式 · 访问权限 · 工具开关`，**右**`供应商 · 模型 · 思考强度 · 发送`。
+  工具开关紧挨访问权限（两者都是「这一回合能做什么」的边界），点一下直接开/关，状态靠文字右侧的
+  小圆点（亮=开）；供应商与思考强度各有一枚 chip，读数分别是供应商名与档位中文（关/低/中/高/极高），
+  点开是各自的菜单（`providers.select` / `think_level`，与 `/provider`、`/think` 同一命令路径）。
+  **模型 chip 只显示模型名**：状态里的 `model` 是 `model_label()` 的「供应商:模型」，供应商已经有
+  自己的 chip，带上只会把名字挤成省略号。
+- 文字标签逐级收缩（`applyComposerWidthClass` 按实测宽度选档，不用媒体查询）：`.cmp-snug` 收掉
+  chevron 与内边距（文字全留）→ `.cmp-narrow` 文字收成图标（模型名保留）→ `.cmp-tiny` 模型名再压短。
+  chip 不参与 flex 收缩，所以永远不会出现「完…」这种半截字。
 
 ### 5.10 用量统计（左侧栏收纳入口，2026-10 从右栏搬过来）
 
@@ -249,6 +261,52 @@ Ctrl+N 新会话、Ctrl+, 设置、Ctrl+Shift+F 会话搜索、Ctrl+P 快速打�
   自动收起、窄侧栏降级、`?dock=usages`、无脚本错误）；`_scratch/tmp/usage-e2e.py`（12 项：
   真实后端 + 内嵌 UI，预置 `.cell/usages.json` 后 chip 与浮层数字一致）；
   `_scratch/verify-cli-parity/verify.py` 追加「右栏不再有用量标签」与「`/usages` 展开收纳浮层」两项。
+
+### 5.11 液态玻璃输入卡 + 流式运行时指标（2026-10-31）
+
+**材质（css/05b-composer.css §5b.1）** —— **完全无色的玻璃**：卡片没有任何填充色、
+没有描边、没有高光、没有阴影（连 1px 白边都没有），材质只剩两件事：
+1. **高斯模糊** `backdrop-filter: blur(var(--cmp-glass-blur))`，强度由设置页
+   「外观 → 输入卡材质 → 输入卡磨砂」控制（0% = 全清晰，100% = 20px 强磨砂；
+   默认 60% ≈ 9.3px）。偏好存本机 localStorage `cell.glass`，与主题/动画等级同级。
+2. **边缘折射** `backdrop-filter: url(#cmp-glass-ref)`（Chromium/WebView2 才有）。
+
+卡片本身只是「一块被磨过、被弯折的透明区域」：背后有什么就只看到什么。
+**连聚焦环也不画**（`focus-within` 的 box-shadow 已去掉）—— 焦点靠光标表达，
+否则那圈 2px 的淡蓝会在视觉上把「一整块玻璃」切成一张带边框的卡片。
+
+**折射层（js/05-composer.js `setupGlassRefraction`）**：对齐 shuding/liquid-glass
+（github.com/shuding/liquid-glass）的透镜思路 —— 不是「贴边一条渐变」，而是逐像素算
+**圆角矩形 SDF**：离边越近，采样点沿边的**内法线**被推得越多（贴边 = 带宽 × 0.8），
+于是背后的文字在边缘被扯开、放大，出现两道重影，中间保持原样。实现：
+1. canvas 画位移贴图（R=横向、G=纵向偏移，0.5 不动），按 2×最大偏移归一化，
+   `feDisplacementMap scale` 取同一个值；
+2. SVG 滤镜链 `feImage → feGaussianBlur → feDisplacementMap`，经 `backdrop-filter`
+   作用在**真实背景内容**上。**模糊必须写在这条滤镜里**：一旦引用 `url(#…)`，
+   Chromium 会丢掉写在 backdrop-filter 里的 `blur()` 等函数。滤镜里**不做任何色彩
+   调整**（没有 saturate/brightness/contrast —— 材质要求无色）。
+3. 滤镜区域就是元素本身（外扩会让贴图错位）；位移是「向内取景」，边缘不会吸进透明像素。
+   ⚠️ **位移必须在贴边处渐隐到 0**（最后 40% 带宽做 smoothstep 收口）：滤镜止于元素边界，
+   若边界上还带着最大位移，位移区与未位移区硬碰硬，沿边——尤其圆角——会留下一条斜的
+   「分界线」。收口后圆角只剩柔和的弯折，没有接缝。
+   贴图在尺寸/圆角变化时重建；不支持 url() 的引擎只留纯 blur 磨砂。
+
+**流式运行时指标（js/02-render2-chat.js `RT`）**：卡片上方的「正在输出 / 正在推理」
+指示器多一行等宽读数 —— `tok/s · ITL · TTFT · 缓存命中`；等首个 token 时只显示
+`等待首字 Ns`。数据全部真实：
+- `progress`（引擎等首 token 时每 ~500ms 上报已等毫秒）→ 反推请求发出时刻 → 实测 **TTFT**；
+- 流中的 `reason/answer` 增量 → 首 token 时刻与已输出字符数；
+- `round`（本轮结束）→ 供应商回报的 `tok_in/tok_out/cache/sec/ttft`。
+
+流里没有 token 数，所以 **tok/s 与 ITL 用上一轮实测的「字符/词元」比换算**，每轮结束
+自动校准（`RT_DEFAULT_CPT=1.6` 只是首次兜底）；**缓存命中率沿用上一轮**（本轮的命中率要
+等本轮结束才回来）。指标行 tooltip 写明了这三条口径。轮次条（`.roundbar`）同样补上
+`tok/s · ITL`，`ttft` 按引擎契约是**秒**，显示时统一乘 1000 成毫秒。
+
+- 验收：`_scratch/composer-glass-2026-10-31/verify.py`（50 项：工具条顺序与紧邻关系、chip
+  读数与点击行为、无半截字、无填充/无描边/无阴影/无 ::before/::after、折射层与「滤镜里
+  只有模糊+位移」、0%→100% 磨砂的像素锐度对照、偏好刷新后保留、无状态行、指标行四项读数
+  与随流刷新、轮次条 tok/s+ITL、四档宽度不溢出不重叠、无脚本错误）。
 
 ## 6. 后端命令契约（src/cell-app-tools.hpp，T-core 实现）
 

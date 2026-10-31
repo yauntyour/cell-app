@@ -197,6 +197,48 @@ function paintJump(ws) {
   const scrollable = chat.scrollHeight > chat.clientHeight + 8;
   const show = !!scrollable && !t._stick && !chat.classList.contains('hero-mode');
   btn.classList.toggle('show', show);
+  placeJump(btn, t._pane);
+}
+/* 按钮贴在卡片上界之上 16px —— 用**实测**矩形算，不读 --composer-h 推算：
+   卡片会被 72vh 上限、Teamwork 模式限高，推算值会和真实上界差出几十像素，
+   按钮就飘在消息流中间（2026-10-31 用户报的「按钮随上界拖动改变位置」）。
+   bottom 相对 pane 的 padding box，所以要用 pane 自己的矩形换算，
+   不假设 pane 底边一定等于视口底边。 */
+const JUMP_GAP = 16;
+function placeJump(btn, pane) {
+  const card = $('#composerInner');
+  if (!btn || !pane || !card) return;
+  const cr = card.getBoundingClientRect();
+  if (cr.height < 8) return;
+  const pr = pane.getBoundingClientRect();
+  btn.style.bottom = Math.max(8, Math.round(pr.bottom - cr.top + JUMP_GAP)) + 'px';
+}
+/* 卡片高度/位置变化时（拖手柄、切 Teamwork、窗口缩放、hero 态切换）重新贴一次：
+   ① 「回到底部」按钮贴在卡片上界之上；
+   ② 消息流的底部留白 --composer-pad 也跟着**实测**高度走 —— Teamwork 模式的
+      卡片是 64vh、不看 --composer-h，用变量推算会把最后几条消息压在卡片底下，
+      看着就像"上界没固定"（2026-10-31 报的问题）。 */
+function syncJumpAnchors() {
+  const card = $('#composerInner');
+  if (card) {
+    const cr = card.getBoundingClientRect();
+    const centre = $('#centre');
+    const cb = centre ? centre.getBoundingClientRect().bottom : window.innerHeight;
+    // hero / no-ws 态卡片在视口中部，留白由 hero 自己管，别写一个巨大的值
+    const heroish = !!(centre && (centre.classList.contains('hero') || centre.classList.contains('no-ws')));
+    if (cr.height > 8 && !heroish) {
+      // cb - cr.top = 卡片上界离容器底边多远；再留 28px（手柄 12 + 空隙 16）
+      // 让最后一条消息不贴着卡片。156px 卡片算出来正好是原来的 202px。
+      document.documentElement.style.setProperty('--composer-pad',
+        Math.round(cb - cr.top + 28) + 'px');
+    }
+  }
+  for (const ws of S.tabOrder) {
+    const t = S.tabs.get(ws);
+    if (!t || !t._pane) continue;
+    const btn = t._pane.querySelector('.jump-bottom');
+    if (btn) placeJump(btn, t._pane);
+  }
 }
 // 窗口尺寸变化时重新判断是否显示（内容高度随之变化）
 window.addEventListener('resize', () => {
@@ -935,10 +977,92 @@ function makeNotice(m) {
   return w;
 }
 
+/* ---- 流式运行时指标：tok/s · TTFT · ITL · 缓存命中 -------------------
+   全部来自真实数据，不做假数：
+     · progress  引擎在等首个 token 时每 ~500ms 上报「已等多少毫秒」→ 反推请求发出时刻
+     · reason/answer 增量 → 首个 token 时刻、本轮输出字符数、最后一块时刻
+     · round     本轮结束 → 供应商回报的 tok_in / tok_out / cache / sec / ttft
+   流式期间的 tok/s 与 ITL 需要 token 数，而流中只有字符数：用上一轮实测的
+   「字符/词元」比换算，每轮结束自动校准（RT_DEFAULT_CPT 只是首次的兜底）。
+   缓存命中率同理沿用上一轮 —— 当前这轮的命中率要等本轮结束供应商才会报回来。 */
+const RT_DEFAULT_CPT = 1.6;   // 字符/词元：中英混排的首个兜底值
+function rtOf(t) {
+  if (!t) return null;
+  if (!t._rt) t._rt = { reqAt: 0, firstAt: 0, chars: 0, mark: 0, cpt: RT_DEFAULT_CPT, cacheHit: -1 };
+  return t._rt;
+}
+// 新一轮请求：只清本轮计时，保留校准系数与缓存命中率
+function rtReset(t) { const rt = rtOf(t); if (rt) { rt.reqAt = 0; rt.firstAt = 0; rt.chars = 0; } }
+// 本轮可能发出请求的时刻（回合开始 / 工具跑完 / 上一轮结束）：无 progress 时的兜底
+function rtMark(ws) { const rt = rtOf(ensureTab(ws)); if (rt) rt.mark = Date.now(); }
+function rtBegin(ws) { rtReset(ensureTab(ws)); rtMark(ws); }
+function rtProgress(ws, ms) {
+  const rt = rtOf(ensureTab(ws));
+  if (!rt || rt.firstAt) return;
+  rt.reqAt = Date.now() - Math.max(0, Number(ms) || 0);
+}
+function rtDelta(ws, role, n) {
+  if (role === 'summary') return;   // 上下文摘要不是模型输出
+  const rt = rtOf(ensureTab(ws));
+  if (!rt) return;
+  const now = Date.now();
+  if (!rt.firstAt) { rt.firstAt = now; if (!rt.reqAt) rt.reqAt = rt.mark || now; }
+  rt.chars += Math.max(0, n || 0);
+}
+function rtRound(ws, e) {
+  const t = ensureTab(ws);
+  const rt = rtOf(t);
+  if (!rt) return;
+  const out = Number(e && e.tok_out), tin = Number(e && e.tok_in), cache = Number(e && e.cache);
+  // 校准「字符/词元」：样本越少权重越低，避免把上一轮的结论整个冲掉
+  if (out > 0 && rt.chars > 0) {
+    const w = Math.min(0.6, rt.chars / 400);
+    rt.cpt = rt.cpt * (1 - w) + (rt.chars / out) * w;
+  }
+  if (tin > 0 && cache >= 0) rt.cacheHit = Math.min(1, cache / tin);
+  rtReset(t);
+  rt.mark = Date.now();
+}
+/* 本轮实时视图：null = 还没有任何可显示的数据 */
+function rtView(t) {
+  const rt = rtOf(t);
+  if (!rt) return null;
+  const now = Date.now();
+  if (!rt.firstAt) {
+    const from = rt.reqAt || rt.mark || Number(t.thinkingSince) || now;
+    return { waiting: Math.max(0, now - from), cacheHit: rt.cacheHit };
+  }
+  const sec = Math.max(0.001, (now - rt.firstAt) / 1000);
+  const tokens = rt.chars / (rt.cpt > 0 ? rt.cpt : RT_DEFAULT_CPT);
+  return {
+    chars: rt.chars,
+    tokens: tokens,
+    tps: tokens >= 4 ? tokens / sec : 0,
+    itl: tokens >= 4 ? (sec * 1000) / Math.max(1, tokens - 1) : 0,
+    ttft: rt.reqAt ? Math.max(0, rt.firstAt - rt.reqAt) : -1,
+    cacheHit: rt.cacheHit,
+  };
+}
+/* 时长 / 速率格式化（指标行专用：够短、够稳，宽度不跳） */
+function rtMs(ms) {
+  ms = Number(ms) || 0;
+  if (ms <= 0) return '—';
+  if (ms < 1000) return Math.round(ms) + 'ms';
+  if (ms < 10000) return (ms / 1000).toFixed(2) + 's';
+  return Math.round(ms / 1000) + 's';
+}
+function rtTps(v) {
+  if (!(v > 0)) return '—';
+  return v >= 100 ? String(Math.round(v)) : v.toFixed(1);
+}
+function rtPct(v) { return v >= 0 ? Math.round(v * 100) + '%' : '—'; }
+// 00-core.js 的事件分发用：progress / 增量 / 轮次结束 / 回合开始
+window.RT = { begin: rtBegin, mark: rtMark, progress: rtProgress, delta: rtDelta, round: rtRound };
+
 /* ---- 等待 / 思考指示器：阶段标题 + 副标题 + 秒表 --------------------
    一个回合会经过多个阶段（准备上下文 → 等模型 → 推理 → 工具 → 审批 →
    下一轮…）。只显示「正在思考中」看不出卡在哪，这里按实时状态生成阶段
-   文案，并由 250ms 定时器更新副标题（字符数）与秒表。                 */
+   文案，并由 250ms 定时器更新副标题（字符数）、运行时指标与秒表。      */
 function fmtWaitSec(sec) {
   sec = Math.max(0, Number(sec) || 0);
   if (sec < 60) return sec.toFixed(1) + 's';
@@ -980,16 +1104,16 @@ function thinkingPhase(t) {
   const live = t._live || {};
   const last = t.msgs.length ? t.msgs[t.msgs.length - 1] : null;
   if (t.approval) {
-    return { tone: 'warn', title: '等待审批', sub: '「' + toolZh(t.approval.tool) + '」需要你的确认' };
+    return { tone: 'warn', stage: 'approval', title: '等待审批', sub: '「' + toolZh(t.approval.tool) + '」需要你的确认' };
   }
   if (live.reason && last === live.reason) {
     const n = String(live.reason.text || '').length;
-    return { tone: 'run', title: '正在推理',
+    return { tone: 'run', stage: 'reason', title: '正在推理',
       sub: (n ? '已思考 ' + fmtTok(n) + ' 字符' : '模型正在推理') + (roundTxt ? ' · ' + roundTxt : '') };
   }
   if (live.assistant && last === live.assistant) {
     const n = String(live.assistant.text || '').length;
-    return { tone: 'run', title: '正在输出',
+    return { tone: 'run', stage: 'answer', title: '正在输出',
       sub: '已输出 ' + fmtTok(n) + ' 字符' + (roundTxt ? ' · ' + roundTxt : '') };
   }
   const tool = lastRunningTool(t);
@@ -997,17 +1121,17 @@ function thinkingPhase(t) {
     if (isTwTool(tool)) {
       const op = String((twArgsOf(tool) || {}).operation || '').toLowerCase();
       const twTitle = (op === 'run' || op === 'resume') ? '正在运行团队任务' : '正在创建团队任务';
-      return { tone: 'run', title: twTitle, sub: roundTxt + ' · tw' };
+      return { tone: 'run', stage: 'tool', title: twTitle, sub: roundTxt + ' · tw' };
     }
     const bits = [];
     if (tool.name && tool.name !== toolZh(tool.name)) bits.push(tool.name);
     if (roundTxt) bits.push(roundTxt);
-    return { tone: 'run', title: '正在执行 ' + toolZh(tool.name), sub: bits.join(' · ') || '工具调用进行中' };
+    return { tone: 'run', stage: 'tool', title: '正在执行 ' + toolZh(tool.name), sub: bits.join(' · ') || '工具调用进行中' };
   }
   const status = lastTurnStatus(t);
-  if (status) return { tone: 'run', title: status.slice(0, 60), sub: roundTxt };
-  if (done > 0 || turnHasWork(t)) return { tone: 'run', title: '等待模型响应', sub: roundTxt + ' · 模型正在处理工具结果' };
-  return { tone: 'run', title: '正在准备上下文', sub: '整理历史消息与提示词' };
+  if (status) return { tone: 'run', stage: 'status', title: status.slice(0, 60), sub: roundTxt };
+  if (done > 0 || turnHasWork(t)) return { tone: 'run', stage: 'wait', title: '等待模型响应', sub: roundTxt + ' · 模型正在处理工具结果' };
+  return { tone: 'run', stage: 'prep', title: '正在准备上下文', sub: '整理历史消息与提示词' };
 }
 function makeThinking() {
   const w = el('div', 'msg assistant thinking');
@@ -1021,12 +1145,14 @@ function makeThinking() {
   const main = el('span', 'think-main');
   const title = el('span', 'think-title', '正在准备上下文');
   const sub = el('span', 'think-sub', '');
-  main.appendChild(title); main.appendChild(sub);
+  const metrics = el('span', 'think-metrics');
+  metrics.hidden = true;
+  main.appendChild(title); main.appendChild(sub); main.appendChild(metrics);
   const sec = el('span', 'think-sec mono', '');
   row.appendChild(dots); row.appendChild(main); row.appendChild(sec);
   body.appendChild(row);
   w.appendChild(body);
-  w._think = { title: title, sub: sub, sec: sec, dots: dots };
+  w._think = { title: title, sub: sub, metrics: metrics, sec: sec, dots: dots };
   w.__since = Date.now();
   ensureThinkTicker();
   return w;
@@ -1051,11 +1177,44 @@ function paintThinking(node, t) {
   const ti = node._think.title, sub = node._think.sub, sec = node._think.sec;
   if (ti.textContent !== ph.title) ti.textContent = ph.title;
   if (sub.textContent !== ph.sub) sub.textContent = ph.sub;
+  paintThinkMetrics(node, t, ph.stage);
   const start = Number(t.thinkingSince) || node.__since || Date.now();
   const elapsed = fmtWaitSec((Date.now() - start) / 1000);
   if (sec.textContent !== elapsed) sec.textContent = elapsed;
   node.dataset.phase = ph.tone || 'run';
   node.setAttribute('aria-label', ph.title + (ph.sub ? '：' + ph.sub : '') + ' · ' + elapsed);
+}
+/* 指标行：推理 / 输出阶段给完整读数；等首个 token 时只给等待时长；
+   工具 / 审批阶段与模型无关，直接收起（上次输出的数字留着只会误导）。 */
+const RT_TIP = 'tok/s 与 ITL 由本轮已输出字符按上一轮 字符/词元 比换算；'
+  + 'TTFT 为客户端实测（请求发出 → 首个 token）；缓存命中率取上一轮供应商回报值。';
+function paintThinkMetrics(node, t, stage) {
+  const box = node._think.metrics;
+  if (!box) return;
+  const streaming = stage === 'reason' || stage === 'answer';
+  const waiting = stage === 'prep' || stage === 'wait';
+  const v = (streaming || waiting) ? rtView(t) : null;
+  if (!v) { if (!box.hidden) { box.hidden = true; box.__sig = ''; } return; }
+  const bits = [];
+  if (v.waiting != null) {
+    bits.push(['等待首字', rtMs(v.waiting)]);
+  } else {
+    if (v.tps > 0) bits.push([rtTps(v.tps), 'tok/s']);
+    if (v.itl > 0) bits.push(['ITL', rtMs(v.itl)]);
+    bits.push(['TTFT', rtMs(v.ttft)]);
+    if (v.cacheHit >= 0) bits.push(['缓存', rtPct(v.cacheHit)]);
+  }
+  const sig = bits.map(b => b[0] + '|' + b[1]).join(';');
+  if (box.__sig === sig) return;
+  box.__sig = sig;
+  box.hidden = false;
+  box.title = RT_TIP;
+  let html = '';
+  for (const [a, b] of bits) {
+    html += '<span class="tm"><span class="tm-v">' + esc(a) + '</span>'
+      + '<span class="tm-k">' + esc(b) + '</span></span>';
+  }
+  box.innerHTML = html;
 }
 
 /* ---- 系统提示 / 上下文摘要（卡片） --------------------------------- */
@@ -1122,6 +1281,13 @@ function makeReasonCard(m) {
 }
 
 /* ---- 轮次条：一行元信息，不抢正文视觉 ------------------------------ */
+/* 本轮实测吞吐：ttft 之后才是纯解码时间，tok_out-1 个间隔摊到这段上 */
+function roundRates(m) {
+  const out = Number(m.tok_out || 0), sec = Number(m.sec || 0), ttft = Number(m.ttft || 0);
+  const decode = sec - (ttft > 0 ? ttft : 0);
+  if (!(out > 1) || !(decode > 0.02)) return null;
+  return { tps: out / decode, itl: (decode * 1000) / (out - 1) };
+}
 function makeRound(m) {
   const bar = el('div', 'roundbar');
   const ic = el('span', 'rb-ico');
@@ -1134,7 +1300,15 @@ function makeRound(m) {
   }
   if (m.cache) { bar.appendChild(el('span', 'rb-sep', '·')); bar.appendChild(el('span', 'rb-i', '缓存 ' + fmtTok(m.cache))); }
   if (m.sec) { bar.appendChild(el('span', 'rb-sep', '·')); bar.appendChild(el('span', 'rb-i', fmtDur(m.sec))); }
-  if (m.ttft) { bar.appendChild(el('span', 'rb-sep', '·')); bar.appendChild(el('span', 'rb-i', '首字 ' + Math.round(m.ttft) + 'ms')); }
+  // 引擎的 ttft 是秒（demo 数据也是秒）：这里统一成毫秒显示
+  if (m.ttft > 0) { bar.appendChild(el('span', 'rb-sep', '·')); bar.appendChild(el('span', 'rb-i', 'TTFT ' + rtMs(m.ttft * 1000))); }
+  const rt = roundRates(m);
+  if (rt) {
+    bar.appendChild(el('span', 'rb-sep', '·'));
+    bar.appendChild(el('span', 'rb-i', rtTps(rt.tps) + ' tok/s'));
+    bar.appendChild(el('span', 'rb-sep', '·'));
+    bar.appendChild(el('span', 'rb-i', 'ITL ' + rtMs(rt.itl)));
+  }
   return bar;
 }
 

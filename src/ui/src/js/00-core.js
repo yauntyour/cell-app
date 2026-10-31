@@ -525,6 +525,8 @@ function handleEvent(e) {
     case 'compact_begin': onCompactBegin(e.ws); break;
     case 'compact_end': onCompactEnd(e); break;
     case 'answer_begin': onAnswerBegin(e.ws); break;
+    // 引擎等首个 token 时的 500ms 心跳：反推请求发出时刻，用于实测 TTFT
+    case 'progress': if (window.RT) RT.progress(e.ws, e.ms); break;
     // 引擎的 answer 流就是助手正文：统一按 assistant 归档（其余前端同义）
     case 'answer': onStream(e.ws, 'assistant', e.d); break;
     case 'reason': onStream(e.ws, 'reason', e.d); break;
@@ -718,6 +720,7 @@ function onTurnBegin(ws) {
   const t = ensureTab(ws);
   t.busy = true;
   if (window.ChatTurns && ChatTurns.begin) { try { ChatTurns.begin(ws); } catch (e) {} }
+  if (window.RT) { RT.begin(ws); RT.mark(ws); }  // 运行时指标：回合起点即本回合第 1 轮的请求起点上界
   t.thinkingSince = Date.now();
   t._live = { assistant: null, reason: null, summary: null };
   t._liveMsgId = null;
@@ -802,6 +805,7 @@ function onStream(ws, role, d) {
     t._liveMsgId = role === 'assistant' ? msg.id : t._liveMsgId;
   }
   streamAppend(ws, msg, d || '');
+  if (window.RT) RT.delta(ws, role, (d || '').length);  // 运行时指标：首个 token 时刻 / 字符数
   markChat(ws);
 }
 function streamAppend(ws, msg, d) {
@@ -821,6 +825,7 @@ function onRound(e) {
   // 本轮 LLM 响应已完整结束：思考流随之收尾。清掉 live reason，回合间的等待
   // 才能重新显示「思考中」指示器（它只在没有流式内容时出现）
   if (t._live) t._live.reason = null;
+  if (window.RT) RT.round(e.ws, e);  // 用本轮实测的用量校准 tok/s、缓存命中率
   pushMsg(e.ws, { role: 'round', round: e.round, tok_in: e.tok_in, tok_out: e.tok_out, cache: e.cache, sec: e.sec, ttft: e.ttft });
   markChat(e.ws);
 }
@@ -846,6 +851,7 @@ function onToolEnd(e) {
   }
   tool.status = e.status; tool.display = e.display; tool.marker = e.marker;
   tool.sec = e.sec; tool.chars = e.chars; tool.multimodal = e.multimodal;
+  if (window.RT) RT.mark(e.ws);  // 工具跑完通常紧跟下一轮请求：作为 TTFT 的起点兜底
   markChat(e.ws);
   // LLM 通过 tw 工具建/跑团队任务时没有 SSE 事件：工具一结束就重拉一次，
   // 新任务出现且右栏关着就自动展开 Teamwork——用户提交后能立刻看到卡片

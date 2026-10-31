@@ -33,9 +33,16 @@
 .tabpane.hero .chathead{display:none}
 
 .chat{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;
-  /* 留白跟着输入卡的**实际**高度走（附件折行把卡片撑高时消息流不被盖住）；
-     卡片内的 JS 把 --cmp-card-h 写成实测像素，量不到时退回拖拽设定值 */
-  padding:22px 0 calc(max(var(--composer-h,156px),var(--cmp-card-h,0px)) + 34px)}
+  /* 底部留白读 --composer-pad（由 02-render2-chat.js 的 syncJumpAnchors 按卡片
+     **实测**上界写入）：卡片高度在 Teamwork 模式 / 72vh 限高下都不等于
+     --composer-h，用变量推算会把最后几条消息压在卡片底下。
+     202px = 156px 卡片 + 46px（距底 18 + 手柄 12 + 空隙 16），首帧兜底。 */
+  padding:22px 0 var(--composer-pad,202px);
+  /* 不画滚动条：.chat 铺满主区，滚动条会贴着窗口右缘、正好落在透明输入卡外侧，
+     看起来就是一条悬空的细线（2026-10-31 报的「右侧渲染错误」）。滚轮/触控板
+     照常滚，离底的提示由「回到底部」按钮负责。 */
+  scrollbar-width:none}
+.chat::-webkit-scrollbar{width:0;height:0}
 /* 窗口化占位：只撑滚动高度，不渲染、不命中、不进无障碍树 */
 .flowpad{display:block;height:0;pointer-events:none}
 /* 自动跟底用瞬时滚动（renderChat 直接写 scrollTop）：smooth 会让截图/流式
@@ -348,18 +355,37 @@
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .think-sec{flex:none;padding-left:12px;font-family:var(--mono);font-size:11.5px;color:var(--fg4);
   font-variant-numeric:tabular-nums}
+/* 运行时指标行（tok/s · ITL · TTFT · 缓存）：读数是主体，单位/标签退到背后，
+   等宽 + tabular-nums 保证数字跳动时宽度不抖 */
+.think-metrics{display:flex;align-items:baseline;flex-wrap:wrap;gap:0 12px;
+  margin-top:2px;font-variant-numeric:tabular-nums;min-width:0}
+.think-metrics[hidden]{display:none}
+.think-metrics .tm{display:inline-flex;align-items:baseline;gap:4px;white-space:nowrap}
+.think-metrics .tm-v{font-family:var(--mono);font-size:11.5px;line-height:1.4;color:var(--fg2)}
+.think-metrics .tm-k{font-size:10px;line-height:1.4;letter-spacing:.02em;color:var(--fg4)}
+.msg.thinking[data-phase="warn"] .think-metrics .tm-v{color:var(--warn)}
 .msg.thinking[data-phase="warn"] .think-title{color:var(--warn)}
 .msg.thinking[data-phase="warn"] .thinkdots .tdot{background:var(--warn)}
 
 /* ---- 5.13b 「回到底部」悬浮按钮（离开底部时出现，点击恢复跟底） --- */
-.jump-bottom{position:absolute;right:26px;
-  bottom:calc(max(var(--composer-h,156px),var(--cmp-card-h,0px)) + 6px);z-index:15;
+/* 位置：**由 JS 按卡片实测上界写 inline bottom**（paintJump / syncJumpAnchors）。
+   这里的 174px 只是首帧兜底 —— 卡片会被 72vh 上限、Teamwork 模式限高，
+   任何「用 --composer-h 推算」的写法都会在那些状态下和真实上界差几十像素，
+   按钮就飘在半空（2026-10-31 用户报的「按钮随上界拖动改变位置」）。
+   材质：与输入卡内的控件同一族玻璃（--glass-face / --glass-hi / --glass-lo），
+   它悬在消息流上，所以要自己带一层 backdrop-filter。 */
+.jump-bottom{position:absolute;right:32px;bottom:174px;z-index:15;
   display:none;align-items:center;gap:6px;height:30px;padding:0 13px 0 11px;
-  border-radius:var(--radius-full);background:var(--panel2);border:1px solid var(--line2);
-  color:var(--fg2);font-size:12px;font-weight:500;box-shadow:var(--shadow-sm);cursor:pointer;
-  transition:background var(--dur) var(--ease),color var(--dur) var(--ease),border-color var(--dur) var(--ease)}
+  border-radius:var(--radius-full);
+  background:var(--glass-face);border:1px solid var(--glass-line);
+  box-shadow:var(--glass-hi),var(--glass-lo),0 6px 18px -12px rgba(0,0,0,.9);
+  -webkit-backdrop-filter:var(--glass-blur);backdrop-filter:var(--glass-blur);
+  color:var(--fg2);font-size:12px;font-weight:500;cursor:pointer;
+  transition:background var(--dur) var(--ease),color var(--dur) var(--ease),
+             border-color var(--dur) var(--ease),box-shadow var(--dur) var(--ease)}
 .jump-bottom.show{display:inline-flex;animation:fadeUp 160ms var(--ease)}
-.jump-bottom:hover{background:var(--raise2);border-color:color-mix(in srgb,var(--accent) 45%,var(--line2));color:var(--fg)}
+.jump-bottom:hover{background:var(--glass-face-hover);border-color:var(--glass-line-hover);
+  color:var(--fg);box-shadow:var(--glass-hi),var(--glass-lo),0 8px 22px -12px rgba(0,0,0,.95)}
 .jump-bottom .uico{color:var(--accent)}
 
 /* ---- 5.13c Teamwork（tw）工具卡：结构化「团队任务」卡 -------------- */

@@ -71,24 +71,35 @@ const Layout = {
         JSON.stringify({ __v: 2, sidebar: v.sidebar, dock: v.dock, composer: v.composer }));
     } catch (e) {}
   },
+  // 输入栏高度（像素，已夹在 [min, 72vh] 内）。72vh 必须和 05b-composer.css 里
+  // #composerInner 的 max-height 是**同一个数**：两边不一致时，拖过 72vh 后卡片
+  // 已经停住、--composer-h 却还在涨 —— 拖拽手柄与卡片脱节，「回到底部」也会
+  // 按涨出来的假高度飘走（2026-10-31 用户报的问题）。唯一写 --composer-h 的地方。
+  composerH() {
+    const v = this.load();
+    const hi = Math.max(this.min.composer, Math.round(window.innerHeight * 0.72));
+    return Math.round(clamp(Number(v.composer) || this.def.composer, this.min.composer, hi));
+  },
   // 夹取并落盘：v 是本轮拖动算出的原始比例
   set(key, v, commit) {
     const vals = this.load();
-    const hi = key === 'composer' ? Math.max(this.min.composer, window.innerHeight - 200) : this.max[key];
+    const hi = key === 'composer' ? Math.max(this.min.composer, Math.round(window.innerHeight * 0.72))
+                                 : this.max[key];
     vals[key] = key === 'composer' ? Math.round(clamp(v, this.min[key], hi))
                                    : clamp(v, this.min[key], hi);
     this.apply();
     if (commit) this.save();
   },
   apply() {
-    const v = this.load();
     const sb = $('#sidebar'), dk = $('#rightdock');
     // 比例 → 像素。dock 收起时宽度 0，但记下的比例保留给再次打开。
     const px = this.sizes();
     if (sb) sb.style.width = px.sidebar + 'px';
     if (dk) dk.style.width = px.dock + 'px';
     // 输入栏是悬浮卡片：高度写成 CSS 变量，消息流的底部留白读同一个值
-    document.documentElement.style.setProperty('--composer-h', v.composer + 'px');
+    document.documentElement.style.setProperty('--composer-h', this.composerH() + 'px');
+    // 卡片上界变了，「回到底部」按钮要跟着重新贴（它按实测矩形定位）
+    if (typeof syncJumpAnchors === 'function') { try { syncJumpAnchors(); } catch (e) {} }
   },
   // 🔴 两个侧栏必须**一起**算，不能各算各的：它们各自的百分比基数都是整个
   // shell（dock 虽然在 DOM 里是 #main 的后代，但宽度由这里给死），分开算会

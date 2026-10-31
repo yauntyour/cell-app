@@ -782,6 +782,46 @@ function buildAppearance(st) {
   animField.appendChild(el('div', 'set-hint', '跟随系统 prefers-reduced-motion；选择保存在本机浏览器。'));
   s.appendChild(card([setCardHead('动效'), animField]));
 
+  /* 输入卡玻璃：完全无色的材质，唯一可调的是高斯模糊（跟随"透明度"） */
+  if (typeof GLASS !== 'undefined' && typeof setGlassPref === 'function') {
+    const gt = Math.round(GLASS.t * 100);
+    const grange = el('input');
+    grange.type = 'range';
+    grange.min = '0'; grange.max = '100'; grange.step = '5';
+    grange.value = String(gt);
+    grange.className = 'set-range';
+    const gval = el('span', 'rangeval', gt + '%');
+    const grow = el('div', 'think-row');
+    grow.appendChild(grange);
+    grow.appendChild(gval);
+    const gdesc = el('div', 'set-hint');
+    const gticks = el('div', 'range-ticks');
+    const gtickEls = [];
+    for (const [txt, at] of [['清晰', 0], ['磨砂', 50], ['强磨砂', 100]]) {
+      const tk = el('span', 'range-tick' + (Math.abs(at - gt) <= 25 ? ' on' : ''), txt);
+      gtickEls.push([tk, at]);
+      gticks.appendChild(tk);
+    }
+    const paintGlass = () => {
+      const v = Number(grange.value);
+      gval.textContent = v + '%';
+      const b = typeof glassBlur === 'function' ? glassBlur(v / 100) : 0;
+      gdesc.textContent = '高斯模糊 ' + b.toFixed(1) + 'px —— 卡片只把背后的内容模糊掉，'
+        + '圆角与玻璃亮边是固定的；拖到最左就是全清晰。';
+      for (const [tk, at] of gtickEls) tk.classList.toggle('on', Math.abs(at - v) <= 25);
+    };
+    grange.oninput = paintGlass;
+    grange.onchange = () => setGlassPref(Number(grange.value) / 100);
+    paintGlass();
+    const gfield = el('div', 'set-field');
+    gfield.appendChild(el('label', 'set-label', '输入卡磨砂'));
+    gfield.appendChild(grow);
+    gfield.appendChild(gticks);
+    gfield.appendChild(gdesc);
+    gfield.appendChild(el('div', 'set-hint', '卡内控件（+ / 模式 / 模型 / 发送）与卡片同一套玻璃材质。设置保存在本机浏览器。'));
+    s.appendChild(card([setCardHead('输入卡材质'), gfield]));
+  }
+
   const note = el('div', 'themenote');
   note.appendChild(el('span', null, '第三方主题：在 exe 目录的 '));
   note.appendChild(el('code', null, '.cell/theme/<名称>/'));
