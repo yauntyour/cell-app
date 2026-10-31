@@ -367,14 +367,17 @@
 .msg.thinking[data-phase="warn"] .think-title{color:var(--warn)}
 .msg.thinking[data-phase="warn"] .thinkdots .tdot{background:var(--warn)}
 
-/* ---- 5.13b 「回到底部」悬浮按钮（离开底部时出现，点击恢复跟底） --- */
+/* ---- 5.13b 「回到顶部 / 回到底部」悬浮按钮（离开端点时出现） -------- */
 /* 位置：**由 JS 按卡片实测上界写 inline bottom**（paintJump / syncJumpAnchors）。
    这里的 174px 只是首帧兜底 —— 卡片会被 72vh 上限、Teamwork 模式限高，
    任何「用 --composer-h 推算」的写法都会在那些状态下和真实上界差几十像素，
    按钮就飘在半空（2026-10-31 用户报的「按钮随上界拖动改变位置」）。
+   两个按钮共用一套材质与尺寸，竖直叠放：回到底部贴卡片上界，回到顶部在它
+   上面 38px（30 高 + 8 间隙），只有下面那个不显示时顶部按钮才落到基线上
+   （叠放由 JS 的 placeJump(btnB, btnT, pane, bottomShown) 一次算完）。
    材质：与输入卡内的控件同一族玻璃（--glass-face / --glass-hi / --glass-lo），
    它悬在消息流上，所以要自己带一层 backdrop-filter。 */
-.jump-bottom{position:absolute;right:32px;bottom:174px;z-index:15;
+.jump-bottom,.jump-top{position:absolute;right:32px;bottom:174px;z-index:15;
   display:none;align-items:center;gap:6px;height:30px;padding:0 13px 0 11px;
   border-radius:var(--radius-full);
   background:var(--glass-face);border:1px solid var(--glass-line);
@@ -383,10 +386,10 @@
   color:var(--fg2);font-size:12px;font-weight:500;cursor:pointer;
   transition:background var(--dur) var(--ease),color var(--dur) var(--ease),
              border-color var(--dur) var(--ease),box-shadow var(--dur) var(--ease)}
-.jump-bottom.show{display:inline-flex;animation:fadeUp 160ms var(--ease)}
-.jump-bottom:hover{background:var(--glass-face-hover);border-color:var(--glass-line-hover);
+.jump-bottom.show,.jump-top.show{display:inline-flex;animation:fadeUp 160ms var(--ease)}
+.jump-bottom:hover,.jump-top:hover{background:var(--glass-face-hover);border-color:var(--glass-line-hover);
   color:var(--fg);box-shadow:var(--glass-hi),var(--glass-lo),0 8px 22px -12px rgba(0,0,0,.95)}
-.jump-bottom .uico{color:var(--accent)}
+.jump-bottom .uico,.jump-top .uico{color:var(--accent)}
 
 /* ---- 5.13c Teamwork（tw）工具卡：结构化「团队任务」卡 -------------- */
 .chatwrap > .twtool{margin:18px 0 0;border:1px solid var(--line);border-radius:var(--radius);

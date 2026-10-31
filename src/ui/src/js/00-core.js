@@ -49,7 +49,7 @@ const COMMANDS = [
   { name: '/notice', usage: '/notice', desc: '查看通知列表', run: () => { openDock('notices'); refreshNotices(S.active); } },
   { name: '/archive', usage: '/archive', desc: '查看当前会话的历史存档（右侧面板）', run: () => { openDock('archives'); refreshArchives(S.active, true); } },
   { name: '/workspace', usage: '/workspace [path]', desc: '切换或打开工作区', ctx: 'workspaces' },
-  { name: '/theme', usage: '/theme [default|名称]', desc: '切换第三方主题（默认与导出的会话页同源）', ctx: 'theme' },
+  { name: '/theme', usage: '/theme [dark|light|名称]', desc: '切换外观（内置深色/浅色 + 第三方主题）', ctx: 'theme' },
   { name: '/git', usage: '/git', desc: '打开 Git / Worktree 面板', run: () => openDock('git') },
   { name: '/worktree', usage: '/worktree', desc: '管理并行工作树（Git Worktree）', run: () => openDock('git') },
   { name: '/files', usage: '/files [path]', desc: '打开工作区文件面板；Ctrl+P 快速打开', run: () => openDock('files') },
@@ -221,21 +221,35 @@ function twIdOf(body) {
 }
 
 /* ---------- C. 主题 / 外观 -----------------------------------------
-   没有内置主题：默认外观是锁定为黑白灰的深色（见 00-tokens.css，不跟随
-   系统深浅，减少蓝光），令牌名与 cell.cpp /export 导出页同一套，因此
-   「界面里的会话」与「导出的会话」同源。唯一的主题来源是第三方：放在与
-   配置/会话/凭据相同的 <exe 目录>/.cell/theme/<名称>/ 下的 theme.json +
-   theme.css，经 GET /api/themes 发现、GET /api/theme/<名称> 拉取后注入
-   <style id="theme-ext">。只需重定义 CSS 变量即可完整换肤。
-   选择持久化于 localStorage；URL ?theme=<名称> 可临时覆盖。           */
+   两层主题来源：
+     ① 内置（BUILTIN_THEMES，不联网、不打补丁）：
+        · 深色 = 默认外观，不写 data-theme，令牌就是 00-tokens.css 的 :root
+          原值（锁定黑白灰，不跟随系统深浅，减少蓝光）；
+        · 浅色 = data-theme="light"，令牌与"深色材质"的覆盖全在
+          09-theme-light.css。
+        两者令牌名与 cell.cpp /export 导出页同一套，因此「界面里的会话」与
+        「导出的会话」同源。
+     ② 第三方：放在与配置/会话/凭据相同的 <exe 目录>/.cell/theme/<名称>/ 下的
+        theme.json + theme.css，经 GET /api/themes 发现、GET /api/theme/<名称>
+        拉取后注入 <style id="theme-ext">。只需重定义 CSS 变量即可完整换肤。
+   选择持久化于 localStorage；URL ?theme=<名称> 可临时覆盖。
+   同名时内置优先（'light' 是保留名），第三方换个名字即可。             */
+const BUILTIN_THEMES = [
+  // name 为空串 = 默认外观：不产生 data-theme 属性，令牌走 :root 原值
+  { name: '', label: '深色', type: 'dark', desc: '默认 · 黑白灰深色',
+    swatch: ['#111113', '#1b1b1d', '#f2f3f5', '#6c7cff'] },
+  { name: 'light', label: '浅色', type: 'light', desc: '日间浅色',
+    swatch: ['#f6f6f7', '#ffffff', '#1a1a1e', '#4f5bd5'] },
+];
 const Theme = {
   key: 'cell.theme', animKey: 'cell.anim',
-  fallback: '', // 无第三方主题 = 内置默认外观（黑白灰深色）
+  fallback: '', // 默认外观 = 内置深色
   external: {}, // name -> {label,type,desc,swatch}
   cssCache: {},
   el: null,    // 第三方主题注入的 <style id="theme-ext">
+  builtin(name) { return BUILTIN_THEMES.find(t => t.name === name) || null; },
   list() {
-    const out = [];
+    const out = BUILTIN_THEMES.map(t => Object.assign({ builtin: true }, t));
     for (const n in this.external)
       out.push(Object.assign({}, this.external[n], { name: n }));
     return out;
@@ -262,6 +276,7 @@ const Theme = {
     try { j = await r.json(); } catch (e) { return; }
     if (!j || j.ok === false || !Array.isArray(j.themes)) return;
     for (const t of j.themes) {
+      if (this.builtin(t.name)) continue; // 内置保留名：'light' 已被内置浅色占用
       this.external[t.name] = {
         label: t.label || t.name,
         type: t.type === 'light' ? 'light' : 'dark',
@@ -270,14 +285,17 @@ const Theme = {
       };
     }
     const cur = localStorage.getItem(this.key) || this.fallback;
-    if (this.external[cur]) this.set(cur);
+    if (this.external[cur] || this.builtin(cur)) this.set(cur); // 内置浅色也要保住
     else if (cur) this.set(this.fallback); // 主题目录被删了 → 回到默认外观
     if (S.settingsOpen) renderSettings();
   },
   set(name, anim) {
-    if (name && !this.external[name]) name = this.fallback;
+    if (name && !this.external[name] && !this.builtin(name)) name = this.fallback;
     if (name) document.documentElement.dataset.theme = name;
     else delete document.documentElement.dataset.theme;
+    // 浏览器/窗口底色跟着换（浅色下别留一条深色标题栏）
+    const mt = document.querySelector('meta[name="theme-color"]');
+    if (mt) mt.content = name === 'light' ? '#f6f6f7' : '#111113';
     if (name) localStorage.setItem(this.key, name);
     else localStorage.removeItem(this.key);
     if (anim != null) {
@@ -289,8 +307,8 @@ const Theme = {
     else this.drop();
   },
   cycle() {
-    const l = this.list();
-    if (!l.length) return; // 没有第三方主题：保持默认外观
+    const l = this.list(); // 内置深色/浅色 + 第三方，按顺序轮换
+    if (l.length < 2) return;
     const i = l.findIndex(t => t.name === S.theme);
     this.set(l[(i + 1) % l.length].name);
   },

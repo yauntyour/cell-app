@@ -21,7 +21,7 @@
 6. **不丢功能**：现有工作区/会话/流式/Teamwork/通知/审批/设置/搜索/主题全部保留；键盘可达性与 reduced-motion 保留。
 7. **可验证**：每个面板都要能在 `?mock=1` 演示模式下截图验收（见 §9）。
 
-## 2. 设计令牌（css/00-tokens.css）
+## 2. 设计令牌（css/00-tokens.css；内置浅色的令牌覆盖见 §5.13 / css/09-theme-light.css）
 
 ```css
 :root{
@@ -330,6 +330,35 @@ Ctrl+N 新会话、Ctrl+, 设置、Ctrl+Shift+F 会话搜索、Ctrl+P 快速打�
   读数与点击行为、无半截字、无填充/无描边/无阴影/无 ::before/::after、折射层与「滤镜里
   只有模糊+位移」、0%→100% 磨砂的像素锐度对照、偏好刷新后保留、无状态行、指标行四项读数
   与随流刷新、轮次条 tok/s+ITL、四档宽度不溢出不重叠、无脚本错误）。
+
+### 5.12 回到顶部 / 回到底部（2026-10-31）
+
+- 消息流离开端点时，在输入卡上界之上出现两枚同族玻璃胶囊（`.jump-top` / `.jump-bottom`，
+  见 `05-stream.css` §5.13b、`02-render2-chat.js` 的 `paintJump/placeJump`）：
+  `回到底部` 贴基线，`回到顶部` 叠在它上面 38px（30 高 + 8 间隙）；下面那枚不显示时
+  上面那枚落回基线，不会在卡片上方留一块空位。
+- 出现条件：`回到底部` = 内容可滚动且已脱离贴底（`CHAT_STICK_PX=28`）；`回到顶部` =
+  距顶超过 `CHAT_TOP_PX=240`。两者可同时在场（滚在中间时上下各一枚）。
+- 位置一律由 JS 按 `#composerInner` 的**实测**矩形写 inline `bottom`，不读 `--composer-h`
+  推算；`paintJump` 每个 scroll 帧都会调用，所以两个按钮共用一次测量（`placeJump(btnB,
+  btnT, pane, bottomShown)`）。
+- 点「回到顶部」= 脱离跟底（`_stick=false`，流式输出期间不会被拉回）+ `scrollTo({top:0,
+  behavior:'smooth'})`；点「回到底部」仍是瞬时贴底 + `markChat` 重排末尾窗口。
+
+### 5.13 内置浅色主题（2026-10-31）
+
+- 默认外观仍是深色（`:root`，不跟随系统深浅）；浅色是内置第二套，`<html data-theme="light">`
+  时生效，全部在 `css/09-theme-light.css`：① 令牌（表面/描边/文本/强调/语义/`--glass-*`/阴影）
+  ② 深色材质覆盖（输入卡三层玻璃、卡内控件投影、悬浮按钮、遮罩）③ 例外（终端保持深色底）。
+- 切换入口：设置 → 外观的两张卡、`/theme [light|default]`（无参轮换）、URL `?theme=light`；
+  选择存 `localStorage['cell.theme']`（`light` / 空=深色）。`light` 是保留名，第三方同名主题
+  会被忽略（`Theme.loadExternal` 跳过）。
+- 为什么浅色不是"纯令牌换肤"：输入卡的液态玻璃在深色版里是"白透明叠在黑上"（面/厚度/亮边
+  三层），浅色底照抄会白成一片；文件类型图标色、`.badge` 与停止钮的白字也都是按深底选的。
+  这些集中在 09 文件里，第三方主题只覆盖令牌时不受影响。
+- 验收：`_scratch/theme-light-2026-10-31/`（chat / hero / settings / terminal / files / 2x 输入卡
+  截图，`eval-theme.js` 切主题与持久化、`eval-jump.js` 两按钮显隐与叠放、`eval-click.js` 点击后
+  滚动位置）。
 
 ## 6. 后端命令契约（src/cell-app-tools.hpp，T-core 实现）
 

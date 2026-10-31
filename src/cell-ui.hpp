@@ -942,14 +942,17 @@ body.locked{overflow:hidden}
 .msg.thinking[data-phase="warn"] .think-title{color:var(--warn)}
 .msg.thinking[data-phase="warn"] .thinkdots .tdot{background:var(--warn)}
 
-/* ---- 5.13b 「回到底部」悬浮按钮（离开底部时出现，点击恢复跟底） --- */
+/* ---- 5.13b 「回到顶部 / 回到底部」悬浮按钮（离开端点时出现） -------- */
 /* 位置：**由 JS 按卡片实测上界写 inline bottom**（paintJump / syncJumpAnchors）。
    这里的 174px 只是首帧兜底 —— 卡片会被 72vh 上限、Teamwork 模式限高，
    任何「用 --composer-h 推算」的写法都会在那些状态下和真实上界差几十像素，
    按钮就飘在半空（2026-10-31 用户报的「按钮随上界拖动改变位置」）。
+   两个按钮共用一套材质与尺寸，竖直叠放：回到底部贴卡片上界，回到顶部在它
+   上面 38px（30 高 + 8 间隙），只有下面那个不显示时顶部按钮才落到基线上
+   （叠放由 JS 的 placeJump(btnB, btnT, pane, bottomShown) 一次算完）。
    材质：与输入卡内的控件同一族玻璃（--glass-face / --glass-hi / --glass-lo），
    它悬在消息流上，所以要自己带一层 backdrop-filter。 */
-.jump-bottom{position:absolute;right:32px;bottom:174px;z-index:15;
+.jump-bottom,.jump-top{position:absolute;right:32px;bottom:174px;z-index:15;
   display:none;align-items:center;gap:6px;height:30px;padding:0 13px 0 11px;
   border-radius:var(--radius-full);
   background:var(--glass-face);border:1px solid var(--glass-line);
@@ -958,10 +961,10 @@ body.locked{overflow:hidden}
   color:var(--fg2);font-size:12px;font-weight:500;cursor:pointer;
   transition:background var(--dur) var(--ease),color var(--dur) var(--ease),
              border-color var(--dur) var(--ease),box-shadow var(--dur) var(--ease)}
-.jump-bottom.show{display:inline-flex;animation:fadeUp 160ms var(--ease)}
-.jump-bottom:hover{background:var(--glass-face-hover);border-color:var(--glass-line-hover);
+.jump-bottom.show,.jump-top.show{display:inline-flex;animation:fadeUp 160ms var(--ease)}
+.jump-bottom:hover,.jump-top:hover{background:var(--glass-face-hover);border-color:var(--glass-line-hover);
   color:var(--fg);box-shadow:var(--glass-hi),var(--glass-lo),0 8px 22px -12px rgba(0,0,0,.95)}
-.jump-bottom .uico{color:var(--accent)}
+.jump-bottom .uico,.jump-top .uico{color:var(--accent)}
 
 /* ---- 5.13c Teamwork（tw）工具卡：结构化「团队任务」卡 -------------- */
 .chatwrap > .twtool{margin:18px 0 0;border:1px solid var(--line);border-radius:var(--radius);
@@ -3204,6 +3207,204 @@ mark{background:var(--accent-soft);color:var(--accent);border-radius:3px;padding
   .pnl,.pnl *{transition:none !important}
 }
 
+/* ==== css/09-theme-light.css ========================================== */
+
+/* =====================================================================
+   §9 内置浅色主题（data-theme="light"）
+
+   默认外观仍是深色（00-tokens.css 的 :root，不跟随系统深浅）。本文件只在
+   <html data-theme="light"> 时生效，分三层：
+
+     ① 令牌   :root[data-theme="light"] —— 与深色版一一对应的表面/描边/文本/
+              强调/语义色，外加 --glass-* 材质与阴影（浅色下阴影要浅、要散，
+              深色版那种 55% 黑的大投影在浅色里会糊成一团脏灰）。
+     ② 材质   深色版把「液态玻璃」写成"白透明叠在黑上"，浅色底上照抄会白成
+              一片、失去边界；输入卡与悬浮按钮因此各自覆盖一层。
+     ③ 例外   终端保持深色：ANSI 调色板（08c-term.js 的 BASE16）是按深色底
+              调的，压在浅色底上会整体发灰；控制台用深色底是常见且明确的选择。
+
+   令牌名与 cell.cpp /export 导出页同一套，组件只引用令牌，所以第三方主题
+   依旧可以只覆盖变量换肤；本文件只补"深色材质"这类无法用变量表达的部分。
+   ===================================================================== */
+
+/* ---------- 9.1 令牌 ------------------------------------------------- */
+:root[data-theme="light"]{
+  /* 原生控件（滚动条、下拉、日期选择器）跟着走浅色 */
+  color-scheme:light;
+
+  /* ---- 表面（由亮到暗：画布 -> 面板 -> 卡片 -> 浮层） -------------- */
+  --bg:#f6f6f7;
+  --bg2:#efeff2;
+  --bg3:#e9e9ed;
+  --panel:#fbfbfc;
+  --panel2:#ffffff;
+  --raise:#eeeef1;
+  --raise2:#e3e3e8;
+  --elev-1:#ffffff;
+  --elev-2:#ffffff;
+
+  /* ---- 描边 ------------------------------------------------------- */
+  --line:#e4e4e9;
+  --line2:#d2d2da;
+
+  /* ---- 文本 ------------------------------------------------------- */
+  --fg:#1a1a1e;
+  --fg2:#53545c;
+  --fg3:#787983;
+  --fg4:#9fa0a9;
+
+  /* ---- 强调色（浅底上要压深一档才够对比度） ----------------------- */
+  --accent:#4f5bd5;
+  --accent-hi:#3f4bc4;
+  --accent-soft:rgba(79,91,213,.10);
+  --link:#3f4bc4;
+
+  /* ---- 语义色 ----------------------------------------------------- */
+  --ok:#1a7f37;
+  --warn:#9a6700;
+  --bad:#cf222e;
+  --info:#0969da;
+  --add:#1a7f37;
+  --del:#cf222e;
+  --run:#6a6b74;
+
+  /* ---- 玻璃材质：白面 + 深发丝边（深色版是白透明叠黑） ------------- */
+  --glass-face:linear-gradient(180deg,rgba(255,255,255,.94),rgba(255,255,255,.74));
+  --glass-face-hover:linear-gradient(180deg,#fff,rgba(255,255,255,.88));
+  --glass-face-on:linear-gradient(180deg,#fff,rgba(244,245,251,.96));
+  --glass-line:rgba(24,26,36,.11);
+  --glass-line-hover:rgba(24,26,36,.20);
+  --glass-hi:inset 0 1px 0 rgba(255,255,255,.95);
+  --glass-lo:inset 0 -1px 0 rgba(24,26,36,.05);
+  --glass-drop:0 1px 2px rgba(24,26,36,.07);
+
+  /* ---- 阴影：浅、散、低饱和 --------------------------------------- */
+  --shadow:0 18px 44px rgba(24,26,36,.14),0 1px 2px rgba(24,26,36,.07);
+  --shadow-sm:0 1px 2px rgba(24,26,36,.07);
+
+  /* ---- 兼容别名 --------------------------------------------------- */
+  --bg-soft:#efeff2;
+  --line-soft:#e9e9ed;
+  --code-bg:#f2f2f5;
+  --user:#2c2d34;
+  --assistant:#1a1a1e;
+  --tool:#53545c;
+  --system:#666771;
+  --other:#787983;
+}
+
+/* ---------- 9.2 输入卡（液态玻璃的浅色版） --------------------------
+   深色版的三层材质（面 / 厚度 / 亮边）全部按"白透明叠在黑上"调的：
+     · 面  白色半透明渐变在浅色底上等于没有，要改成"白面 + 底部极淡灰"，
+           才有一张浮起来的纸的感觉；
+     · 厚度 内顶镜面保留（浅色里更亮），外圈从 rgba(0,0,0,.45) 换成
+           6% 的深发丝线——浅色里 45% 的黑是一道粗黑框；
+     · 亮边 conic 环原来靠"白色高光绕一圈"，浅色底上白环不可见，改成
+           "深发丝绕一圈 + 顶部白光"，靠深浅差表达厚度。 */
+:root[data-theme="light"] #composerInner{
+  background:linear-gradient(180deg,
+    rgba(255,255,255,.95) 0%,
+    rgba(255,255,255,.88) 14%,
+    rgba(255,255,255,.80) 44%,
+    rgba(246,246,250,.74) 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.98),
+    inset 0 0 0 1px rgba(24,26,36,.07),
+    inset 0 0 10px -2px rgba(255,255,255,.95),
+    inset 0 -10px 25px rgba(24,26,36,.05),
+    0 0 0 1px rgba(24,26,36,.06),
+    0 18px 44px -30px rgba(24,26,36,.45);
+}
+:root[data-theme="light"] #composerInner:focus-within{
+  box-shadow:
+    inset 0 1px 0 #fff,
+    inset 0 0 0 1px rgba(79,91,213,.22),
+    inset 0 0 10px -2px #fff,
+    inset 0 -10px 25px rgba(24,26,36,.05),
+    0 0 0 1px rgba(24,26,36,.06),
+    0 18px 44px -30px rgba(24,26,36,.45);
+}
+:root[data-theme="light"] #composerInner::before{
+  background:conic-gradient(from 215deg at 50% 45%,
+    rgba(24,26,36,.17) 0deg,
+    rgba(24,26,36,.10) 34deg,
+    rgba(24,26,36,.07) 78deg,
+    rgba(24,26,36,.06) 118deg,
+    rgba(24,26,36,.06) 160deg,
+    rgba(24,26,36,.07) 205deg,
+    rgba(24,26,36,.09) 250deg,
+    rgba(24,26,36,.12) 300deg,
+    rgba(24,26,36,.17) 360deg);
+}
+/* 卡内控件（+ / chip / 发送）的投影：深色版用 50% 黑做"离面一点"，
+   浅色底上会糊成黑边，换成 18%~22% 的冷灰 */
+:root[data-theme="light"] .cmp-add:hover,
+:root[data-theme="light"] .cmp-chip:hover,
+:root[data-theme="light"] .cmp-send{
+  box-shadow:var(--glass-hi),var(--glass-lo),0 2px 6px -2px rgba(24,26,36,.18);
+}
+:root[data-theme="light"] .cmp-send:hover{
+  box-shadow:var(--glass-hi),var(--glass-lo),0 3px 8px -2px rgba(24,26,36,.22);
+}
+
+/* ---------- 9.3 悬浮按钮 / 遮罩 ------------------------------------- */
+:root[data-theme="light"] .jump-bottom,
+:root[data-theme="light"] .jump-top{
+  box-shadow:var(--glass-hi),var(--glass-lo),0 6px 18px -12px rgba(24,26,36,.55);
+}
+:root[data-theme="light"] .jump-bottom:hover,
+:root[data-theme="light"] .jump-top:hover{
+  box-shadow:var(--glass-hi),var(--glass-lo),0 8px 22px -12px rgba(24,26,36,.6);
+}
+/* 弹窗/浮层遮罩：深色版是近乎纯黑 55%，浅色下压到 30% 的冷灰 */
+:root[data-theme="light"] .modal{background:rgba(24,26,36,.30)}
+:root[data-theme="light"] .pnl-ov{background:color-mix(in srgb,var(--bg) 55%,rgba(24,26,36,.45))}
+
+/* ---------- 9.4 语义小徽标 / 停止钮：浅色下白字白底读不出来 ----------
+   .badge.warn/.badge.ok 在深色版用深字压彩色底；.cmp-send.stop 用白字压
+   白玻璃（深色版玻璃是深底，白字成立）。浅色版一律翻成白字 / 语义色字。 */
+:root[data-theme="light"] .badge.warn,
+:root[data-theme="light"] .badge.ok{color:#fff}
+:root[data-theme="light"] .cmp-send.stop{color:var(--bad)}
+:root[data-theme="light"] .cmp-send.stop:hover{color:var(--bad);
+  background:color-mix(in srgb,var(--bad) 13%,#fff)}
+
+/* ---------- 9.5 文件类型 / 快捷卡图标色（按浅底重新调对比度） -------- */
+:root[data-theme="light"] .fi-js{color:#a16207}
+:root[data-theme="light"] .fi-ts,
+:root[data-theme="light"] .fi-py{color:#1f6feb}
+:root[data-theme="light"] .fi-html,
+:root[data-theme="light"] .fi-java,
+:root[data-theme="light"] .fi-rb{color:#b91c1c}
+:root[data-theme="light"] .fi-css,
+:root[data-theme="light"] .fi-go{color:#0e7490}
+:root[data-theme="light"] .fi-json,
+:root[data-theme="light"] .fi-rs{color:#b45309}
+:root[data-theme="light"] .fi-md,
+:root[data-theme="light"] .fi-sh{color:#15803d}
+:root[data-theme="light"] .fi-php,
+:root[data-theme="light"] .fi-yml,
+:root[data-theme="light"] .fi-img{color:#7c3aed}
+:root[data-theme="light"] .fi-cpp{color:#c2410c}
+:root[data-theme="light"] .fi-dir{color:#b45309}
+:root[data-theme="light"] .fp-crumb-root .uico{color:#b45309}
+:root[data-theme="light"] .gico{color:#b7791f}
+:root[data-theme="light"] .quick-card.files{--qc:#b45309}
+:root[data-theme="light"] .quick-card.git{--qc:#c2410c}
+:root[data-theme="light"] .quick-card.term{--qc:#0e7490}
+:root[data-theme="light"] .quick-card.search{--qc:#6b6c75}
+
+/* ---------- 9.6 终端保持深色 ---------------------------------------
+   08c-term.js 的 ANSI 16 色是按深色底调的（#e5c07b 这类亮色在白底上几乎
+   看不见）。这里把终端屏幕钉成深色，并把依赖 --fg/--bg 的前景色一起改掉，
+   面板外壳（标题、状态条）仍跟随浅色主题。 */
+:root[data-theme="light"] .ct-root{background:#161618;color:#e6e7ea}
+:root[data-theme="light"] .ct-root .ct-cursor{background:#e6e7ea;color:#161618}
+:root[data-theme="light"] .ct-root .ct-screen{scrollbar-color:#3a3a42 transparent}
+:root[data-theme="light"] .ct-root .ct-screen::-webkit-scrollbar-thumb{background:#3a3a42;
+  border:2px solid transparent;background-clip:content-box}
+:root[data-theme="light"] .ct-root .ct-screen::-webkit-scrollbar-thumb:hover{background:#4b4b55}
+
 </style>
 </head>
 <body>
@@ -3441,7 +3642,7 @@ const COMMANDS = [
   { name: '/notice', usage: '/notice', desc: '查看通知列表', run: () => { openDock('notices'); refreshNotices(S.active); } },
   { name: '/archive', usage: '/archive', desc: '查看当前会话的历史存档（右侧面板）', run: () => { openDock('archives'); refreshArchives(S.active, true); } },
   { name: '/workspace', usage: '/workspace [path]', desc: '切换或打开工作区', ctx: 'workspaces' },
-  { name: '/theme', usage: '/theme [default|名称]', desc: '切换第三方主题（默认与导出的会话页同源）', ctx: 'theme' },
+  { name: '/theme', usage: '/theme [dark|light|名称]', desc: '切换外观（内置深色/浅色 + 第三方主题）', ctx: 'theme' },
   { name: '/git', usage: '/git', desc: '打开 Git / Worktree 面板', run: () => openDock('git') },
   { name: '/worktree', usage: '/worktree', desc: '管理并行工作树（Git Worktree）', run: () => openDock('git') },
   { name: '/files', usage: '/files [path]', desc: '打开工作区文件面板；Ctrl+P 快速打开', run: () => openDock('files') },
@@ -3613,21 +3814,35 @@ function twIdOf(body) {
 }
 
 /* ---------- C. 主题 / 外观 -----------------------------------------
-   没有内置主题：默认外观是锁定为黑白灰的深色（见 00-tokens.css，不跟随
-   系统深浅，减少蓝光），令牌名与 cell.cpp /export 导出页同一套，因此
-   「界面里的会话」与「导出的会话」同源。唯一的主题来源是第三方：放在与
-   配置/会话/凭据相同的 <exe 目录>/.cell/theme/<名称>/ 下的 theme.json +
-   theme.css，经 GET /api/themes 发现、GET /api/theme/<名称> 拉取后注入
-   <style id="theme-ext">。只需重定义 CSS 变量即可完整换肤。
-   选择持久化于 localStorage；URL ?theme=<名称> 可临时覆盖。           */
+   两层主题来源：
+     ① 内置（BUILTIN_THEMES，不联网、不打补丁）：
+        · 深色 = 默认外观，不写 data-theme，令牌就是 00-tokens.css 的 :root
+          原值（锁定黑白灰，不跟随系统深浅，减少蓝光）；
+        · 浅色 = data-theme="light"，令牌与"深色材质"的覆盖全在
+          09-theme-light.css。
+        两者令牌名与 cell.cpp /export 导出页同一套，因此「界面里的会话」与
+        「导出的会话」同源。
+     ② 第三方：放在与配置/会话/凭据相同的 <exe 目录>/.cell/theme/<名称>/ 下的
+        theme.json + theme.css，经 GET /api/themes 发现、GET /api/theme/<名称>
+        拉取后注入 <style id="theme-ext">。只需重定义 CSS 变量即可完整换肤。
+   选择持久化于 localStorage；URL ?theme=<名称> 可临时覆盖。
+   同名时内置优先（'light' 是保留名），第三方换个名字即可。             */
+const BUILTIN_THEMES = [
+  // name 为空串 = 默认外观：不产生 data-theme 属性，令牌走 :root 原值
+  { name: '', label: '深色', type: 'dark', desc: '默认 · 黑白灰深色',
+    swatch: ['#111113', '#1b1b1d', '#f2f3f5', '#6c7cff'] },
+  { name: 'light', label: '浅色', type: 'light', desc: '日间浅色',
+    swatch: ['#f6f6f7', '#ffffff', '#1a1a1e', '#4f5bd5'] },
+];
 const Theme = {
   key: 'cell.theme', animKey: 'cell.anim',
-  fallback: '', // 无第三方主题 = 内置默认外观（黑白灰深色）
+  fallback: '', // 默认外观 = 内置深色
   external: {}, // name -> {label,type,desc,swatch}
   cssCache: {},
   el: null,    // 第三方主题注入的 <style id="theme-ext">
+  builtin(name) { return BUILTIN_THEMES.find(t => t.name === name) || null; },
   list() {
-    const out = [];
+    const out = BUILTIN_THEMES.map(t => Object.assign({ builtin: true }, t));
     for (const n in this.external)
       out.push(Object.assign({}, this.external[n], { name: n }));
     return out;
@@ -3654,6 +3869,7 @@ const Theme = {
     try { j = await r.json(); } catch (e) { return; }
     if (!j || j.ok === false || !Array.isArray(j.themes)) return;
     for (const t of j.themes) {
+      if (this.builtin(t.name)) continue; // 内置保留名：'light' 已被内置浅色占用
       this.external[t.name] = {
         label: t.label || t.name,
         type: t.type === 'light' ? 'light' : 'dark',
@@ -3662,14 +3878,17 @@ const Theme = {
       };
     }
     const cur = localStorage.getItem(this.key) || this.fallback;
-    if (this.external[cur]) this.set(cur);
+    if (this.external[cur] || this.builtin(cur)) this.set(cur); // 内置浅色也要保住
     else if (cur) this.set(this.fallback); // 主题目录被删了 → 回到默认外观
     if (S.settingsOpen) renderSettings();
   },
   set(name, anim) {
-    if (name && !this.external[name]) name = this.fallback;
+    if (name && !this.external[name] && !this.builtin(name)) name = this.fallback;
     if (name) document.documentElement.dataset.theme = name;
     else delete document.documentElement.dataset.theme;
+    // 浏览器/窗口底色跟着换（浅色下别留一条深色标题栏）
+    const mt = document.querySelector('meta[name="theme-color"]');
+    if (mt) mt.content = name === 'light' ? '#f6f6f7' : '#111113';
     if (name) localStorage.setItem(this.key, name);
     else localStorage.removeItem(this.key);
     if (anim != null) {
@@ -3681,8 +3900,8 @@ const Theme = {
     else this.drop();
   },
   cycle() {
-    const l = this.list();
-    if (!l.length) return; // 没有第三方主题：保持默认外观
+    const l = this.list(); // 内置深色/浅色 + 第三方，按顺序轮换
+    if (l.length < 2) return;
     const i = l.findIndex(t => t.name === S.theme);
     this.set(l[(i + 1) % l.length].name);
   },
@@ -5453,14 +5672,18 @@ function ensurePane(ws) {
   return pane;
 }
 
-/* 自动跟底（stick）与「回到底部」按钮：
+/* 自动跟底（stick）与「回到底部 / 回到顶部」按钮：
    流式输出时每次渲染都会尝试滚到底部，但只应在用户本来就贴着底部时发生。
    旧实现用 140px 阈值——用户往上滚一小段（<140px）仍被判定为「在底部」，
    下一次流式渲染就把视图拉回去，表现成「输出时无法上下滚动」。这里：
      · 阈值收到 28px，几乎只有真正在底部才算贴着；
      · 滚轮向上时立刻脱离跟底（不等 scroll 事件，避免同一帧被拉回）；
-     · 离开底部且内容可滚动时，在输入卡上方显示「回到底部」悬浮按钮。 */
+     · 离开底部且内容可滚动时，在输入卡上方显示「回到底部」悬浮按钮；
+     · 离开顶部一段距离时，在「回到底部」上面再叠一个「回到顶部」。
+   两个按钮都按卡片的**实测**上界定位，竖直叠放（见 placeJump）。 */
 const CHAT_STICK_PX = 28;
+const CHAT_TOP_PX = 240;      // 距顶超过这么多像素才给「回到顶部」，避免刚滚一点就弹
+const JUMP_STACK_PX = 38;     // 30 高 + 8 间隙：下面那个显示时，上面那个再抬这么高
 function isNearBottom(node) { return node.scrollHeight - node.scrollTop - node.clientHeight < CHAT_STICK_PX; }
 function maxScrollOf(node) { return Math.max(0, node.scrollHeight - node.clientHeight); }
 /* 贴底只走瞬时滚动：平滑滚动的目标高度是「启动那一刻」的 scrollHeight，
@@ -5496,6 +5719,7 @@ function bindChatScroll(ws) {
   }, { passive: true });
   ensureJumpButton(ws);
 }
+/* 两个按钮一起建：顺序决定叠放（先 bottom，后 top 盖在上面那条基线上） */
 function ensureJumpButton(ws) {
   const t = tab(ws);
   const pane = t._pane;
@@ -5518,36 +5742,68 @@ function ensureJumpButton(ws) {
     };
     pane.appendChild(btn);
   }
+  let top = pane.querySelector('.jump-top');
+  if (!top) {
+    top = el('button', 'jump-top');
+    top.type = 'button';
+    top.title = '回到顶部（滚到本次会话的第一条）';
+    top.appendChild(iconEl('chevronUp', 'sm'));
+    top.appendChild(el('span', null, '回到顶部'));
+    top.onclick = ev => {
+      ev.stopPropagation();
+      // 先脱离跟底：流式输出期间不回拉，用户是真的想留在上面
+      t._stick = false;
+      const chat = t._chat;
+      if (chat) {
+        try { chat.scrollTo({ top: 0, behavior: 'smooth' }); }
+        catch (e) { chat.scrollTop = 0; }
+        // 平滑滚动期间 scroll 事件会持续把状态刷下去（到顶后按钮自己收起）；
+        // 按钮是绝对定位在 pane 上的，不跟着内容走，所以不需要额外动画补偿
+        paintJump(ws);
+        markChat(ws);
+      }
+    };
+    pane.appendChild(top);
+  }
   paintJump(ws);
   return btn;
 }
 function paintJump(ws) {
   const t = tab(ws);
   if (!t || !t._chat || !t._pane) return;
-  const btn = t._pane.querySelector('.jump-bottom');
-  if (!btn) return;
+  const btnB = t._pane.querySelector('.jump-bottom');
+  const btnT = t._pane.querySelector('.jump-top');
+  if (!btnB && !btnT) return;
   const chat = t._chat;
   const scrollable = chat.scrollHeight > chat.clientHeight + 8;
-  const show = !!scrollable && !t._stick && !chat.classList.contains('hero-mode');
-  btn.classList.toggle('show', show);
-  placeJump(btn, t._pane);
+  const hero = chat.classList.contains('hero-mode');
+  // 底部：离开底部才出现；顶部：距顶超过阈值才出现（两个可以同时在场）
+  const showB = !!scrollable && !t._stick && !hero;
+  const showT = !!scrollable && !hero && (chat.scrollTop || 0) > CHAT_TOP_PX;
+  if (btnB) btnB.classList.toggle('show', showB);
+  if (btnT) btnT.classList.toggle('show', showT);
+  // 叠放：下面那个在场时，上面那个让出一个按钮 + 间隙
+  placeJump(btnB, btnT, t._pane, showB);
 }
 /* 按钮贴在卡片上界之上 16px —— 用**实测**矩形算，不读 --composer-h 推算：
    卡片会被 72vh 上限、Teamwork 模式限高，推算值会和真实上界差出几十像素，
    按钮就飘在消息流中间（2026-10-31 用户报的「按钮随上界拖动改变位置」）。
    bottom 相对 pane 的 padding box，所以要用 pane 自己的矩形换算，
-   不假设 pane 底边一定等于视口底边。 */
+   不假设 pane 底边一定等于视口底边。
+   两个按钮共用一次测量（滚动事件里每帧都调，别为了省事读四次矩形）。 */
 const JUMP_GAP = 16;
-function placeJump(btn, pane) {
+function placeJump(btnB, btnT, pane, bottomShown) {
   const card = $('#composerInner');
-  if (!btn || !pane || !card) return;
+  if (!pane || !card || (!btnB && !btnT)) return;
   const cr = card.getBoundingClientRect();
   if (cr.height < 8) return;
   const pr = pane.getBoundingClientRect();
-  btn.style.bottom = Math.max(8, Math.round(pr.bottom - cr.top + JUMP_GAP)) + 'px';
+  const base = Math.max(8, Math.round(pr.bottom - cr.top + JUMP_GAP));
+  if (btnB) btnB.style.bottom = base + 'px';
+  if (btnT) btnT.style.bottom = (base + (bottomShown ? JUMP_STACK_PX : 0)) + 'px';
 }
 /* 卡片高度/位置变化时（拖手柄、切 Teamwork、窗口缩放、hero 态切换）重新贴一次：
-   ① 「回到底部」按钮贴在卡片上界之上；
+   ① 「回到底部 / 回到顶部」按钮贴在卡片上界之上；
    ② 消息流的底部留白 --composer-pad 也跟着**实测**高度走 —— Teamwork 模式的
       卡片是 64vh、不看 --composer-h，用变量推算会把最后几条消息压在卡片底下，
       看着就像"上界没固定"（2026-10-31 报的问题）。 */
@@ -5566,12 +5822,8 @@ function syncJumpAnchors() {
         Math.round(cb - cr.top + 28) + 'px');
     }
   }
-  for (const ws of S.tabOrder) {
-    const t = S.tabs.get(ws);
-    if (!t || !t._pane) continue;
-    const btn = t._pane.querySelector('.jump-bottom');
-    if (btn) placeJump(btn, t._pane);
-  }
+  // paintJump 里已经带定位（含叠放），这里不再单独 placeJump
+  for (const ws of S.tabOrder) { try { paintJump(ws); } catch (e) {} }
 }
 // 窗口尺寸变化时重新判断是否显示（内容高度随之变化）
 window.addEventListener('resize', () => {
@@ -11055,8 +11307,9 @@ function slashArgItems(cmdName) {
       for (const sk of (S.skills || [])) add(sk.name, sk.name, sk.description || '');
       break;
     case 'theme':
-      add('default', '', '默认外观（与 /export 导出的会话页同源）');
-      for (const th of Theme.list()) add(th.name, th.name, th.label + (th.desc ? ' · ' + th.desc : ''));
+      add('default', '', '深色（内置默认外观，与 /export 导出的会话页同源）');
+      // 内置深色就是 default，这里只列有名字的（浅色 + 第三方）
+      for (const th of Theme.list()) if (th.name) add(th.name, th.name, th.label + (th.desc ? ' · ' + th.desc : ''));
       break;
     case 'teamwork': {
       const t2 = curTab();
@@ -11731,15 +11984,15 @@ async function execSlash(t, name, arg) {
     case '/stop': return cmd('stop', { ws: t.ws });
     case '/theme': {
       if (!arg) {
-        if (!Theme.list().length) { toast('主题：默认（无第三方主题）', 'ok'); break; }
+        if (Theme.list().length < 2) { toast('主题：深色（内置）', 'ok'); break; }
         Theme.cycle();
         const c = Theme.current();
-        toast('主题：' + (c ? c.label : '默认'), 'ok');
+        toast('主题：' + (c ? c.label : '深色'), 'ok');
         break;
       }
-      if (arg === 'default') { Theme.set(''); toast('主题：默认', 'ok'); break; }
+      if (arg === 'default' || arg === 'dark') { Theme.set(''); toast('主题：深色', 'ok'); break; }
       const th = Theme.list().find(x => x.name === arg);
-      if (!th) { toast('未知主题：' + arg + '（可用：default' + (Theme.list().length ? '、' + Theme.list().map(x => x.name).join('、') : '') + '）', 'bad'); break; }
+      if (!th) { toast('未知主题：' + arg + '（可用：default、' + Theme.list().filter(x => x.name).map(x => x.name).join('、') + '）', 'bad'); break; }
       Theme.set(arg); toast('主题：' + th.label, 'ok');
       break;
     }
@@ -12761,7 +13014,7 @@ function buildPerf(st) {
 
 /* 4.7 外观 */
 function buildAppearance(st) {
-  const s = sec('appearance', '外观', '默认外观为黑白灰深色（与 /export 导出的会话页同一套令牌）；第三方主题放入 exe 目录的 .cell/theme/<名称>/ 后出现在下方。');
+  const s = sec('appearance', '外观', '内置深色（默认）与浅色两套外观，令牌与 /export 导出的会话页同源；第三方主题放入 exe 目录的 .cell/theme/<名称>/ 后出现在下方。');
   const grid = el('div', 'themegrid');
   const paintTheme = (name, label, meta, swatch, on) => {
     const b = el('button', 'themecard' + (on ? ' on' : ''));
@@ -12777,17 +13030,16 @@ function buildAppearance(st) {
     b.onclick = () => { Theme.set(name); renderSettings(); };
     grid.appendChild(b);
   };
-  paintTheme('', '默认', '与导出的会话页同源 · 黑白灰深色', ['var(--bg)', 'var(--fg)', 'var(--accent)'], !S.theme);
   const themes = Theme.list();
   for (const t of themes) {
-    paintTheme(t.name, t.label || t.name,
+    paintTheme(t.name, t.label || t.name || '深色',
       (t.type === 'light' ? '浅色' : '深色') + (t.desc ? ' · ' + t.desc : ''),
       (t.swatch && t.swatch.length) ? t.swatch.slice(0, 4) : ['var(--bg2)', 'var(--fg2)', 'var(--line2)'],
       S.theme === t.name);
   }
   s.appendChild(card([setCardHead('主题'), grid]));
-  if (!themes.length) {
-    s.appendChild(setNote('未发现第三方主题，当前使用默认外观。', 'info'));
+  if (!themes.some(t => !t.builtin)) {
+    s.appendChild(setNote('未发现第三方主题，当前只提供内置的深色与浅色两套外观。', 'info'));
   }
 
   // 动画等级

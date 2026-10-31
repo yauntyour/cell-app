@@ -120,14 +120,18 @@ function ensurePane(ws) {
   return pane;
 }
 
-/* 自动跟底（stick）与「回到底部」按钮：
+/* 自动跟底（stick）与「回到底部 / 回到顶部」按钮：
    流式输出时每次渲染都会尝试滚到底部，但只应在用户本来就贴着底部时发生。
    旧实现用 140px 阈值——用户往上滚一小段（<140px）仍被判定为「在底部」，
    下一次流式渲染就把视图拉回去，表现成「输出时无法上下滚动」。这里：
      · 阈值收到 28px，几乎只有真正在底部才算贴着；
      · 滚轮向上时立刻脱离跟底（不等 scroll 事件，避免同一帧被拉回）；
-     · 离开底部且内容可滚动时，在输入卡上方显示「回到底部」悬浮按钮。 */
+     · 离开底部且内容可滚动时，在输入卡上方显示「回到底部」悬浮按钮；
+     · 离开顶部一段距离时，在「回到底部」上面再叠一个「回到顶部」。
+   两个按钮都按卡片的**实测**上界定位，竖直叠放（见 placeJump）。 */
 const CHAT_STICK_PX = 28;
+const CHAT_TOP_PX = 240;      // 距顶超过这么多像素才给「回到顶部」，避免刚滚一点就弹
+const JUMP_STACK_PX = 38;     // 30 高 + 8 间隙：下面那个显示时，上面那个再抬这么高
 function isNearBottom(node) { return node.scrollHeight - node.scrollTop - node.clientHeight < CHAT_STICK_PX; }
 function maxScrollOf(node) { return Math.max(0, node.scrollHeight - node.clientHeight); }
 /* 贴底只走瞬时滚动：平滑滚动的目标高度是「启动那一刻」的 scrollHeight，
@@ -163,6 +167,7 @@ function bindChatScroll(ws) {
   }, { passive: true });
   ensureJumpButton(ws);
 }
+/* 两个按钮一起建：顺序决定叠放（先 bottom，后 top 盖在上面那条基线上） */
 function ensureJumpButton(ws) {
   const t = tab(ws);
   const pane = t._pane;
@@ -185,36 +190,68 @@ function ensureJumpButton(ws) {
     };
     pane.appendChild(btn);
   }
+  let top = pane.querySelector('.jump-top');
+  if (!top) {
+    top = el('button', 'jump-top');
+    top.type = 'button';
+    top.title = '回到顶部（滚到本次会话的第一条）';
+    top.appendChild(iconEl('chevronUp', 'sm'));
+    top.appendChild(el('span', null, '回到顶部'));
+    top.onclick = ev => {
+      ev.stopPropagation();
+      // 先脱离跟底：流式输出期间不回拉，用户是真的想留在上面
+      t._stick = false;
+      const chat = t._chat;
+      if (chat) {
+        try { chat.scrollTo({ top: 0, behavior: 'smooth' }); }
+        catch (e) { chat.scrollTop = 0; }
+        // 平滑滚动期间 scroll 事件会持续把状态刷下去（到顶后按钮自己收起）；
+        // 按钮是绝对定位在 pane 上的，不跟着内容走，所以不需要额外动画补偿
+        paintJump(ws);
+        markChat(ws);
+      }
+    };
+    pane.appendChild(top);
+  }
   paintJump(ws);
   return btn;
 }
 function paintJump(ws) {
   const t = tab(ws);
   if (!t || !t._chat || !t._pane) return;
-  const btn = t._pane.querySelector('.jump-bottom');
-  if (!btn) return;
+  const btnB = t._pane.querySelector('.jump-bottom');
+  const btnT = t._pane.querySelector('.jump-top');
+  if (!btnB && !btnT) return;
   const chat = t._chat;
   const scrollable = chat.scrollHeight > chat.clientHeight + 8;
-  const show = !!scrollable && !t._stick && !chat.classList.contains('hero-mode');
-  btn.classList.toggle('show', show);
-  placeJump(btn, t._pane);
+  const hero = chat.classList.contains('hero-mode');
+  // 底部：离开底部才出现；顶部：距顶超过阈值才出现（两个可以同时在场）
+  const showB = !!scrollable && !t._stick && !hero;
+  const showT = !!scrollable && !hero && (chat.scrollTop || 0) > CHAT_TOP_PX;
+  if (btnB) btnB.classList.toggle('show', showB);
+  if (btnT) btnT.classList.toggle('show', showT);
+  // 叠放：下面那个在场时，上面那个让出一个按钮 + 间隙
+  placeJump(btnB, btnT, t._pane, showB);
 }
 /* 按钮贴在卡片上界之上 16px —— 用**实测**矩形算，不读 --composer-h 推算：
    卡片会被 72vh 上限、Teamwork 模式限高，推算值会和真实上界差出几十像素，
    按钮就飘在消息流中间（2026-10-31 用户报的「按钮随上界拖动改变位置」）。
    bottom 相对 pane 的 padding box，所以要用 pane 自己的矩形换算，
-   不假设 pane 底边一定等于视口底边。 */
+   不假设 pane 底边一定等于视口底边。
+   两个按钮共用一次测量（滚动事件里每帧都调，别为了省事读四次矩形）。 */
 const JUMP_GAP = 16;
-function placeJump(btn, pane) {
+function placeJump(btnB, btnT, pane, bottomShown) {
   const card = $('#composerInner');
-  if (!btn || !pane || !card) return;
+  if (!pane || !card || (!btnB && !btnT)) return;
   const cr = card.getBoundingClientRect();
   if (cr.height < 8) return;
   const pr = pane.getBoundingClientRect();
-  btn.style.bottom = Math.max(8, Math.round(pr.bottom - cr.top + JUMP_GAP)) + 'px';
+  const base = Math.max(8, Math.round(pr.bottom - cr.top + JUMP_GAP));
+  if (btnB) btnB.style.bottom = base + 'px';
+  if (btnT) btnT.style.bottom = (base + (bottomShown ? JUMP_STACK_PX : 0)) + 'px';
 }
 /* 卡片高度/位置变化时（拖手柄、切 Teamwork、窗口缩放、hero 态切换）重新贴一次：
-   ① 「回到底部」按钮贴在卡片上界之上；
+   ① 「回到底部 / 回到顶部」按钮贴在卡片上界之上；
    ② 消息流的底部留白 --composer-pad 也跟着**实测**高度走 —— Teamwork 模式的
       卡片是 64vh、不看 --composer-h，用变量推算会把最后几条消息压在卡片底下，
       看着就像"上界没固定"（2026-10-31 报的问题）。 */
@@ -233,12 +270,8 @@ function syncJumpAnchors() {
         Math.round(cb - cr.top + 28) + 'px');
     }
   }
-  for (const ws of S.tabOrder) {
-    const t = S.tabs.get(ws);
-    if (!t || !t._pane) continue;
-    const btn = t._pane.querySelector('.jump-bottom');
-    if (btn) placeJump(btn, t._pane);
-  }
+  // paintJump 里已经带定位（含叠放），这里不再单独 placeJump
+  for (const ws of S.tabOrder) { try { paintJump(ws); } catch (e) {} }
 }
 // 窗口尺寸变化时重新判断是否显示（内容高度随之变化）
 window.addEventListener('resize', () => {

@@ -1493,8 +1493,9 @@ function slashArgItems(cmdName) {
       for (const sk of (S.skills || [])) add(sk.name, sk.name, sk.description || '');
       break;
     case 'theme':
-      add('default', '', '默认外观（与 /export 导出的会话页同源）');
-      for (const th of Theme.list()) add(th.name, th.name, th.label + (th.desc ? ' · ' + th.desc : ''));
+      add('default', '', '深色（内置默认外观，与 /export 导出的会话页同源）');
+      // 内置深色就是 default，这里只列有名字的（浅色 + 第三方）
+      for (const th of Theme.list()) if (th.name) add(th.name, th.name, th.label + (th.desc ? ' · ' + th.desc : ''));
       break;
     case 'teamwork': {
       const t2 = curTab();
@@ -2169,15 +2170,15 @@ async function execSlash(t, name, arg) {
     case '/stop': return cmd('stop', { ws: t.ws });
     case '/theme': {
       if (!arg) {
-        if (!Theme.list().length) { toast('主题：默认（无第三方主题）', 'ok'); break; }
+        if (Theme.list().length < 2) { toast('主题：深色（内置）', 'ok'); break; }
         Theme.cycle();
         const c = Theme.current();
-        toast('主题：' + (c ? c.label : '默认'), 'ok');
+        toast('主题：' + (c ? c.label : '深色'), 'ok');
         break;
       }
-      if (arg === 'default') { Theme.set(''); toast('主题：默认', 'ok'); break; }
+      if (arg === 'default' || arg === 'dark') { Theme.set(''); toast('主题：深色', 'ok'); break; }
       const th = Theme.list().find(x => x.name === arg);
-      if (!th) { toast('未知主题：' + arg + '（可用：default' + (Theme.list().length ? '、' + Theme.list().map(x => x.name).join('、') : '') + '）', 'bad'); break; }
+      if (!th) { toast('未知主题：' + arg + '（可用：default、' + Theme.list().filter(x => x.name).map(x => x.name).join('、') + '）', 'bad'); break; }
       Theme.set(arg); toast('主题：' + th.label, 'ok');
       break;
     }

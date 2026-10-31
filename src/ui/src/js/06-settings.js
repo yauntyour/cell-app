@@ -740,7 +740,7 @@ function buildPerf(st) {
 
 /* 4.7 外观 */
 function buildAppearance(st) {
-  const s = sec('appearance', '外观', '默认外观为黑白灰深色（与 /export 导出的会话页同一套令牌）；第三方主题放入 exe 目录的 .cell/theme/<名称>/ 后出现在下方。');
+  const s = sec('appearance', '外观', '内置深色（默认）与浅色两套外观，令牌与 /export 导出的会话页同源；第三方主题放入 exe 目录的 .cell/theme/<名称>/ 后出现在下方。');
   const grid = el('div', 'themegrid');
   const paintTheme = (name, label, meta, swatch, on) => {
     const b = el('button', 'themecard' + (on ? ' on' : ''));
@@ -756,17 +756,16 @@ function buildAppearance(st) {
     b.onclick = () => { Theme.set(name); renderSettings(); };
     grid.appendChild(b);
   };
-  paintTheme('', '默认', '与导出的会话页同源 · 黑白灰深色', ['var(--bg)', 'var(--fg)', 'var(--accent)'], !S.theme);
   const themes = Theme.list();
   for (const t of themes) {
-    paintTheme(t.name, t.label || t.name,
+    paintTheme(t.name, t.label || t.name || '深色',
       (t.type === 'light' ? '浅色' : '深色') + (t.desc ? ' · ' + t.desc : ''),
       (t.swatch && t.swatch.length) ? t.swatch.slice(0, 4) : ['var(--bg2)', 'var(--fg2)', 'var(--line2)'],
       S.theme === t.name);
   }
   s.appendChild(card([setCardHead('主题'), grid]));
-  if (!themes.length) {
-    s.appendChild(setNote('未发现第三方主题，当前使用默认外观。', 'info'));
+  if (!themes.some(t => !t.builtin)) {
+    s.appendChild(setNote('未发现第三方主题，当前只提供内置的深色与浅色两套外观。', 'info'));
   }
 
   // 动画等级
