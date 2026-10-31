@@ -10,23 +10,85 @@
 <style>
 /*@css*/
 </style>
+<script>
+/* 启动页开关必须在首次绘制之前定下来：下面 #splash 是静态画出来的，
+   等 state 回来再隐藏会白闪一屏。桌面壳在 URL 上带 splash=0（设置里关掉
+   了启动页）时，这里同步打上 no-splash（样式见 10-splash.css）。
+   内联在 head：外链脚本和页面脚本都晚于首次绘制。
+   浏览器里同样可用：?splash=0 即可跳过启动页。 */
+try {
+  if (/[?&]splash=0(?:&|$)/.test(location.search))
+    document.documentElement.classList.add('no-splash');
+} catch (e) {}
+</script>
 </head>
 <body>
+<!-- ==================== 启动页 ====================
+     先于应用绘制：页面第一帧就是它，窗口打开时不会先闪一屏空白。
+     结构固定，内容由 10-shell.js 按 .cell/cell-app.json 的 splash 段定制：
+       · 默认：内置 logo 描边动画 + 标题 + 副标题 + 进度线
+       · 自定义图片：.cell/splash/<file>（替换 logo）
+       · 自定义整页：.cell/splash/index.html（同源 iframe，铺满整屏）
+     启动完成后淡出并移除。                                       -->
+<div id="splash">
+  <div class="sp-inner" id="splashInner">
+    <div class="sp-logo" id="splashLogo">
+      <svg viewBox="0 0 500 500" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <g fill="none" stroke="currentColor" stroke-width="30" stroke-linejoin="miter" stroke-linecap="square">
+          <rect class="sp-frame" pathLength="100" x="90" y="90" width="320" height="320"/>
+          <path class="sp-path" pathLength="100" d="M 170 170 L 170 330 L 250 330 L 250 170 L 330 170 L 330 410"/>
+        </g>
+      </svg>
+    </div>
+    <img class="sp-image" id="splashImage" alt="" hidden>
+    <div class="sp-title" id="splashTitle">cell</div>
+    <div class="sp-sub" id="splashSub">本地代理工作台</div>
+    <div class="sp-bar" id="splashBar"><i></i></div>
+  </div>
+  <iframe class="sp-page" id="splashFrame" title="自定义启动页" hidden></iframe>
+</div>
+
 <div id="app">
+  <!-- ==================== 标题栏 ====================
+       只有一栏：品牌（工作时动态 logo）/ 侧栏开关 / 页签 / 动作 / 窗口按钮。
+       窗口是无边框的（Windows 上由 src/cell-app.cpp 的 frame 去掉系统标题栏），
+       这一栏同时是拖拽区 —— 空白处按住即可移动窗口。                     -->
+  <header id="titlebar">
+    <div class="brand" id="brandWrap" title="cell">
+      <span class="logo" id="brandLogo"><svg viewBox="0 0 500 500" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="30" stroke-linejoin="miter" stroke-linecap="square"><rect x="90" y="90" width="320" height="320"/><path d="M 170 170 L 170 330 L 250 330 L 250 170 L 330 170 L 330 410"/></g></svg></span>
+      <span class="brand-name">cell</span>
+      <span class="brand-badge">PREVIEW</span>
+    </div>
+    <button class="icon-btn" id="btnSidebarToggle" title="收起侧栏 (Ctrl+B)" aria-label="收起侧栏" aria-pressed="true">
+      <svg class="uico" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/></svg>
+    </button>
+    <div class="tb-sep" aria-hidden="true"></div>
+    <div id="tabbar"></div>
+    <div id="topActions">
+      <button class="icon-btn" id="btnTopSearch" title="搜索会话 (Ctrl+Shift+F)" aria-label="搜索会话">
+        <svg class="uico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20.5 20.5 16.2 16.2"/></svg>
+      </button>
+      <button class="icon-btn" id="btnTopDock" title="打开/收起右侧面板 (Ctrl+Shift+E)" aria-label="右侧面板" aria-pressed="false">
+        <svg class="uico" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M15 3v18"/></svg>
+      </button>
+    </div>
+    <div class="winctl" id="winCtl" hidden>
+      <button class="wc" id="wcMin" title="最小化" aria-label="最小化">
+        <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 6h7"/></svg>
+      </button>
+      <button class="wc" id="wcMax" title="最大化" aria-label="最大化">
+        <svg viewBox="0 0 12 12" aria-hidden="true" class="ico-max"><rect x="2.5" y="2.5" width="7" height="7" rx=".6"/></svg>
+        <svg viewBox="0 0 12 12" aria-hidden="true" class="ico-restore" hidden><rect x="2.2" y="3.6" width="6.2" height="6.2" rx=".6"/><path d="M4.4 3.6V2.4a.6.6 0 0 1 .6-.6h4.6a.6.6 0 0 1 .6.6v4.6a.6.6 0 0 1-.6.6H9.4"/></svg>
+      </button>
+      <button class="wc close" id="wcClose" title="关闭" aria-label="关闭">
+        <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 3l6 6M9 3l-6 6"/></svg>
+      </button>
+    </div>
+  </header>
+
   <div id="shell">
     <!-- ==================== 侧栏 ==================== -->
     <aside id="sidebar">
-      <div class="sb-head">
-        <div class="brand" id="brandWrap" title="cell">
-          <span class="logo" id="brandLogo"><svg viewBox="0 0 500 500" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="30" stroke-linejoin="miter" stroke-linecap="square"><rect x="90" y="90" width="320" height="320"/><path d="M 170 170 L 170 330 L 250 330 L 250 170 L 330 170 L 330 410"/></g></svg></span>
-          <span class="brand-name">cell</span>
-          <span class="brand-badge">PREVIEW</span>
-        </div>
-        <button class="icon-btn" id="btnSidebarToggle" title="收起侧栏 (Ctrl+B)" aria-label="收起侧栏">
-          <svg class="uico" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/></svg>
-        </button>
-      </div>
-
       <button class="btn primary new-chat" id="btnNewSession" title="新建会话 (Ctrl+N)">
         <span class="bico"><svg class="uico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></span>
         <span>新会话</span>
@@ -99,20 +161,6 @@
     <!-- ==================== 主区 ==================== -->
     <div id="main">
       <div id="banner"></div>
-      <header id="topbar">
-        <button class="icon-btn" id="btnSidebarTop" title="收起侧栏 (Ctrl+B)" aria-label="侧栏" aria-pressed="true">
-          <svg class="uico" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/></svg>
-        </button>
-        <div id="tabbar"></div>
-        <div id="topActions">
-          <button class="icon-btn" id="btnTopSearch" title="搜索会话 (Ctrl+Shift+F)" aria-label="搜索会话">
-            <svg class="uico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20.5 20.5 16.2 16.2"/></svg>
-          </button>
-          <button class="icon-btn" id="btnTopDock" title="打开/收起右侧面板 (Ctrl+Shift+E)" aria-label="右侧面板" aria-pressed="false">
-            <svg class="uico" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M15 3v18"/></svg>
-          </button>
-        </div>
-      </header>
 
       <div id="workarea">
         <div id="centre">
@@ -191,6 +239,13 @@
 <div id="windows"></div>
 <div id="toasts"></div>
 <div id="ctxmenu"></div>
+
+<!-- 无边框窗口的四边/四角缩放热区（只在桌面壳里启用，见 10-shell.js）。
+     用元素而不是 JS 算坐标，是为了让 cursor 由 CSS 直接给出。 -->
+<div id="edges" hidden aria-hidden="true">
+  <i data-dir="n"></i><i data-dir="s"></i><i data-dir="w"></i><i data-dir="e"></i>
+  <i data-dir="nw"></i><i data-dir="ne"></i><i data-dir="sw"></i><i data-dir="se"></i>
+</div>
 
 <script>
 /*@js*/

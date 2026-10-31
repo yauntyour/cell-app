@@ -5,13 +5,16 @@
    ===================================================================== */
 
 /* ---- 外壳 ---------------------------------------------------------- */
-#settings .set-shell{display:flex;height:100%;min-height:0;background:var(--bg);color:var(--fg);
+/* 设置页本身是一层厚纱（04-layout.css 的 #settings），里面的两个区不再叠底：
+   否则"纱 + 面板 + 卡片"三层实色会把窗口重新糊死。 */
+#settings .set-shell{display:flex;height:100%;min-height:0;background:transparent;color:var(--fg);
   font-size:14px;letter-spacing:.01em}
 #settings .set-shell *{box-sizing:border-box}
 
 /* ---- 左侧分节导航（220px） ---------------------------------------- */
 #settings .set-side{width:220px;flex:none;display:flex;flex-direction:column;gap:10px;
-  background:var(--panel);border-right:1px solid var(--line);padding:14px 10px 10px;min-height:0}
+  background:rgba(255,255,255,.035);border-right:1px solid var(--glass-hair);
+  padding:14px 10px 10px;min-height:0}
 #settings .set-side-head{display:flex;align-items:center;gap:10px;padding:4px 8px 10px}
 #settings .set-logo{width:32px;height:32px;flex:none;border-radius:9px;background:var(--raise);
   color:var(--fg);display:flex;align-items:center;justify-content:center;
@@ -51,7 +54,8 @@
 #settings .set-main{flex:1;min-width:0;min-height:0;overflow-y:auto;position:relative;
   overscroll-behavior:contain}
 #settings .set-head{position:sticky;top:0;z-index:3;display:flex;align-items:center;gap:14px;
-  padding:16px 30px 13px;background:var(--bg);border-bottom:1px solid var(--line)}
+  padding:16px 30px 13px;background:rgba(16,16,21,.55);border-bottom:1px solid var(--glass-hair);
+  -webkit-backdrop-filter:blur(18px);backdrop-filter:blur(18px)}
 #settings .set-head-main{min-width:0;display:flex;flex-direction:column;gap:2px}
 #settings .set-head-title{margin:0;font-size:17px;font-weight:650;letter-spacing:-.01em;color:var(--fg)}
 #settings .set-head-desc{margin:0;font-size:11.5px;line-height:1.55;color:var(--fg3);
@@ -248,6 +252,17 @@
 #settings .range-tick{font-family:var(--mono);font-size:10px;color:var(--fg4);letter-spacing:.03em;
   transition:color var(--dur) var(--ease)}
 #settings .range-tick.on{color:var(--accent);font-weight:700}
+
+/* ---- 启动页 -------------------------------------------------------- */
+#settings .set-color{width:46px;height:30px;padding:2px;border-radius:8px;cursor:pointer;
+  background:var(--bg3);border:1px solid var(--line2)}
+#settings .set-color::-webkit-color-swatch-wrapper{padding:0}
+#settings .set-color::-webkit-color-swatch{border:none;border-radius:6px}
+#settings .splash-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+#settings .splash-file{font-family:var(--mono);font-size:11.5px;color:var(--fg3);min-width:0;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#settings .splash-thumb{width:30px;height:30px;border-radius:7px;object-fit:cover;
+  border:1px solid var(--line2);background:var(--bg3);flex:none}
 
 /* ---- 沙箱 ---------------------------------------------------------- */
 #settings .sandbox-opt{display:inline-flex;align-items:center;justify-content:center}

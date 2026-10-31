@@ -224,6 +224,8 @@ if(WIN32)   # MSYS2 UCRT64 — WebView2 window
     # CertOpenSystemStore/CryptBinaryCertificateToStr. Without it a statically
     # linked libcurl trusts nothing (its baked-in CA path is a POSIX path) and
     # every HTTPS request fails with curl 60 "Problem with the SSL CA cert".
+    # dwmapi: DwmSetWindowAttribute — the borderless window's rounded corners
+    # and dark frame (see app::frame).
     # uuid: CLSID_FileOpenDialog / IID_IFileOpenDialog (host_pick_folder's
     # native folder picker) live in libuuid. The rest are Win32/BCrypt/socket
     # imports across cell.cpp, webview.h and libsodium.
@@ -231,7 +233,7 @@ if(WIN32)   # MSYS2 UCRT64 — WebView2 window
         ${_cell_curl_libs}
         sodium
         ole32 shell32 shlwapi uuid user32 version advapi32
-        gdi32 ws2_32 mswsock bcrypt crypt32)
+        gdi32 ws2_32 mswsock bcrypt crypt32 dwmapi)
 
     # windowed subsystem (-mwindows) by default; -DCELL_CONSOLE=ON keeps the console
     if(CELL_CONSOLE)

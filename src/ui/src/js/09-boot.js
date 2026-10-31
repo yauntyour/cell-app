@@ -14,7 +14,7 @@ function wireEvents() {
   $('#btnTerminal').onclick = () => openDock('terminal');
   $('#btnWsFilter').onclick = () => toggleSidebarFilter();
   $('#btnSidebarToggle').onclick = () => toggleSidebar();
-  $('#btnSidebarTop').onclick = () => toggleSidebar();
+  if ($('#btnSidebarTop')) $('#btnSidebarTop').onclick = () => toggleSidebar();
   $('#navBack').onclick = () => Nav.back();
   $('#navFwd').onclick = () => Nav.fwd();
   $('#navRefresh').onclick = () => Nav.refresh();
@@ -166,6 +166,9 @@ function enterDemo(reason) {
 
 async function boot() {
   Theme.init();
+  // 启动页：HTML 里已经先于应用画出来了，这里只是接上生命周期
+  if (typeof Splash !== 'undefined') Splash.init();
+  if (typeof wireShell === 'function') wireShell(); // 无边框窗口的按钮/拖拽/缩放
   S.closedTabs = loadClosedTabs();
   S.groupsClosed = loadGroupState();
   restoreSidebarState();
@@ -181,19 +184,34 @@ async function boot() {
     else if (qd && { start: 1, files: 2, git: 3, terminal: 4, teamwork: 5, notices: 6, archives: 7 }[qd]) openDock(qd);
     if (q.get('settings') === '1') openSettings(q.get('section') || undefined);
   } catch (e) {}
-  if (MOCK) { enterDemo('file:// 或 ?mock=1'); return; }
+  if (MOCK) {
+    enterDemo('file:// 或 ?mock=1');
+    if (typeof Splash !== 'undefined') Splash.finish();
+    return;
+  }
   renderPanes(); renderTabbar(); renderSidebar(); renderFoot(); renderStatLine(); renderDock();
   try {
     const st = await api('state', {});
     if (!st || st.ok === false) throw new Error(st && st.error ? st.error : '状态请求失败');
     S.everConnected = true; S.connected = true;
     applyHello(st, true);
+    applySplashPrefs();
     Transport.init();
     fetchSkills(); // /skill 的参数补全：后台拉一次，失败就退回空列表（不挡启动）
     refreshUsages(false); // 侧栏「用量」chip 的后台取数（失败就保持「—」）
   } catch (e) {
     enterDemo('无法连接后端：' + (e && e.message ? e.message : e));
   }
+  if (typeof Splash !== 'undefined') Splash.finish(); // 启动完成，淡出启动页
+}
+
+/* 启动页配置来自 .cell/cell-app.json（state.prefs.splash）：默认什么都不写
+   就是内置动画。演示模式（无后端）没有 prefs，走默认。 */
+function applySplashPrefs() {
+  if (typeof Splash === 'undefined') return;
+  const sp = (S.prefs || {}).splash;
+  if (sp) Splash.apply(sp);
+  else Splash.finish();
 }
 
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);

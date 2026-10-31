@@ -4,6 +4,16 @@
    #toasts、#ctxmenu 盒子）由 04-layout.css 提供；这里定义卡片本身。
    ===================================================================== */
 
+/* ---- 7b.0 浮层的共同材质 -------------------------------------------
+   窗口透明以后，浮层底下是页面自己的内容（会话、侧栏），不是实色背景：
+   只给 --panel2 的 alpha 会看到背后文字的硬边，"浮起来"的那层厚度就没了。
+   所有浮在内容之上的小面板在这里统一补一层磨砂，各自只负责底色和阴影。 */
+.toast,.modalbox,.searchbox-lg,.hmenu,.tabmenu,.thkmenu,.cmp-menu,.wwin,.usage-pop,
+.slash-panel,#slashPanel{
+  -webkit-backdrop-filter:var(--glass-float-blur);
+  backdrop-filter:var(--glass-float-blur);
+}
+
 /* ---- Toast：右下堆叠 + 左侧 2px 语义色条 ---------------------------- */
 #toasts{position:fixed;right:16px;bottom:16px;z-index:200;display:flex;flex-direction:column;
   align-items:flex-end;gap:8px;pointer-events:none;max-width:min(380px,86vw)}

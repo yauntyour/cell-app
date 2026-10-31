@@ -13,21 +13,19 @@
    ===================================================================== */
 
 /* ---------- 5b.1 卡片本体（液态玻璃 · 复刻 shuding/liquid-glass） ----- */
-/* 材质分三层，全部在 Chromium/WebView2 上**真实生效**：
-     ① 折射   backdrop-filter: url(#cmp-lens) —— SVG feImage(位移贴图) +
-              feDisplacementMap 作用在真实背景上：贴边一圈把背后的内容沿内
-              法线压向中心，文字在边缘被弯折、出现重影，中间保持原样。
-              管线与参考实现一致（见 05-composer.js 的 I1b）。
-              后面再跟 blur()/contrast()/brightness()/saturate()，也是参考的做法。
-     ② 厚度   只有内顶镜面 + 沿边柔光 + 底部内阴影，**不画描边**：没有 border、
-              没有内环、没有外暗线，也没有跟着圆角走的 conic 亮边（2026-10-31
-              用户要求「去掉输入栏液态玻璃的所有边框」）。边界只由 ① 的折射带
-              和顶部反光交代 —— 玻璃靠折射成形，不靠画线。
+/* 材质分三层：
+     ① 折射+磨砂  backdrop-filter: url(#cmp-lens) —— 一条 SVG 滤镜里做两件事：
+              feGaussianBlur 把背景磨掉，feDisplacementMap（feImage 装的圆角
+              SDF 位移图）再贴边把背景沿内法线弯折。磨砂强度由「输入卡材质」
+              滑块写进滤镜的 stdDeviation，折射带宽度固定为短边的 8%。
+     ② 厚度   只有内顶镜面 + 沿边柔光 + 底部内阴影，**不画描边**。
      ③ 面     极淡的「白 → 透明 → 黑」竖向渐变 + 参考实现那条
               `inset 0 -10px 25px rgba(0,0,0,.15)` 的底部内阴影。
    ⚠️ 引用 url(#cmp-lens) 的那条声明单独挂在 .glass-lens 上：滤镜元素是 JS
    建的，在它存在之前引用一个不存在的 filter 会让整条 backdrop-filter 失效
    （首帧直接变透明）。所以基类是纯 blur，JS 建好滤镜再加类。
+   ⚠️ url() 在 backdrop-filter 里会吞掉同一行的其它函数（blur/contrast/…），
+   所以那些效果只能写进滤镜，见 05-composer.js 的 I1b。
    尺寸：**高度固定** = 拖拽设定的 --composer-h（Layout 已把它夹在 72vh 内，
    与 max-height 同一个数）。上界不随内容/附件移动，输入超出在编辑区内部
    滚动；「回到底部」按钮按卡片**实测**上界定位（见 02-render2-chat.js）。 */
@@ -45,12 +43,14 @@
   overflow:hidden;
   isolation:isolate;
   border:0;
-  /* ③ 面：顶部受光、底部略沉，全是白/黑透明度，没有彩色 */
+  /* ③ 面：顶部受光、底部略沉，全是白/黑透明度，没有彩色。
+     窗口透明以后，卡片的背景可能是明亮的壁纸，纯白叠白会让整块玻璃"化掉"：
+     中间一段压一点黑，卡片才在任何底子上都读得出来是一块玻璃。 */
   background:linear-gradient(180deg,
-    rgba(255,255,255,.055) 0%,
-    rgba(255,255,255,.022) 14%,
-    rgba(255,255,255,.014) 44%,
-    rgba(0,0,0,.055) 100%);
+    rgba(255,255,255,.07) 0%,
+    rgba(255,255,255,.015) 10%,
+    rgba(8,8,12,.22) 30%,
+    rgba(0,0,0,.28) 100%);
   /* ① 降级路径（滤镜还没建好 / 老引擎）：纯磨砂 */
   -webkit-backdrop-filter:blur(var(--cmp-glass-blur,3px)) saturate(1.1);
   backdrop-filter:blur(var(--cmp-glass-blur,3px)) saturate(1.1);
@@ -66,12 +66,13 @@
     0 2px 10px -4px rgba(0,0,0,.55),
     0 20px 48px -28px rgba(0,0,0,.90);
 }
-/* ① 折射：与参考实现同一条滤镜链（url() 在最前，其余是参考里的那串） */
+/* ① 折射：整条链都在 SVG 滤镜里（磨砂 = feGaussianBlur、折射 = feDisplacementMap）。
+   ⚠️ 这里**不能**再写 blur()/contrast()/saturate()：backdrop-filter 里出现
+   url() 时，同一行后面的函数会被 Chromium 整段丢掉 —— 那正是"背景锐利透出、
+   文字和占位符糊在一起"的成因（2026-10-31）。磨砂强度改由 JS 写进滤镜。 */
 #composerInner.glass-lens{
-  -webkit-backdrop-filter:url(#cmp-lens) blur(var(--cmp-glass-blur,3px))
-                          contrast(1.2) brightness(1.05) saturate(1.1);
-  backdrop-filter:url(#cmp-lens) blur(var(--cmp-glass-blur,3px))
-                  contrast(1.2) brightness(1.05) saturate(1.1);
+  -webkit-backdrop-filter:url(#cmp-lens);
+  backdrop-filter:url(#cmp-lens);
 }
 /* ② 描边：**没有**。原来的 conic 渐变环（mask 掏空只留 1.25px 亮边）与
    内环/外暗线在 2026-10-31 一并删掉——用户要的是"没有边框"的玻璃：边缘由

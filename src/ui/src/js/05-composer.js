@@ -247,12 +247,15 @@ function buildComposerDom() {
 }
 
 /* ---------- I1b. 液态玻璃：SVG 折射（复刻 shuding/liquid-glass）--------
-   管线与参考实现（github.com/shuding/liquid-glass，MIT）完全一致：
+   管线与参考实现（github.com/shuding/liquid-glass，MIT）一致：
      ① 逐像素算「采样点偏移」贴图：圆角矩形 SDF → 离边越近把采样点沿内法线
         推得越多（= 边缘放大/压缩），编成 R/G 位移图（0.5 = 不动）；
-     ② <filter> 里 feImage 装贴图 + feDisplacementMap，经
-        backdrop-filter:url(#cmp-lens) 作用在**真实背景**上；
-     ③ 滤镜链后面再跟 blur()/contrast()/brightness()/saturate()，与参考一致。
+     ② <filter> 里 feImage 装贴图 → feGaussianBlur 磨砂 → feDisplacementMap
+        折射，经 backdrop-filter:url(#cmp-lens) 作用在**真实背景**上；
+     ③ 滤镜链里**只有** url()：backdrop-filter 里 url() 会吞掉同一行后面的
+        blur()/contrast()/saturate()（Chromium 实测），磨砂和调色必须写进
+        同一条 SVG 滤镜，否则背景是"锐利透出 + 边缘折影"——2026-10-31 用户
+        报的错乱就是这个（背景文字和占位符叠在一起、边缘发彩）。
    ⚠️ 关键（第一版死在这里）：<filter> 必须 filterUnits="userSpaceOnUse" 并给出
    **像素**的 x/y/width/height。用默认的 objectBoundingBox + width="100%" 时
    Chromium 会把整条滤镜吞掉 —— 既不模糊也不折射，背后文字原样透上来，
@@ -260,9 +263,10 @@ function buildComposerDom() {
    贴图尺寸/圆角一变（拖手柄、Teamwork、窗口缩放）就重画，见 syncLens()。 */
 const LENS = {
   w: 0, h: 0, r: 0,          // 上次画贴图时的尺寸（同尺寸不重画）
-  band: 0.12,                // 折射带宽度 = 短边 × 这个比例（夹在 [10,24]px）
-  strength: 0.90,            // 贴边位移 = 带宽 × 这个比例（≈短边的 11%，对齐参考观感）
-  filter: null, map: null, disp: null, host: null, raf: 0,
+  band: 0.08,                // 折射带宽度 = 短边 × 这个比例（夹在 [8,16]px）
+  strength: 0.55,            // 贴边位移 = 带宽 × 这个比例（太大就会把背后的
+                             // 文字折出重影，2026-10-31 实测 0.9 太多）
+  filter: null, map: null, disp: null, blur: null, host: null, raf: 0,
 };
 
 function lensSVG() {
@@ -279,17 +283,22 @@ function lensSVG() {
   const img = document.createElementNS(NS, 'feImage');
   img.setAttribute('result', 'map');
   img.setAttribute('preserveAspectRatio', 'none');
+  const blur = document.createElementNS(NS, 'feGaussianBlur');
+  blur.setAttribute('in', 'SourceGraphic');
+  blur.setAttribute('result', 'soft');
+  blur.setAttribute('stdDeviation', '0');
   const disp = document.createElementNS(NS, 'feDisplacementMap');
-  disp.setAttribute('in', 'SourceGraphic');
+  disp.setAttribute('in', 'soft');
   disp.setAttribute('in2', 'map');
   disp.setAttribute('xChannelSelector', 'R');
   disp.setAttribute('yChannelSelector', 'G');
   disp.setAttribute('scale', '0');
   f.appendChild(img);
+  f.appendChild(blur);
   f.appendChild(disp);
   svg.appendChild(f);
   document.body.appendChild(svg);
-  LENS.filter = f; LENS.map = img; LENS.disp = disp;
+  LENS.filter = f; LENS.map = img; LENS.blur = blur; LENS.disp = disp;
   return f;
 }
 
@@ -306,7 +315,7 @@ function paintLens(w, h, radius) {
   if (LENS.w === cw && LENS.h === ch && LENS.r === radius) return;
   LENS.w = cw; LENS.h = ch; LENS.r = radius;
 
-  const band = Math.min(24, Math.max(10, Math.min(cw, ch) * LENS.band));
+  const band = Math.min(16, Math.max(8, Math.min(cw, ch) * LENS.band));
   // 位移场极平滑，大卡片按 1/2 分辨率算（贴图由 feImage 拉伸回原尺寸）：
   // 678×600 的重绘从 ~18ms 降到 ~4ms，拖手柄时不会掉帧。
   const step = Math.min(cw, ch) > 240 ? 2 : 1;
@@ -363,6 +372,8 @@ function syncLens() {
   f.setAttribute('width', String(w)); f.setAttribute('height', String(h));
   LENS.map.setAttribute('width', String(w));
   LENS.map.setAttribute('height', String(h));
+  // 磨砂写在这条滤镜里（url() 会吞掉同一行 backdrop-filter 的 blur()）
+  LENS.blur.setAttribute('stdDeviation', GLASS.blur.toFixed(2));
   paintLens(w, h, radius);
 }
 function scheduleLens() {
@@ -409,6 +420,8 @@ function applyGlassPref(t, silent) {
   const px = glassBlur(GLASS.t);
   GLASS.blur = px;
   document.documentElement.style.setProperty('--cmp-glass-blur', px.toFixed(2) + 'px');
+  // 卡片的磨砂在 SVG 滤镜里（url() 吞掉同行的 blur()），这里同步过去
+  if (LENS.blur) LENS.blur.setAttribute('stdDeviation', px.toFixed(2));
 }
 function setGlassPref(t) {
   applyGlassPref(t, false);
@@ -416,6 +429,31 @@ function setGlassPref(t) {
 }
 window.setGlassTransparency = pct => setGlassPref((Number(pct) || 0) / 100);
 loadGlassPref();
+
+/* ---------- 窗口背景透明度 ------------------------------------------------
+   整窗透明以后，"玻璃"和"能不能看清字"是一对矛盾：壁纸越清楚，正文越糊。
+   这里只给一个旋钮（设置 → 外观 → 窗口背景）：0 = 完全不透明（页面最底下压
+   一层实色画布），100 = 只剩磨砂玻璃。实现就是 --glass-solid 一个变量，
+   见 01-base.css 的 body::before；不动任何面板的 alpha。 */
+const WINGLASS = { t: 1 };            // 0..1 透明度（1 = 全透明）
+const WINGLASS_PREF_KEY = 'cell.win.glass';
+
+function applyWindowOpacity(t, silent) {
+  if (t != null) WINGLASS.t = Math.min(1, Math.max(0, Number(t) || 0));
+  document.documentElement.style.setProperty('--glass-solid', (1 - WINGLASS.t).toFixed(3));
+  if (!silent)
+    try { localStorage.setItem(WINGLASS_PREF_KEY, JSON.stringify({ t: Number(WINGLASS.t.toFixed(3)) })); } catch (e) {}
+}
+function loadWindowOpacity() {
+  let t = WINGLASS.t;
+  try {
+    const v = Number((JSON.parse(localStorage.getItem(WINGLASS_PREF_KEY) || '{}') || {}).t);
+    if (isFinite(v)) t = v;
+  } catch (e) {}
+  applyWindowOpacity(t, true);
+}
+window.setWindowTransparency = pct => applyWindowOpacity((Number(pct) || 0) / 100);
+loadWindowOpacity();
 
 /* ---------- I2. 事件绑定 ------------------------------------------- */
 function bindComposer() {

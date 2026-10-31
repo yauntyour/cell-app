@@ -48,6 +48,16 @@ namespace app
         {
             bool tray = true;         // WM_CLOSE parks the window in the notification area
             bool update_check = true; // ask GitHub for a newer release at startup
+            // ---- 启动页（splash）-----------------------------------------
+            // 页面加载时整窗覆盖的一屏：默认是内置的动态 logo 动画；下面几
+            // 项让用户把它换成自己的标题/背景/图片，或者整页 HTML。
+            bool splash = true;             // 显示启动页
+            int splash_ms = 1400;           // 最短展示时长（毫秒）
+            std::string splash_title;       // 标题（空 = "cell"）
+            std::string splash_sub;         // 副标题（空 = 内置文案）
+            std::string splash_bg;          // 背景色 #rrggbb（空 = 跟随主题）
+            std::string splash_image;       // .cell/splash/ 下的图片文件名（空 = 内置动画）
+            std::string splash_anim = "draw"; // draw | pulse | none
         };
 #ifdef _WIN32
         constexpr bool kTray = true; // this shell has a notification-area icon
@@ -55,6 +65,44 @@ namespace app
         constexpr bool kTray = false;
 #endif
         inline std::filesystem::path path() { return cell::root / "cell-app.json"; }
+        // 自定义启动页资源目录：图片放这里，整页 HTML 放 index.html
+        inline std::filesystem::path splash_dir() { return cell::root / "splash"; }
+        inline bool splash_page_exists()
+        {
+            std::error_code ec;
+            return std::filesystem::is_regular_file(splash_dir() / "index.html", ec);
+        }
+        // 只接受纯文件名：启动页图片由 HTTP 路由按名字取，路径分隔符会
+        // 变成穿越入口（../ 之类）。非法输入一律当作"没有自定义图片"。
+        inline bool plain_name_ok(const std::string &s)
+        {
+            if (s.empty() || s.size() > 96)
+                return false;
+            for (char c : s)
+                if (c == '/' || c == '\\' || c == ':' || (unsigned char)c < 0x20 || c == 0x7f)
+                    return false;
+            return s != "." && s != "..";
+        }
+        // #rrggbb / #rgb → 保留，其他一律丢弃（它会写进 CSS 变量）
+        inline std::string clean_color(std::string s)
+        {
+            if (s.empty())
+                return s;
+            if (s[0] != '#')
+                return {};
+            if (s.size() != 4 && s.size() != 7)
+                return {};
+            for (size_t i = 1; i < s.size(); i++)
+                if (!std::isxdigit((unsigned char)s[i]))
+                    return {};
+            return s;
+        }
+        inline std::string clean_text(std::string s, size_t max_len)
+        {
+            if (s.size() > max_len)
+                s.resize(max_len);
+            return s;
+        }
 
         inline shell load()
         {
@@ -67,14 +115,44 @@ namespace app
                 return p;
             p.tray = j.value("tray", p.tray);
             p.update_check = j.value("update_check", p.update_check);
+            p.splash = j.value("splash", p.splash);
+            p.splash_ms = j.value("splash_ms", p.splash_ms);
+            p.splash_title = j.value("splash_title", p.splash_title);
+            p.splash_sub = j.value("splash_sub", p.splash_sub);
+            p.splash_bg = j.value("splash_bg", p.splash_bg);
+            p.splash_image = j.value("splash_image", p.splash_image);
+            p.splash_anim = j.value("splash_anim", p.splash_anim);
+            // 手改过的配置文件同样要过一遍校验
+            p.splash_ms = std::clamp(p.splash_ms, 0, 10000);
+            p.splash_bg = clean_color(p.splash_bg);
+            if (!plain_name_ok(p.splash_image))
+                p.splash_image.clear();
+            if (p.splash_anim != "draw" && p.splash_anim != "pulse" && p.splash_anim != "none")
+                p.splash_anim = "draw";
             return p;
         }
         inline bool save(const shell &p)
         {
             std::error_code ec;
             std::filesystem::create_directories(cell::root, ec);
-            nlohmann::json j{{"tray", p.tray}, {"update_check", p.update_check}};
+            nlohmann::json j{{"tray", p.tray}, {"update_check", p.update_check},
+                             {"splash", p.splash}, {"splash_ms", p.splash_ms},
+                             {"splash_title", p.splash_title}, {"splash_sub", p.splash_sub},
+                             {"splash_bg", p.splash_bg}, {"splash_image", p.splash_image},
+                             {"splash_anim", p.splash_anim}};
             return cell::plat::write_file_atomic(path(), j.dump(2) + "\n");
+        }
+        // the splash block the page reads at boot (state.prefs.splash)
+        inline nlohmann::json splash_json(const shell &p)
+        {
+            return {{"on", p.splash},
+                    {"ms", p.splash_ms},
+                    {"title", p.splash_title},
+                    {"sub", p.splash_sub},
+                    {"bg", p.splash_bg},
+                    {"image", p.splash_image},
+                    {"anim", p.splash_anim},
+                    {"page", splash_page_exists()}};
         }
     } // namespace prefs
 
@@ -1082,7 +1160,8 @@ namespace app
         {
             return {{"tray", prefs.tray},
                     {"update_check", prefs.update_check},
-                    {"tray_supported", prefs::kTray}};
+                    {"tray_supported", prefs::kTray},
+                    {"splash", prefs::splash_json(prefs)}};
         }
         nlohmann::json settings_json() const
         {
@@ -2287,6 +2366,31 @@ namespace app
                         next.tray = patch["tray"].get<bool>();
                     if (patch.contains("update_check"))
                         next.update_check = patch["update_check"].get<bool>();
+                    // 启动页：patch.splash 是一个对象，只覆盖给出的键
+                    if (patch.contains("splash") && patch["splash"].is_object())
+                    {
+                        const auto &sp = patch["splash"];
+                        if (sp.contains("on"))
+                            next.splash = sp["on"].get<bool>();
+                        if (sp.contains("ms"))
+                            next.splash_ms = std::clamp(sp["ms"].get<int>(), 0, 10000);
+                        if (sp.contains("title"))
+                            next.splash_title = prefs::clean_text(sp["title"].get<std::string>(), 40);
+                        if (sp.contains("sub"))
+                            next.splash_sub = prefs::clean_text(sp["sub"].get<std::string>(), 80);
+                        if (sp.contains("bg"))
+                            next.splash_bg = prefs::clean_color(sp["bg"].get<std::string>());
+                        if (sp.contains("image"))
+                        {
+                            std::string img = sp["image"].get<std::string>();
+                            next.splash_image = prefs::plain_name_ok(img) ? img : std::string{};
+                        }
+                        if (sp.contains("anim"))
+                        {
+                            std::string a = sp["anim"].get<std::string>();
+                            next.splash_anim = (a == "pulse" || a == "none") ? a : "draw";
+                        }
+                    }
                     if (!prefs::save(next))
                         return ok_error("could not write cell-app.json");
                     const bool tray_changed = next.tray != prefs.tray;

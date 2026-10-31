@@ -31,19 +31,22 @@
   color-scheme:dark;
 
   /* ---- 表面（由暗到亮） ------------------------------------------- */
-  --bg:#111113;            /* 画布 */
-  --bg2:#17171a;           /* 次级表面（表单元 / 代码外框） */
-  --bg3:#1c1c1f;           /* 代码块 / 输入底 */
-  --panel:#1b1b1d;         /* 侧栏 / 右栏 */
-  --panel2:#202023;        /* 浮层 / 弹出菜单 */
-  --raise:#26262a;         /* hover */
-  --raise2:#2e2e33;        /* 选中 / 按下 */
-  --elev-1:#232324;        /* 卡片 */
-  --elev-2:#2a2a2d;        /* 悬浮输入卡 */
+  /* 窗口是透明的（DWM 背衬在后面），所以"表面"不再是实色，而是叠在背衬上的
+     一层层白/黑 alpha：越靠上越亮一点，读到的是同一块玻璃的不同厚度。
+     唯一的实色是 --bg —— 留给终端、启动页这类必须挡住身后的整屏内容。 */
+  --bg:#111113;            /* 实色画布（终端 / 启动页 / 兜底） */
+  --bg2:rgba(255,255,255,.045);   /* 次级表面（表单元 / 代码外框） */
+  --bg3:rgba(255,255,255,.07);    /* 代码块 / 输入底 */
+  --panel:rgba(19,19,24,.48);     /* 侧栏 / 右栏 */
+  --panel2:rgba(34,34,40,.82);    /* 浮层 / 弹出菜单（要压住下面的内容） */
+  --raise:rgba(255,255,255,.07);  /* hover */
+  --raise2:rgba(255,255,255,.12); /* 选中 / 按下 */
+  --elev-1:rgba(255,255,255,.05); /* 卡片 */
+  --elev-2:rgba(255,255,255,.085);/* 悬浮输入卡 */
 
   /* ---- 描边 ------------------------------------------------------- */
-  --line:#26262a;
-  --line2:#36363b;
+  --line:rgba(255,255,255,.08);
+  --line2:rgba(255,255,255,.15);
 
   /* ---- 文本 ------------------------------------------------------- */
   --fg:#f2f3f5;
@@ -78,6 +81,23 @@
   --glass-drop:0 1px 2px rgba(0,0,0,.26);           /* 离面一点点 */
   --glass-blur:blur(10px) saturate(1.12);           /* 磨砂（控件层） */
 
+  /* ---- 液态玻璃（窗口级）------------------------------------------ */
+  /* 窗口本身是透明的（DWM 丙烯酸背衬），页面只允许用 alpha 叠在背衬上：
+     scrim 是整窗那一层纱，panel 是贴边的大面板（标题栏 / 侧栏），
+     dock 是右侧面板，float 是浮在内容之上的菜单/弹窗（要更实才读得清）。 */
+  --glass-scrim:linear-gradient(180deg,
+    rgba(9,9,12,.34) 0%,
+    rgba(9,9,12,.22) 26%,
+    rgba(9,9,12,.24) 72%,
+    rgba(6,6,9,.38) 100%);
+  --glass-panel:rgba(12,12,17,.30);
+  --glass-dock:rgba(10,10,14,.14);
+  --glass-float:var(--panel2);
+  --glass-hair:rgba(255,255,255,.055);              /* 面板之间的那道极淡分隔 */
+  --glass-edge:rgba(255,255,255,.10);               /* 面板外缘的受光 */
+  --glass-veil:rgba(7,7,10,.55);                    /* 遮罩（设置页 / 弹窗） */
+  --glass-float-blur:blur(28px) saturate(1.25);
+
   /* ---- 形状 / 字体 / 动效 ----------------------------------------- */
   --radius:14px; --radius-s:9px; --radius-xs:6px;
   --radius-lg:20px; --radius-xl:24px; --radius-full:999px;
@@ -95,13 +115,14 @@
   --stream-pad:24px; --stream-gap:26px;
   --sidebar-w:316px;
   --dock-w:384px;
-  --topbar-h:44px;
+  --titlebar-h:46px;       /* 唯一一栏：品牌 / 侧栏开关 / 页签 / 窗口按钮 */
+  --topbar-h:var(--titlebar-h); /* 兼容旧引用 */
   --composer-h:156px;      /* 实际值由 03-layout.js 写 inline */
 
   /* ---- 兼容别名（导出页 / 旧 CSS / 主题） -------------------------- */
-  --bg-soft:#17171a;
-  --line-soft:#202023;
-  --code-bg:#1a1a1d;
+  --bg-soft:rgba(255,255,255,.04);
+  --line-soft:rgba(255,255,255,.06);
+  --code-bg:rgba(6,6,9,.38);
   --fg-dim:var(--fg2);
   --fg-faint:var(--fg3);
   --user:#c3c5cb;
@@ -116,9 +137,16 @@
 /* ---- §1 基础 ------------------------------------------------------ */
 *{box-sizing:border-box}
 html,body{height:100%;margin:0}
-html{background:var(--bg)}
+/* 窗口是透明的：底色由 #app 的 --glass-scrim 统一给，页面本身不能有不透明底，
+   否则 DWM 的背衬（磨砂后的桌面）会被这张底盖住。 */
+html,body{background:transparent}
+/* 背景透明度（设置 → 外观 → 窗口背景）：这层实色画布压在页面最底下，
+   --glass-solid = 1 - 透明度。0 = 完全没有这层（纯玻璃，壁纸最清楚），
+   1 = 完全不透明（和改造前的实色窗口一样）。 */
+body::before{content:"";position:fixed;inset:0;z-index:-1;background:var(--bg);
+  opacity:var(--glass-solid,0);pointer-events:none}
 body{
-  background:var(--bg); color:var(--fg); font-family:var(--sans);
+  color:var(--fg); font-family:var(--sans);
   font-size:14px; line-height:1.6; overflow:hidden;
   -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale;
   text-rendering:optimizeLegibility;
@@ -257,16 +285,25 @@ select{appearance:none;background-image:url("data:image/svg+xml;charset=utf-8,%3
 
 /* ---- §3 分子 Molecules -------------------------------------------- */
 /* 3.1 侧栏 ---------------------------------------------------------- */
-#sidebar{padding:10px 10px 8px}
-.sb-head{display:flex;align-items:center;gap:8px;padding:2px 4px 12px}
-.brand{display:flex;align-items:center;gap:8px;min-width:0;flex:1;cursor:default}
-.brand .logo{width:22px;height:22px;flex:none;color:var(--fg)}
+#sidebar{padding:12px 10px 8px}
+/* 品牌标识住在标题栏里（不是侧栏顶部）：一条栏里同时是 logo、窗口按钮和
+   页签，所以这里只负责它自己的排布，flex 由 #titlebar 决定。 */
+.brand{display:flex;align-items:center;gap:8px;min-width:0;cursor:default}
+.brand .logo{width:22px;height:22px;flex:none;color:var(--fg);position:relative}
 .brand .logo svg{width:100%;height:100%}
-.brand-name{font-size:17px;font-weight:650;letter-spacing:-.02em;line-height:1}
-.brand-badge{font-family:var(--mono);font-size:9px;font-weight:700;letter-spacing:.1em;
-  padding:2px 5px;border-radius:5px;color:var(--fg3);background:var(--raise);
-  border:1px solid var(--line2);line-height:1.2}
+.brand-name{font-size:16px;font-weight:650;letter-spacing:-.02em;line-height:1}
+/* 徽章和 16px 的文字、20px 的 logo 同高（14px），只靠淡底色 + 1px 内描边
+   区分，不占布局 —— 加外边框会把它抬成一个按钮，在这一行里比品牌名还抢眼。 */
+.brand-badge{display:inline-flex;align-items:center;height:14px;padding:0 5px;
+  font-family:var(--mono);font-size:8.5px;font-weight:700;letter-spacing:.09em;line-height:1;
+  border-radius:4px;color:var(--fg3);background:var(--raise);
+  box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--fg) 7%,transparent)}
 .brand.busy .logo{animation:breathe 1.6s var(--ease) infinite}
+/* 工作时：logo 外面套一圈转动的弧，比单纯缩放更能说明「正在跑」 */
+.brand.working .logo::after{content:"";position:absolute;inset:-5px;border-radius:50%;
+  border:1.5px solid transparent;border-top-color:var(--accent);
+  border-right-color:color-mix(in srgb,var(--accent) 45%,transparent);
+  animation:spin 1.05s linear infinite;pointer-events:none}
 .logo .ava{width:100%;height:100%}
 .ava-frame{opacity:.9}
 .ava-path{stroke-dasharray:100;animation:avaDraw 1.1s var(--ease) infinite}
@@ -327,7 +364,7 @@ select{appearance:none;background-image:url("data:image/svg+xml;charset=utf-8,%3
 .sb-filterbox{padding:4px 2px 6px;flex:none}
 .sb-filter{height:30px!important;font-size:12.5px;background:var(--bg3);border-color:var(--line2)}
 /* 3.2 标签栏 -------------------------------------------------------- */
-.tab{display:flex;align-items:center;gap:7px;height:30px;padding:0 8px 0 10px;border-radius:9px;
+.tab{display:flex;align-items:center;gap:7px;height:32px;padding:0 8px 0 10px;border-radius:9px;
   color:var(--fg2);font-size:13px;cursor:pointer;flex:none;max-width:220px;border:1px solid transparent;
   transition:background var(--dur) var(--ease),color var(--dur) var(--ease),border-color var(--dur) var(--ease)}
 .tab:hover{background:var(--raise);color:var(--fg)}
@@ -340,10 +377,10 @@ select{appearance:none;background-image:url("data:image/svg+xml;charset=utf-8,%3
   transition:opacity var(--dur) var(--ease),background var(--dur) var(--ease),color var(--dur) var(--ease)}
 .tab:hover .x,.tab.active .x{opacity:1}
 .tab .x:hover{background:var(--raise2);color:var(--fg)}
-.tab-add{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:7px;
+.tab-add{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:8px;
   color:var(--fg3);flex:none;transition:background var(--dur) var(--ease),color var(--dur) var(--ease)}
 .tab-add:hover{background:var(--raise);color:var(--fg)}
-.tab-add .uico{width:14px;height:14px}
+.tab-add .uico{width:16px;height:16px}
 /* 标签菜单 */
 .tabmenu{position:fixed;z-index:130;min-width:240px;max-width:360px;padding:5px;
   background:var(--panel2);border:1px solid var(--line2);border-radius:12px;box-shadow:var(--shadow);
@@ -392,7 +429,7 @@ select{appearance:none;background-image:url("data:image/svg+xml;charset=utf-8,%3
 #navUpdate:hover{color:var(--accent-hi);background:var(--accent-soft);border-color:var(--accent-soft)}
 /* 3.4 右侧面板外壳 -------------------------------------------------- */
 .dockhead{height:46px;flex:none;display:flex;align-items:center;gap:6px;padding:0 8px 0 10px;
-  border-bottom:1px solid var(--line);background:var(--bg)}
+  border-bottom:1px solid var(--glass-hair);background:transparent}
 .docktabs{flex:1;min-width:0;display:flex;align-items:center;gap:2px;overflow-x:auto;scrollbar-width:none}
 .docktabs::-webkit-scrollbar{height:0}
 .docktab{display:inline-flex;align-items:center;gap:5px;height:29px;padding:0 8px;border-radius:8px;
@@ -402,7 +439,7 @@ select{appearance:none;background-image:url("data:image/svg+xml;charset=utf-8,%3
 .docktab:hover{background:var(--raise);color:var(--fg2)}
 .docktab.on{background:var(--accent-soft);color:var(--accent)}
 .docktab.on:hover{background:color-mix(in srgb,var(--accent) 18%,transparent)}
-.dockbody{flex:1;min-height:0;overflow:hidden;display:flex;flex-direction:column;background:var(--bg)}
+.dockbody{flex:1;min-height:0;overflow:hidden;display:flex;flex-direction:column;background:transparent}
 #rightdock{container-type:inline-size;container-name:dk}
 @container dk (max-width: 520px){
   .docktab span{display:none}
@@ -464,22 +501,60 @@ select{appearance:none;background-image:url("data:image/svg+xml;charset=utf-8,%3
 /* ==== css/04-layout.css =============================================== */
 
 /* ---- §4 布局 Regions ---------------------------------------------- */
-#app{height:100vh;width:100vw;display:flex;flex-direction:column}
-#shell{flex:1;min-height:0;display:flex;background:var(--bg)}
+/* 窗口透明：#app 只挂一层 scrim（整窗那层纱），其余容器一律透明 ——
+   每一层都不透明地和背衬叠加的话，十来个嵌套容器会把壁纸彻底挡死。 */
+#app{height:100vh;width:100vw;display:flex;flex-direction:column;background:var(--glass-scrim)}
+#shell{flex:1;min-height:0;display:flex;background:transparent}
 
-/* 侧栏：整高、略亮于画布，右侧 1px 淡边 */
-#sidebar{width:20vw;flex:none;background:var(--panel);border-right:1px solid var(--line);
+/* 标题栏：整个窗口只有这一栏。品牌（工作时动态 logo）、侧栏开关、页签、
+   搜索/面板、最小化/最大化/关闭全在里面；空白处就是窗口拖拽区（见
+   10-shell.js 的 Win.drag）。窗口本身没有系统边框，所以这一栏必须贴到
+   窗口最上沿，窗口按钮也要顶到右上角。 */
+#titlebar{height:var(--titlebar-h);flex:none;display:flex;align-items:center;gap:6px;
+  padding:0 0 0 12px;background:transparent;border-bottom:1px solid var(--glass-hair);
+  position:relative;z-index:60;user-select:none;-webkit-user-select:none}
+#titlebar .brand{flex:none;padding-right:4px}
+#titlebar .brand .logo{width:20px;height:20px}
+/* 这一栏比原生标题栏高（46 vs 32），30px 按钮 / 16px 图标按原生比例看着偏小：
+   栏里单独放大一档，让图标 / 栏高 ≈ 40%，按钮 70%。其它地方的 .icon-btn 不动。 */
+#titlebar .icon-btn{width:32px;height:32px}
+#titlebar .icon-btn .uico{width:18px;height:18px;stroke-width:1.6}
+.tb-sep{width:1px;height:18px;flex:none;background:var(--line2);margin:0 5px}
+#tabbar{flex:1;min-width:0;display:flex;align-items:center;gap:4px;overflow-x:auto;overflow-y:hidden;
+  scrollbar-width:none;padding:0 4px}
+#tabbar::-webkit-scrollbar{height:0}
+#topActions{display:flex;align-items:center;gap:2px;flex:none;padding-right:4px}
+
+/* 窗口按钮：贴右上角，高度撑满标题栏（Windows 原生标题栏的观感）。
+   图标 16px：原生是 10px @32px 栏，这里按 46px 栏等比放大。 */
+.winctl{display:flex;align-items:stretch;flex:none;align-self:stretch}
+.wc{width:46px;display:flex;align-items:center;justify-content:center;
+  color:var(--fg2);transition:background var(--dur) var(--ease),color var(--dur) var(--ease)}
+.wc svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1;stroke-linecap:round}
+.wc:hover{background:var(--raise);color:var(--fg)}
+.wc:active{background:var(--raise2)}
+.wc.close:hover{background:#c42b1c;color:#fff}
+.wc.close:active{background:#b0271a}
+
+/* 无边框窗口的缩放热区：8 条透明边，光标交给 CSS，按下由脚本转给系统 */
+#edges{position:fixed;inset:0;z-index:210;pointer-events:none}
+#edges i{position:absolute;pointer-events:auto;display:block}
+#edges i[data-dir="n"]{left:8px;right:8px;top:0;height:5px;cursor:ns-resize}
+#edges i[data-dir="s"]{left:8px;right:8px;bottom:0;height:5px;cursor:ns-resize}
+#edges i[data-dir="w"]{top:8px;bottom:8px;left:0;width:5px;cursor:ew-resize}
+#edges i[data-dir="e"]{top:8px;bottom:8px;right:0;width:5px;cursor:ew-resize}
+#edges i[data-dir="nw"]{left:0;top:0;width:9px;height:9px;cursor:nwse-resize}
+#edges i[data-dir="ne"]{right:0;top:0;width:9px;height:9px;cursor:nesw-resize}
+#edges i[data-dir="sw"]{left:0;bottom:0;width:9px;height:9px;cursor:nesw-resize}
+#edges i[data-dir="se"]{right:0;bottom:0;width:9px;height:9px;cursor:nwse-resize}
+
+/* 侧栏：整高的一块玻璃，比主区厚一档；右缘只留一道极淡的分隔 */
+#sidebar{width:20vw;flex:none;background:var(--glass-panel);border-right:1px solid var(--glass-hair);
   display:flex;flex-direction:column;min-width:0;position:relative;
   container-type:inline-size;container-name:sb;
   transition:margin-left var(--dur) var(--ease),transform var(--dur) var(--ease)}
 #sidebar.collapsed{width:0!important;padding:0!important;border-right:none;overflow:hidden;transform:translateX(-100%)}
-#main{flex:1;min-width:0;display:flex;flex-direction:column;position:relative;background:var(--bg)}
-#topbar{height:var(--topbar-h);flex:none;display:flex;align-items:center;gap:8px;
-  padding:0 10px 0 12px;border-bottom:1px solid var(--line);background:var(--bg)}
-#tabbar{flex:1;min-width:0;display:flex;align-items:center;gap:4px;overflow-x:auto;overflow-y:hidden;
-  scrollbar-width:none}
-#tabbar::-webkit-scrollbar{height:0}
-#topActions{display:flex;align-items:center;gap:2px;flex:none}
+#main{flex:1;min-width:0;display:flex;flex-direction:column;position:relative;background:transparent}
 #workarea{flex:1;min-height:0;display:flex;position:relative}
 #centre{flex:1;min-width:0;display:flex;flex-direction:column;position:relative}
 #tabview{flex:1;min-height:0;display:flex;flex-direction:column;position:relative}
@@ -487,8 +562,9 @@ select{appearance:none;background-image:url("data:image/svg+xml;charset=utf-8,%3
 .tabpane{position:absolute;inset:0;display:none;flex-direction:column;min-height:0;min-width:0}
 .tabpane.active{display:flex}
 
-/* 右侧面板：默认收起（宽度 0），打开时由 Layout 写像素宽 */
-#rightdock{width:0;flex:none;background:var(--bg);border-left:1px solid var(--line);
+/* 右侧面板：默认收起（宽度 0），打开时由 Layout 写像素宽。玻璃比主区更薄，
+   面板内部的卡片才浮得起来 */
+#rightdock{width:0;flex:none;background:var(--glass-dock);border-left:1px solid var(--glass-hair);
   display:flex;flex-direction:column;overflow:hidden;
   transition:width var(--dur) var(--ease)}
 #rightdock.open{width:26vw}
@@ -525,24 +601,33 @@ select{appearance:none;background-image:url("data:image/svg+xml;charset=utf-8,%3
 #centre.hero #tabview,#centre.no-ws #tabview{padding-bottom:0}
 
 /* 横幅 / 重连 */
-/* 演示/连接横幅：浮动胶囊，不占布局高度（对齐 DSH 的轻量提示） */
-#banner{position:fixed;top:8px;right:104px;z-index:65;display:none;
-  padding:5px 12px;border-radius:var(--radius-full);background:var(--panel2);
+/* 演示/连接横幅：浮动胶囊，不占布局高度（对齐 DSH 的轻量提示）。
+   顶部要避开标题栏 —— 标题栏是窗口拖拽区，压住它等于点不动窗口。 */
+#banner{position:fixed;top:calc(var(--titlebar-h) + 8px);right:104px;z-index:65;display:none;
+  padding:5px 12px;border-radius:var(--radius-full);background:var(--glass-float);
+  -webkit-backdrop-filter:var(--glass-float-blur);backdrop-filter:var(--glass-float-blur);
   border:1px solid var(--line2);color:var(--fg2);font-size:11.5px;font-weight:500;
   box-shadow:var(--shadow-sm);white-space:nowrap;max-width:min(420px,calc(100vw - 780px));
   overflow:hidden;text-overflow:ellipsis}
 #banner.show{display:block}
 #reconnect{position:absolute;left:50%;bottom:14px;transform:translateX(-50%);z-index:70;
-  padding:6px 14px;border-radius:var(--radius-full);background:var(--panel2);border:1px solid var(--line2);
+  padding:6px 14px;border-radius:var(--radius-full);background:var(--glass-float);
+  -webkit-backdrop-filter:var(--glass-float-blur);backdrop-filter:var(--glass-float-blur);
+  border:1px solid var(--line2);
   color:var(--warn);font-size:12px;box-shadow:var(--shadow-sm);display:none}
 #reconnect.show{display:block}
 
-/* 整页浮层（设置页）：脚本负责内部结构，这里只给容器定位 */
-#settings{position:fixed;inset:0;z-index:70;background:var(--bg);display:none;flex-direction:column}
+/* 整页浮层（设置页）：脚本负责内部结构，这里只给容器定位。
+   从标题栏下面开始 —— 无边框窗口里标题栏是唯一的拖拽区和窗口按钮所在，
+   被设置页盖住的话窗口就既拖不动也关不掉了。
+   玻璃：一层厚纱 + 大模糊，底下的会话只作为颜色存在，读不清也不抢注意力。 */
+#settings{position:fixed;inset:var(--titlebar-h) 0 0 0;z-index:70;background:var(--glass-veil);
+  -webkit-backdrop-filter:blur(32px) saturate(1.15);backdrop-filter:blur(32px) saturate(1.15);
+  display:none;flex-direction:column}
 #settings.show{display:flex;animation:fadeUp 220ms var(--ease)}
 /* 通用弹窗容器 */
 .modal{position:fixed;inset:0;z-index:80;display:none;align-items:center;justify-content:center;
-  background:rgba(5,5,7,.55);backdrop-filter:blur(3px)}
+  background:rgba(4,4,7,.52);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px)}
 .modal.show{display:flex;animation:fadeUp 160ms var(--ease)}
 /* 浮窗 / toast / 右键菜单容器（内容样式见 07b-overlays.css） */
 #windows{position:fixed;inset:0;pointer-events:none;z-index:75}
@@ -551,7 +636,9 @@ select{appearance:none;background-image:url("data:image/svg+xml;charset=utf-8,%3
   align-items:flex-end;pointer-events:none}
 #toasts>*{pointer-events:auto}
 #ctxmenu{position:fixed;display:none;z-index:130;min-width:170px;padding:5px;
-  background:var(--panel2);border:1px solid var(--line2);border-radius:10px;box-shadow:var(--shadow)}
+  background:var(--glass-float);-webkit-backdrop-filter:var(--glass-float-blur);
+  backdrop-filter:var(--glass-float-blur);
+  border:1px solid var(--line2);border-radius:10px;box-shadow:var(--shadow)}
 /* 滚动锁：设置页/弹窗打开时消息流不滚动（由脚本切换 body 类） */
 body.locked{overflow:hidden}
 /* 响应式：窄窗口收起侧栏标签、右栏浮层化 */
@@ -593,7 +680,7 @@ body.locked{overflow:hidden}
 
 /* 会话顶栏：会话标题 + 清空上下文（hero 态隐藏，让空态更纯粹） */
 .chathead{display:flex;align-items:center;gap:10px;flex:none;height:40px;padding:0 20px;
-  border-bottom:1px solid var(--line);background:var(--bg)}
+  border-bottom:1px solid var(--glass-hair);background:transparent}
 .chathead .cht-title{font-size:13px;font-weight:600;color:var(--fg2);min-width:0}
 .chathead .cht-title:hover{color:var(--fg)}
 .chathead .icon-btn{color:var(--fg4)}
@@ -601,6 +688,14 @@ body.locked{overflow:hidden}
 .tabpane.hero .chathead{display:none}
 
 .chat{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;
+  /* 正文压在会滚动的玻璃上：壁纸亮的地方白字会糊。这里给消息列一层很淡的
+     中心纱（不是面板，没有边），远离中心的地方全透明 —— 窗口的"透明"由
+     四周交代，可读性由中间这层纱交代。 */
+  background:radial-gradient(115% 95% at 50% 45%,
+    rgba(8,8,11,.34) 0%,
+    rgba(8,8,11,.20) 55%,
+    rgba(8,8,11,.06) 82%,
+    rgba(8,8,11,0) 100%);
   /* 底部留白读 --composer-pad（由 02-render2-chat.js 的 syncJumpAnchors 按卡片
      **实测**上界写入）：卡片高度在 Teamwork 模式 / 72vh 限高下都不等于
      --composer-h，用变量推算会把最后几条消息压在卡片底下。
@@ -1052,21 +1147,19 @@ body.locked{overflow:hidden}
    ===================================================================== */
 
 /* ---------- 5b.1 卡片本体（液态玻璃 · 复刻 shuding/liquid-glass） ----- */
-/* 材质分三层，全部在 Chromium/WebView2 上**真实生效**：
-     ① 折射   backdrop-filter: url(#cmp-lens) —— SVG feImage(位移贴图) +
-              feDisplacementMap 作用在真实背景上：贴边一圈把背后的内容沿内
-              法线压向中心，文字在边缘被弯折、出现重影，中间保持原样。
-              管线与参考实现一致（见 05-composer.js 的 I1b）。
-              后面再跟 blur()/contrast()/brightness()/saturate()，也是参考的做法。
-     ② 厚度   只有内顶镜面 + 沿边柔光 + 底部内阴影，**不画描边**：没有 border、
-              没有内环、没有外暗线，也没有跟着圆角走的 conic 亮边（2026-10-31
-              用户要求「去掉输入栏液态玻璃的所有边框」）。边界只由 ① 的折射带
-              和顶部反光交代 —— 玻璃靠折射成形，不靠画线。
+/* 材质分三层：
+     ① 折射+磨砂  backdrop-filter: url(#cmp-lens) —— 一条 SVG 滤镜里做两件事：
+              feGaussianBlur 把背景磨掉，feDisplacementMap（feImage 装的圆角
+              SDF 位移图）再贴边把背景沿内法线弯折。磨砂强度由「输入卡材质」
+              滑块写进滤镜的 stdDeviation，折射带宽度固定为短边的 8%。
+     ② 厚度   只有内顶镜面 + 沿边柔光 + 底部内阴影，**不画描边**。
      ③ 面     极淡的「白 → 透明 → 黑」竖向渐变 + 参考实现那条
               `inset 0 -10px 25px rgba(0,0,0,.15)` 的底部内阴影。
    ⚠️ 引用 url(#cmp-lens) 的那条声明单独挂在 .glass-lens 上：滤镜元素是 JS
    建的，在它存在之前引用一个不存在的 filter 会让整条 backdrop-filter 失效
    （首帧直接变透明）。所以基类是纯 blur，JS 建好滤镜再加类。
+   ⚠️ url() 在 backdrop-filter 里会吞掉同一行的其它函数（blur/contrast/…），
+   所以那些效果只能写进滤镜，见 05-composer.js 的 I1b。
    尺寸：**高度固定** = 拖拽设定的 --composer-h（Layout 已把它夹在 72vh 内，
    与 max-height 同一个数）。上界不随内容/附件移动，输入超出在编辑区内部
    滚动；「回到底部」按钮按卡片**实测**上界定位（见 02-render2-chat.js）。 */
@@ -1084,12 +1177,14 @@ body.locked{overflow:hidden}
   overflow:hidden;
   isolation:isolate;
   border:0;
-  /* ③ 面：顶部受光、底部略沉，全是白/黑透明度，没有彩色 */
+  /* ③ 面：顶部受光、底部略沉，全是白/黑透明度，没有彩色。
+     窗口透明以后，卡片的背景可能是明亮的壁纸，纯白叠白会让整块玻璃"化掉"：
+     中间一段压一点黑，卡片才在任何底子上都读得出来是一块玻璃。 */
   background:linear-gradient(180deg,
-    rgba(255,255,255,.055) 0%,
-    rgba(255,255,255,.022) 14%,
-    rgba(255,255,255,.014) 44%,
-    rgba(0,0,0,.055) 100%);
+    rgba(255,255,255,.07) 0%,
+    rgba(255,255,255,.015) 10%,
+    rgba(8,8,12,.22) 30%,
+    rgba(0,0,0,.28) 100%);
   /* ① 降级路径（滤镜还没建好 / 老引擎）：纯磨砂 */
   -webkit-backdrop-filter:blur(var(--cmp-glass-blur,3px)) saturate(1.1);
   backdrop-filter:blur(var(--cmp-glass-blur,3px)) saturate(1.1);
@@ -1105,12 +1200,13 @@ body.locked{overflow:hidden}
     0 2px 10px -4px rgba(0,0,0,.55),
     0 20px 48px -28px rgba(0,0,0,.90);
 }
-/* ① 折射：与参考实现同一条滤镜链（url() 在最前，其余是参考里的那串） */
+/* ① 折射：整条链都在 SVG 滤镜里（磨砂 = feGaussianBlur、折射 = feDisplacementMap）。
+   ⚠️ 这里**不能**再写 blur()/contrast()/saturate()：backdrop-filter 里出现
+   url() 时，同一行后面的函数会被 Chromium 整段丢掉 —— 那正是"背景锐利透出、
+   文字和占位符糊在一起"的成因（2026-10-31）。磨砂强度改由 JS 写进滤镜。 */
 #composerInner.glass-lens{
-  -webkit-backdrop-filter:url(#cmp-lens) blur(var(--cmp-glass-blur,3px))
-                          contrast(1.2) brightness(1.05) saturate(1.1);
-  backdrop-filter:url(#cmp-lens) blur(var(--cmp-glass-blur,3px))
-                  contrast(1.2) brightness(1.05) saturate(1.1);
+  -webkit-backdrop-filter:url(#cmp-lens);
+  backdrop-filter:url(#cmp-lens);
 }
 /* ② 描边：**没有**。原来的 conic 渐变环（mask 掏空只留 1.25px 亮边）与
    内环/外暗线在 2026-10-31 一并删掉——用户要的是"没有边框"的玻璃：边缘由
@@ -1716,13 +1812,16 @@ body.locked{overflow:hidden}
    ===================================================================== */
 
 /* ---- 外壳 ---------------------------------------------------------- */
-#settings .set-shell{display:flex;height:100%;min-height:0;background:var(--bg);color:var(--fg);
+/* 设置页本身是一层厚纱（04-layout.css 的 #settings），里面的两个区不再叠底：
+   否则"纱 + 面板 + 卡片"三层实色会把窗口重新糊死。 */
+#settings .set-shell{display:flex;height:100%;min-height:0;background:transparent;color:var(--fg);
   font-size:14px;letter-spacing:.01em}
 #settings .set-shell *{box-sizing:border-box}
 
 /* ---- 左侧分节导航（220px） ---------------------------------------- */
 #settings .set-side{width:220px;flex:none;display:flex;flex-direction:column;gap:10px;
-  background:var(--panel);border-right:1px solid var(--line);padding:14px 10px 10px;min-height:0}
+  background:rgba(255,255,255,.035);border-right:1px solid var(--glass-hair);
+  padding:14px 10px 10px;min-height:0}
 #settings .set-side-head{display:flex;align-items:center;gap:10px;padding:4px 8px 10px}
 #settings .set-logo{width:32px;height:32px;flex:none;border-radius:9px;background:var(--raise);
   color:var(--fg);display:flex;align-items:center;justify-content:center;
@@ -1762,7 +1861,8 @@ body.locked{overflow:hidden}
 #settings .set-main{flex:1;min-width:0;min-height:0;overflow-y:auto;position:relative;
   overscroll-behavior:contain}
 #settings .set-head{position:sticky;top:0;z-index:3;display:flex;align-items:center;gap:14px;
-  padding:16px 30px 13px;background:var(--bg);border-bottom:1px solid var(--line)}
+  padding:16px 30px 13px;background:rgba(16,16,21,.55);border-bottom:1px solid var(--glass-hair);
+  -webkit-backdrop-filter:blur(18px);backdrop-filter:blur(18px)}
 #settings .set-head-main{min-width:0;display:flex;flex-direction:column;gap:2px}
 #settings .set-head-title{margin:0;font-size:17px;font-weight:650;letter-spacing:-.01em;color:var(--fg)}
 #settings .set-head-desc{margin:0;font-size:11.5px;line-height:1.55;color:var(--fg3);
@@ -1959,6 +2059,17 @@ body.locked{overflow:hidden}
 #settings .range-tick{font-family:var(--mono);font-size:10px;color:var(--fg4);letter-spacing:.03em;
   transition:color var(--dur) var(--ease)}
 #settings .range-tick.on{color:var(--accent);font-weight:700}
+
+/* ---- 启动页 -------------------------------------------------------- */
+#settings .set-color{width:46px;height:30px;padding:2px;border-radius:8px;cursor:pointer;
+  background:var(--bg3);border:1px solid var(--line2)}
+#settings .set-color::-webkit-color-swatch-wrapper{padding:0}
+#settings .set-color::-webkit-color-swatch{border:none;border-radius:6px}
+#settings .splash-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+#settings .splash-file{font-family:var(--mono);font-size:11.5px;color:var(--fg3);min-width:0;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#settings .splash-thumb{width:30px;height:30px;border-radius:7px;object-fit:cover;
+  border:1px solid var(--line2);background:var(--bg3);flex:none}
 
 /* ---- 沙箱 ---------------------------------------------------------- */
 #settings .sandbox-opt{display:inline-flex;align-items:center;justify-content:center}
@@ -2392,6 +2503,16 @@ html[data-anim="0"] *{animation:none!important;transition:none!important}
    宿主定位与显隐（#approvalModal/#genericModal/#searchModal 的 .modal、
    #toasts、#ctxmenu 盒子）由 04-layout.css 提供；这里定义卡片本身。
    ===================================================================== */
+
+/* ---- 7b.0 浮层的共同材质 -------------------------------------------
+   窗口透明以后，浮层底下是页面自己的内容（会话、侧栏），不是实色背景：
+   只给 --panel2 的 alpha 会看到背后文字的硬边，"浮起来"的那层厚度就没了。
+   所有浮在内容之上的小面板在这里统一补一层磨砂，各自只负责底色和阴影。 */
+.toast,.modalbox,.searchbox-lg,.hmenu,.tabmenu,.thkmenu,.cmp-menu,.wwin,.usage-pop,
+.slash-panel,#slashPanel{
+  -webkit-backdrop-filter:var(--glass-float-blur);
+  backdrop-filter:var(--glass-float-blur);
+}
 
 /* ---- Toast：右下堆叠 + 左侧 2px 语义色条 ---------------------------- */
 #toasts{position:fixed;right:16px;bottom:16px;z-index:200;display:flex;flex-direction:column;
@@ -3373,24 +3494,153 @@ mark{background:var(--accent-soft);color:var(--accent);border-radius:3px;padding
   border:2px solid transparent;background-clip:content-box}
 :root[data-theme="light"] .ct-root .ct-screen::-webkit-scrollbar-thumb:hover{background:#4b4b55}
 
+/* ==== css/10-splash.css =============================================== */
+
+/* =====================================================================
+   §10 启动页（splash）
+   ---------------------------------------------------------------------
+   整窗覆盖的一屏，页面第一帧就是它 —— 窗口打开时不会先闪一屏空白。
+   默认是内置 logo 的描边动画；也可以换成自定义图片（.cell/splash/<file>）
+   或整页 HTML（.cell/splash/index.html）。配置在 .cell/cell-app.json 的
+   splash 段，设置 → 外观 → 启动页 里改。
+
+   动画约定（10-shell.js 只切 class，不写内联样式）：
+     · 默认（无 class）     描边循环绘制
+     · .anim-pulse         整体呼吸，线条常亮
+     · .anim-none          静止常亮
+   ===================================================================== */
+#splash{position:fixed;inset:0;z-index:500;display:flex;align-items:center;justify-content:center;
+  background:var(--bg);overflow:hidden;isolation:isolate;
+  transition:opacity 380ms var(--ease),visibility 0s linear 380ms}
+#splash.gone{opacity:0;visibility:hidden;pointer-events:none}
+/* 关掉启动页时由 C++ 在文档创建前打上这个 class（src/cell-app.cpp 的
+   w.init）：首帧就没有启动页，而不是画出来再淡出。 */
+html.no-splash #splash{display:none}
+/* 启动页背后的一团冷光：让整屏不至于是一块死平的颜色 */
+#splash::before{content:"";position:absolute;width:min(72vw,560px);aspect-ratio:1;border-radius:50%;
+  background:radial-gradient(circle,var(--accent-soft),transparent 68%);
+  opacity:.75;filter:blur(6px);z-index:0;pointer-events:none}
+
+#splash .sp-inner{display:flex;flex-direction:column;align-items:center;position:relative;z-index:2;
+  animation:fadeUp 420ms var(--ease)}
+.sp-logo{width:96px;height:96px;color:var(--fg);margin-bottom:24px}
+.sp-logo svg{width:100%;height:100%;overflow:visible}
+.sp-frame{stroke-dasharray:100;stroke-dashoffset:100;opacity:.85;
+  animation:spFrameIn 2.4s var(--ease) infinite}
+.sp-path{stroke-dasharray:100;stroke-dashoffset:100;
+  animation:spDrawIn 2.4s var(--ease) infinite}
+.sp-logo.anim-pulse{animation:spPulse 2.2s var(--ease) infinite}
+.sp-logo.anim-pulse .sp-frame,.sp-logo.anim-pulse .sp-path,
+.sp-logo.anim-none .sp-frame,.sp-logo.anim-none .sp-path{animation:none;stroke-dashoffset:0}
+
+/* 自定义图片：替换 logo，仍保留标题/副标题 */
+.sp-image{max-width:min(62vw,420px);max-height:46vh;object-fit:contain;margin-bottom:24px;
+  border-radius:14px}
+
+.sp-title{font-family:var(--sans-display);font-size:27px;font-weight:650;letter-spacing:-.03em;
+  line-height:1.15;color:var(--fg)}
+.sp-sub{margin-top:7px;font-size:12.5px;color:var(--fg3);letter-spacing:.03em}
+.sp-bar{margin-top:26px;width:136px;height:2px;border-radius:2px;background:var(--line);overflow:hidden}
+.sp-bar i{display:block;width:42%;height:100%;border-radius:2px;background:var(--accent);
+  animation:spBar 1.35s var(--ease) infinite}
+
+/* 自定义整页：同源 iframe 铺满，内置内容全部让位 */
+.sp-page{position:absolute;inset:0;width:100%;height:100%;border:0;background:transparent;z-index:2}
+
+@keyframes spFrameIn{0%{stroke-dashoffset:100;opacity:0}18%{opacity:.85}55%{stroke-dashoffset:0;opacity:.85}100%{stroke-dashoffset:0;opacity:.85}}
+@keyframes spDrawIn{0%{stroke-dashoffset:100}12%{stroke-dashoffset:100}62%{stroke-dashoffset:0}100%{stroke-dashoffset:0}}
+@keyframes spPulse{0%,100%{opacity:.78;transform:scale(.985)}50%{opacity:1;transform:scale(1.02)}}
+@keyframes spBar{0%{transform:translateX(-110%)}55%{transform:translateX(70%)}100%{transform:translateX(250%)}}
+
+/* 动效关掉（设置里的动画等级 = 关，或系统 prefers-reduced-motion）时
+   animation 全部失效，描边会停在 dashoffset:100 的"还没画"状态 —— logo
+   整块空白。这里直接给成画完的样子。 */
+html[data-anim="0"] .sp-frame,
+html[data-anim="0"] .sp-path{animation:none;stroke-dashoffset:0}
+
+/* 浅色主题下冷光别太亮 */
+html[data-theme="light"] #splash::before{opacity:.5}
+
 </style>
+<script>
+/* 启动页开关必须在首次绘制之前定下来：下面 #splash 是静态画出来的，
+   等 state 回来再隐藏会白闪一屏。桌面壳在 URL 上带 splash=0（设置里关掉
+   了启动页）时，这里同步打上 no-splash（样式见 10-splash.css）。
+   内联在 head：外链脚本和页面脚本都晚于首次绘制。
+   浏览器里同样可用：?splash=0 即可跳过启动页。 */
+try {
+  if (/[?&]splash=0(?:&|$)/.test(location.search))
+    document.documentElement.classList.add('no-splash');
+} catch (e) {}
+</script>
 </head>
 <body>
+<!-- ==================== 启动页 ====================
+     先于应用绘制：页面第一帧就是它，窗口打开时不会先闪一屏空白。
+     结构固定，内容由 10-shell.js 按 .cell/cell-app.json 的 splash 段定制：
+       · 默认：内置 logo 描边动画 + 标题 + 副标题 + 进度线
+       · 自定义图片：.cell/splash/<file>（替换 logo）
+       · 自定义整页：.cell/splash/index.html（同源 iframe，铺满整屏）
+     启动完成后淡出并移除。                                       -->
+<div id="splash">
+  <div class="sp-inner" id="splashInner">
+    <div class="sp-logo" id="splashLogo">
+      <svg viewBox="0 0 500 500" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <g fill="none" stroke="currentColor" stroke-width="30" stroke-linejoin="miter" stroke-linecap="square">
+          <rect class="sp-frame" pathLength="100" x="90" y="90" width="320" height="320"/>
+          <path class="sp-path" pathLength="100" d="M 170 170 L 170 330 L 250 330 L 250 170 L 330 170 L 330 410"/>
+        </g>
+      </svg>
+    </div>
+    <img class="sp-image" id="splashImage" alt="" hidden>
+    <div class="sp-title" id="splashTitle">cell</div>
+    <div class="sp-sub" id="splashSub">本地代理工作台</div>
+    <div class="sp-bar" id="splashBar"><i></i></div>
+  </div>
+  <iframe class="sp-page" id="splashFrame" title="自定义启动页" hidden></iframe>
+</div>
+
 <div id="app">
+  <!-- ==================== 标题栏 ====================
+       只有一栏：品牌（工作时动态 logo）/ 侧栏开关 / 页签 / 动作 / 窗口按钮。
+       窗口是无边框的（Windows 上由 src/cell-app.cpp 的 frame 去掉系统标题栏），
+       这一栏同时是拖拽区 —— 空白处按住即可移动窗口。                     -->
+  <header id="titlebar">
+    <div class="brand" id="brandWrap" title="cell">
+      <span class="logo" id="brandLogo"><svg viewBox="0 0 500 500" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="30" stroke-linejoin="miter" stroke-linecap="square"><rect x="90" y="90" width="320" height="320"/><path d="M 170 170 L 170 330 L 250 330 L 250 170 L 330 170 L 330 410"/></g></svg></span>
+      <span class="brand-name">cell</span>
+      <span class="brand-badge">PREVIEW</span>
+    </div>
+    <button class="icon-btn" id="btnSidebarToggle" title="收起侧栏 (Ctrl+B)" aria-label="收起侧栏" aria-pressed="true">
+      <svg class="uico" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/></svg>
+    </button>
+    <div class="tb-sep" aria-hidden="true"></div>
+    <div id="tabbar"></div>
+    <div id="topActions">
+      <button class="icon-btn" id="btnTopSearch" title="搜索会话 (Ctrl+Shift+F)" aria-label="搜索会话">
+        <svg class="uico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20.5 20.5 16.2 16.2"/></svg>
+      </button>
+      <button class="icon-btn" id="btnTopDock" title="打开/收起右侧面板 (Ctrl+Shift+E)" aria-label="右侧面板" aria-pressed="false">
+        <svg class="uico" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M15 3v18"/></svg>
+      </button>
+    </div>
+    <div class="winctl" id="winCtl" hidden>
+      <button class="wc" id="wcMin" title="最小化" aria-label="最小化">
+        <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 6h7"/></svg>
+      </button>
+      <button class="wc" id="wcMax" title="最大化" aria-label="最大化">
+        <svg viewBox="0 0 12 12" aria-hidden="true" class="ico-max"><rect x="2.5" y="2.5" width="7" height="7" rx=".6"/></svg>
+        <svg viewBox="0 0 12 12" aria-hidden="true" class="ico-restore" hidden><rect x="2.2" y="3.6" width="6.2" height="6.2" rx=".6"/><path d="M4.4 3.6V2.4a.6.6 0 0 1 .6-.6h4.6a.6.6 0 0 1 .6.6v4.6a.6.6 0 0 1-.6.6H9.4"/></svg>
+      </button>
+      <button class="wc close" id="wcClose" title="关闭" aria-label="关闭">
+        <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 3l6 6M9 3l-6 6"/></svg>
+      </button>
+    </div>
+  </header>
+
   <div id="shell">
     <!-- ==================== 侧栏 ==================== -->
     <aside id="sidebar">
-      <div class="sb-head">
-        <div class="brand" id="brandWrap" title="cell">
-          <span class="logo" id="brandLogo"><svg viewBox="0 0 500 500" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="30" stroke-linejoin="miter" stroke-linecap="square"><rect x="90" y="90" width="320" height="320"/><path d="M 170 170 L 170 330 L 250 330 L 250 170 L 330 170 L 330 410"/></g></svg></span>
-          <span class="brand-name">cell</span>
-          <span class="brand-badge">PREVIEW</span>
-        </div>
-        <button class="icon-btn" id="btnSidebarToggle" title="收起侧栏 (Ctrl+B)" aria-label="收起侧栏">
-          <svg class="uico" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/></svg>
-        </button>
-      </div>
-
       <button class="btn primary new-chat" id="btnNewSession" title="新建会话 (Ctrl+N)">
         <span class="bico"><svg class="uico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></span>
         <span>新会话</span>
@@ -3463,20 +3713,6 @@ mark{background:var(--accent-soft);color:var(--accent);border-radius:3px;padding
     <!-- ==================== 主区 ==================== -->
     <div id="main">
       <div id="banner"></div>
-      <header id="topbar">
-        <button class="icon-btn" id="btnSidebarTop" title="收起侧栏 (Ctrl+B)" aria-label="侧栏" aria-pressed="true">
-          <svg class="uico" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/></svg>
-        </button>
-        <div id="tabbar"></div>
-        <div id="topActions">
-          <button class="icon-btn" id="btnTopSearch" title="搜索会话 (Ctrl+Shift+F)" aria-label="搜索会话">
-            <svg class="uico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20.5 20.5 16.2 16.2"/></svg>
-          </button>
-          <button class="icon-btn" id="btnTopDock" title="打开/收起右侧面板 (Ctrl+Shift+E)" aria-label="右侧面板" aria-pressed="false">
-            <svg class="uico" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M15 3v18"/></svg>
-          </button>
-        </div>
-      </header>
 
       <div id="workarea">
         <div id="centre">
@@ -3555,6 +3791,13 @@ mark{background:var(--accent-soft);color:var(--accent);border-radius:3px;padding
 <div id="windows"></div>
 <div id="toasts"></div>
 <div id="ctxmenu"></div>
+
+<!-- 无边框窗口的四边/四角缩放热区（只在桌面壳里启用，见 10-shell.js）。
+     用元素而不是 JS 算坐标，是为了让 cursor 由 CSS 直接给出。 -->
+<div id="edges" hidden aria-hidden="true">
+  <i data-dir="n"></i><i data-dir="s"></i><i data-dir="w"></i><i data-dir="e"></i>
+  <i data-dir="nw"></i><i data-dir="ne"></i><i data-dir="sw"></i><i data-dir="se"></i>
+</div>
 
 <script>
 /* ==== js/00-core.js ================================================== */
@@ -3655,7 +3898,9 @@ function esc(s) {
    见 02-atoms.css §2.8）。iconHtml 给 innerHTML 场景，iconEl 给
    appendChild 场景；名字取不到时返回空 SVG（不抛错）。              */
 const ICON_PATHS = {
-  plus: '<path d="M12 5v14M5 12h14"/>',
+  // 满格（17/24）：加号原本只占 14/24，和 search / panel 这些 71% 的图标
+  // 摆在一行里明显偏小，标题栏上尤其明显
+  plus: '<path d="M12 3.5v17M3.5 12h17"/>',
   folder: '<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
   search: '<circle cx="11" cy="11" r="7"/><path d="M20.5 20.5 16.2 16.2"/>',
   sliders: '<path d="M4 8.5h8.5M17.5 8.5H20M4 15.5h2.5M11.5 15.5H20"/><circle cx="15" cy="8.5" r="2.2"/><circle cx="9" cy="15.5" r="2.2"/>',
@@ -5283,12 +5528,14 @@ function renderBrand() {
   const box = $('#brandLogo');
   if (!box) return;
   if (!brandIconNode) brandIconNode = box.firstElementChild;
-  const t = S.tabs.get(S.active);
-  const busy = !!(t && t.busy);
+  // 标题栏里的 logo 是全局的：任何一个工作区在跑，它就该动起来
+  // （后台工作区发起的回合同样算"工作中"）
+  let busy = false;
+  for (const [, t] of S.tabs) { if (t && t.busy) { busy = true; break; } }
   if (busy === brandBusy) return;
   brandBusy = busy;
   const brand = $('#brandWrap');
-  if (brand) brand.classList.toggle('busy', busy);
+  if (brand) { brand.classList.toggle('busy', busy); brand.classList.toggle('working', busy); }
   box.classList.toggle('busy', busy);
   box.title = busy ? '运行中' : '';
   box.replaceChildren(busy ? avaSVG() : brandIconNode);
@@ -5467,8 +5714,8 @@ function renderStartPanel(body, t) {
 const SIDEBAR_KEY = 'cell.sidebarCollapsed';
 function paintSidebarToggle() {
   const col = !!S.sidebarCollapsed;
-  // 顶栏按钮在侧栏收起后仍然可见——它是重新打开侧栏的入口
-  const top = $('#btnSidebarTop');
+  // 标题栏里的开关在侧栏收起后仍然可见——它是重新打开侧栏的入口
+  const top = $('#btnSidebarToggle') || $('#btnSidebarTop');
   if (top) {
     top.setAttribute('aria-pressed', col ? 'false' : 'true');
     top.title = (col ? '展开侧栏' : '收起侧栏') + ' (Ctrl+B)';
@@ -10029,12 +10276,15 @@ function buildComposerDom() {
 }
 
 /* ---------- I1b. 液态玻璃：SVG 折射（复刻 shuding/liquid-glass）--------
-   管线与参考实现（github.com/shuding/liquid-glass，MIT）完全一致：
+   管线与参考实现（github.com/shuding/liquid-glass，MIT）一致：
      ① 逐像素算「采样点偏移」贴图：圆角矩形 SDF → 离边越近把采样点沿内法线
         推得越多（= 边缘放大/压缩），编成 R/G 位移图（0.5 = 不动）；
-     ② <filter> 里 feImage 装贴图 + feDisplacementMap，经
-        backdrop-filter:url(#cmp-lens) 作用在**真实背景**上；
-     ③ 滤镜链后面再跟 blur()/contrast()/brightness()/saturate()，与参考一致。
+     ② <filter> 里 feImage 装贴图 → feGaussianBlur 磨砂 → feDisplacementMap
+        折射，经 backdrop-filter:url(#cmp-lens) 作用在**真实背景**上；
+     ③ 滤镜链里**只有** url()：backdrop-filter 里 url() 会吞掉同一行后面的
+        blur()/contrast()/saturate()（Chromium 实测），磨砂和调色必须写进
+        同一条 SVG 滤镜，否则背景是"锐利透出 + 边缘折影"——2026-10-31 用户
+        报的错乱就是这个（背景文字和占位符叠在一起、边缘发彩）。
    ⚠️ 关键（第一版死在这里）：<filter> 必须 filterUnits="userSpaceOnUse" 并给出
    **像素**的 x/y/width/height。用默认的 objectBoundingBox + width="100%" 时
    Chromium 会把整条滤镜吞掉 —— 既不模糊也不折射，背后文字原样透上来，
@@ -10042,9 +10292,10 @@ function buildComposerDom() {
    贴图尺寸/圆角一变（拖手柄、Teamwork、窗口缩放）就重画，见 syncLens()。 */
 const LENS = {
   w: 0, h: 0, r: 0,          // 上次画贴图时的尺寸（同尺寸不重画）
-  band: 0.12,                // 折射带宽度 = 短边 × 这个比例（夹在 [10,24]px）
-  strength: 0.90,            // 贴边位移 = 带宽 × 这个比例（≈短边的 11%，对齐参考观感）
-  filter: null, map: null, disp: null, host: null, raf: 0,
+  band: 0.08,                // 折射带宽度 = 短边 × 这个比例（夹在 [8,16]px）
+  strength: 0.55,            // 贴边位移 = 带宽 × 这个比例（太大就会把背后的
+                             // 文字折出重影，2026-10-31 实测 0.9 太多）
+  filter: null, map: null, disp: null, blur: null, host: null, raf: 0,
 };
 
 function lensSVG() {
@@ -10061,17 +10312,22 @@ function lensSVG() {
   const img = document.createElementNS(NS, 'feImage');
   img.setAttribute('result', 'map');
   img.setAttribute('preserveAspectRatio', 'none');
+  const blur = document.createElementNS(NS, 'feGaussianBlur');
+  blur.setAttribute('in', 'SourceGraphic');
+  blur.setAttribute('result', 'soft');
+  blur.setAttribute('stdDeviation', '0');
   const disp = document.createElementNS(NS, 'feDisplacementMap');
-  disp.setAttribute('in', 'SourceGraphic');
+  disp.setAttribute('in', 'soft');
   disp.setAttribute('in2', 'map');
   disp.setAttribute('xChannelSelector', 'R');
   disp.setAttribute('yChannelSelector', 'G');
   disp.setAttribute('scale', '0');
   f.appendChild(img);
+  f.appendChild(blur);
   f.appendChild(disp);
   svg.appendChild(f);
   document.body.appendChild(svg);
-  LENS.filter = f; LENS.map = img; LENS.disp = disp;
+  LENS.filter = f; LENS.map = img; LENS.blur = blur; LENS.disp = disp;
   return f;
 }
 
@@ -10088,7 +10344,7 @@ function paintLens(w, h, radius) {
   if (LENS.w === cw && LENS.h === ch && LENS.r === radius) return;
   LENS.w = cw; LENS.h = ch; LENS.r = radius;
 
-  const band = Math.min(24, Math.max(10, Math.min(cw, ch) * LENS.band));
+  const band = Math.min(16, Math.max(8, Math.min(cw, ch) * LENS.band));
   // 位移场极平滑，大卡片按 1/2 分辨率算（贴图由 feImage 拉伸回原尺寸）：
   // 678×600 的重绘从 ~18ms 降到 ~4ms，拖手柄时不会掉帧。
   const step = Math.min(cw, ch) > 240 ? 2 : 1;
@@ -10145,6 +10401,8 @@ function syncLens() {
   f.setAttribute('width', String(w)); f.setAttribute('height', String(h));
   LENS.map.setAttribute('width', String(w));
   LENS.map.setAttribute('height', String(h));
+  // 磨砂写在这条滤镜里（url() 会吞掉同一行 backdrop-filter 的 blur()）
+  LENS.blur.setAttribute('stdDeviation', GLASS.blur.toFixed(2));
   paintLens(w, h, radius);
 }
 function scheduleLens() {
@@ -10191,6 +10449,8 @@ function applyGlassPref(t, silent) {
   const px = glassBlur(GLASS.t);
   GLASS.blur = px;
   document.documentElement.style.setProperty('--cmp-glass-blur', px.toFixed(2) + 'px');
+  // 卡片的磨砂在 SVG 滤镜里（url() 吞掉同行的 blur()），这里同步过去
+  if (LENS.blur) LENS.blur.setAttribute('stdDeviation', px.toFixed(2));
 }
 function setGlassPref(t) {
   applyGlassPref(t, false);
@@ -10198,6 +10458,31 @@ function setGlassPref(t) {
 }
 window.setGlassTransparency = pct => setGlassPref((Number(pct) || 0) / 100);
 loadGlassPref();
+
+/* ---------- 窗口背景透明度 ------------------------------------------------
+   整窗透明以后，"玻璃"和"能不能看清字"是一对矛盾：壁纸越清楚，正文越糊。
+   这里只给一个旋钮（设置 → 外观 → 窗口背景）：0 = 完全不透明（页面最底下压
+   一层实色画布），100 = 只剩磨砂玻璃。实现就是 --glass-solid 一个变量，
+   见 01-base.css 的 body::before；不动任何面板的 alpha。 */
+const WINGLASS = { t: 1 };            // 0..1 透明度（1 = 全透明）
+const WINGLASS_PREF_KEY = 'cell.win.glass';
+
+function applyWindowOpacity(t, silent) {
+  if (t != null) WINGLASS.t = Math.min(1, Math.max(0, Number(t) || 0));
+  document.documentElement.style.setProperty('--glass-solid', (1 - WINGLASS.t).toFixed(3));
+  if (!silent)
+    try { localStorage.setItem(WINGLASS_PREF_KEY, JSON.stringify({ t: Number(WINGLASS.t.toFixed(3)) })); } catch (e) {}
+}
+function loadWindowOpacity() {
+  let t = WINGLASS.t;
+  try {
+    const v = Number((JSON.parse(localStorage.getItem(WINGLASS_PREF_KEY) || '{}') || {}).t);
+    if (isFinite(v)) t = v;
+  } catch (e) {}
+  applyWindowOpacity(t, true);
+}
+window.setWindowTransparency = pct => applyWindowOpacity((Number(pct) || 0) / 100);
+loadWindowOpacity();
 
 /* ---------- I2. 事件绑定 ------------------------------------------- */
 function bindComposer() {
@@ -13023,6 +13308,52 @@ function buildAppearance(st) {
   animField.appendChild(el('div', 'set-hint', '跟随系统 prefers-reduced-motion；选择保存在本机浏览器。'));
   s.appendChild(card([setCardHead('动效'), animField]));
 
+  // 启动页（桌面壳偏好：.cell/cell-app.json 的 splash 段）
+  s.appendChild(buildSplashCard());
+
+  /* 窗口背景透明度：整窗透明后，壁纸的可见度和正文可读性是一对矛盾，
+     这里给一个旋钮（页面最底下的实色画布不透明度），不动面板材质 */
+  if (typeof WINGLASS !== 'undefined' && typeof setWindowTransparency === 'function') {
+    const wt = Math.round(WINGLASS.t * 100);
+    const wrange = el('input');
+    wrange.type = 'range';
+    wrange.min = '0'; wrange.max = '100'; wrange.step = '5';
+    wrange.value = String(wt);
+    wrange.className = 'set-range';
+    const wval = el('span', 'rangeval', wt + '%');
+    const wrow = el('div', 'think-row');
+    wrow.appendChild(wrange);
+    wrow.appendChild(wval);
+    const wticks = el('div', 'range-ticks');
+    const wtickEls = [];
+    for (const [txt, at] of [['不透明', 0], ['半透', 50], ['全透明', 100]]) {
+      const tk = el('span', 'range-tick' + (Math.abs(at - wt) <= 25 ? ' on' : ''), txt);
+      wtickEls.push([tk, at]);
+      wticks.appendChild(tk);
+    }
+    const wdesc = el('div', 'set-hint');
+    const paintWin = () => {
+      const v = Number(wrange.value);
+      wval.textContent = v + '%';
+      wdesc.textContent = v >= 100
+        ? '整窗只剩磨砂玻璃，壁纸在窗后完全可见。'
+        : v <= 0
+          ? '整窗不透明，和普通深色窗口一样（壁纸完全看不到）。'
+          : '页面最底下压 ' + (100 - v) + '% 的实色画布，壁纸仍然透过玻璃可见。';
+      for (const [tk, at] of wtickEls) tk.classList.toggle('on', Math.abs(at - v) <= 25);
+    };
+    wrange.oninput = paintWin;
+    wrange.onchange = () => setWindowTransparency(Number(wrange.value));
+    paintWin();
+    const wfield = el('div', 'set-field');
+    wfield.appendChild(el('label', 'set-label', '背景透明度'));
+    wfield.appendChild(wrow);
+    wfield.appendChild(wticks);
+    wfield.appendChild(wdesc);
+    wfield.appendChild(el('div', 'set-hint', '整窗是 Win11 的系统丙烯酸背衬（壁纸在窗后取景、自动磨砂），这个滑块只改页面自己的底色深浅。设置保存在本机浏览器。'));
+    s.appendChild(card([setCardHead('窗口背景'), wfield]));
+  }
+
   /* 输入卡玻璃：完全无色的材质，唯一可调的是高斯模糊（跟随"透明度"） */
   if (typeof GLASS !== 'undefined' && typeof setGlassPref === 'function') {
     const gt = Math.round(GLASS.t * 100);
@@ -13069,6 +13400,90 @@ function buildAppearance(st) {
   note.appendChild(el('span', null, '（与配置、会话、凭据同一目录）放置 theme.json（label / type / desc / swatch）与 theme.css（覆盖 CSS 变量），刷新本页即可在此选择。'));
   s.appendChild(note);
   return s;
+}
+
+/* 4.7b 启动页 --------------------------------------------------------
+   整窗覆盖的一屏，配置存在 .cell/cell-app.json（随 exe 走，与浏览器
+   profile 无关 —— 它必须在页面加载前就生效）。三种形态：
+     · 内置动画：logo 描边循环 + 标题/副标题 + 进度线
+     · 自定义图片：.cell/splash/<file>（替换 logo）
+     · 自定义整页：.cell/splash/index.html（整屏 iframe，优先级最高） */
+function buildSplashCard() {
+  const sp = Object.assign(
+    { on: true, ms: 1400, title: '', sub: '', bg: '', image: '', anim: 'draw', page: false },
+    (S.prefs || {}).splash || {});
+  const save = patch => setShellPrefs({ splash: patch }).then(out => { if (out && out.ok) renderSettings(); return out; });
+  const kids = [setCardHead('启动页', setBtn('预览', 'ghost sm', () => {
+    if (typeof Splash !== 'undefined') Splash.preview(Object.assign({}, sp, { on: true }));
+  }, 'play'))];
+
+  kids.push(switchRow('显示启动页', sp.on !== false, v => save({ on: v }),
+    '启动/刷新时先显示一屏启动页，界面就绪后淡出。关掉就直接进工作台。'));
+
+  const ti = setInput('cell', sp.title || '');
+  ti.onchange = () => save({ title: ti.value.trim() });
+  kids.push(field('标题', ti, '留空用内置的「cell」。'));
+
+  const su = setInput('本地代理工作台', sp.sub || '');
+  su.onchange = () => save({ sub: su.value.trim() });
+  kids.push(field('副标题', su, '一行说明文字，留空用内置文案。'));
+
+  // 背景色 + 跟随主题
+  const bg = el('input', 'set-color');
+  bg.type = 'color';
+  bg.value = sp.bg || '#111113';
+  bg.onchange = () => save({ bg: bg.value });
+  const bgReset = setBtn('跟随主题', 'ghost sm', () => save({ bg: '' }));
+  const bgRow = el('div', 'splash-row');
+  bgRow.appendChild(bg);
+  bgRow.appendChild(bgReset);
+  kids.push(field('背景色', bgRow, '启动页整屏的底色；「跟随主题」时用当前外观的画布色。'));
+
+  // 展示时长
+  const range = el('input', 'set-range');
+  range.type = 'range';
+  range.min = '0'; range.max = '4000'; range.step = '100';
+  range.value = String(Number(sp.ms) || 0);
+  const val = el('span', 'rangeval', ((Number(sp.ms) || 0) / 1000).toFixed(1) + 's');
+  const row = el('div', 'think-row');
+  row.appendChild(range); row.appendChild(val);
+  range.oninput = () => { val.textContent = (Number(range.value) / 1000).toFixed(1) + 's'; };
+  range.onchange = () => save({ ms: Number(range.value) });
+  kids.push(field('最短展示时长', row, '界面比这更快就绪时，启动页也会停满这个时长，避免一闪而过。'));
+
+  kids.push(segRow('动画', [
+    { v: 'draw', label: '描边', desc: 'logo 线条循环绘制（默认）' },
+    { v: 'pulse', label: '呼吸', desc: '线条常亮，整体轻微呼吸' },
+    { v: 'none', label: '静止', desc: '不播放动画' },
+  ], sp.anim || 'draw', v => save({ anim: v }), '只影响内置 logo；自定义图片/整页由它自己的内容决定。'));
+
+  // 自定义图片
+  const imgRow = el('div', 'splash-row');
+  if (sp.image) {
+    const thumb = el('img', 'splash-thumb');
+    thumb.src = '/api/splash/asset?v=' + Date.now();
+    thumb.alt = '';
+    imgRow.appendChild(thumb);
+    imgRow.appendChild(el('span', 'splash-file', sp.image));
+  } else {
+    imgRow.appendChild(el('span', 'splash-file', '未选择（使用内置 logo）'));
+  }
+  const pick = setBtn('选择图片…', 'sm', async () => {
+    if (typeof window.host_pick_splash !== 'function') { toast('只在桌面壳里可以选本地图片', 'info'); return; }
+    const r = await window.host_pick_splash();
+    if (r && r.ok && r.name) { await save({ image: r.name }); toast('已设为启动页图片', 'ok'); }
+  }, 'file');
+  imgRow.appendChild(pick);
+  if (sp.image) imgRow.appendChild(setBtn('清除', 'ghost sm', () => save({ image: '' })));
+  kids.push(field('自定义图片', imgRow, 'png / jpg / gif / webp / svg；选中后复制到 exe 目录的 .cell/splash/，替换 logo（标题仍在图片下方）。'));
+
+  const cardEl = card(kids);
+  if (sp.page) {
+    cardEl.appendChild(setNote('检测到 .cell/splash/index.html：启动页会整屏加载这个页面，上面的标题/图片/动画都不再生效。', 'info'));
+  } else {
+    cardEl.appendChild(setNote('想完全自己画一屏？把任意 HTML 放到 exe 目录的 .cell/splash/index.html（同源、可引用 .cell/splash/ 下的图片），它会整屏接管启动页。', 'info'));
+  }
+  return cardEl;
 }
 
 /* 4.8 关于 */
@@ -14788,8 +15203,9 @@ var PMOCK_TEXT = {
     '    curl -s localhost:8787/api/cmd/git.status -d "{}"\n',
   'src/ui/src/index.html': '<!DOCTYPE html>\n<html lang="zh-CN" data-anim="2">\n<head>\n' +
     '<meta charset="utf-8">\n<title>cell · 本地代理工作台</title>\n</head>\n<body>\n' +
-    '<div id="app">\n  <div id="shell">\n    <aside id="sidebar">…</aside>\n' +
-    '    <div id="main">\n      <div id="topbar">…</div>\n      <div id="workarea">\n' +
+    '<div id="splash">…</div>\n<div id="app">\n  <header id="titlebar">…</header>\n  <div id="shell">\n' +
+    '    <aside id="sidebar">…</aside>\n' +
+    '    <div id="main">\n      <div id="workarea">\n' +
     '        <div id="centre"><div id="tabview"></div></div>\n' +
     '        <aside id="rightdock"><div class="dockhead">…</div><div id="dockBody"></div></aside>\n' +
     '      </div>\n    </div>\n  </div>\n</div>\n</body>\n</html>\n',
@@ -18508,7 +18924,7 @@ function wireEvents() {
   $('#btnTerminal').onclick = () => openDock('terminal');
   $('#btnWsFilter').onclick = () => toggleSidebarFilter();
   $('#btnSidebarToggle').onclick = () => toggleSidebar();
-  $('#btnSidebarTop').onclick = () => toggleSidebar();
+  if ($('#btnSidebarTop')) $('#btnSidebarTop').onclick = () => toggleSidebar();
   $('#navBack').onclick = () => Nav.back();
   $('#navFwd').onclick = () => Nav.fwd();
   $('#navRefresh').onclick = () => Nav.refresh();
@@ -18660,6 +19076,9 @@ function enterDemo(reason) {
 
 async function boot() {
   Theme.init();
+  // 启动页：HTML 里已经先于应用画出来了，这里只是接上生命周期
+  if (typeof Splash !== 'undefined') Splash.init();
+  if (typeof wireShell === 'function') wireShell(); // 无边框窗口的按钮/拖拽/缩放
   S.closedTabs = loadClosedTabs();
   S.groupsClosed = loadGroupState();
   restoreSidebarState();
@@ -18675,19 +19094,34 @@ async function boot() {
     else if (qd && { start: 1, files: 2, git: 3, terminal: 4, teamwork: 5, notices: 6, archives: 7 }[qd]) openDock(qd);
     if (q.get('settings') === '1') openSettings(q.get('section') || undefined);
   } catch (e) {}
-  if (MOCK) { enterDemo('file:// 或 ?mock=1'); return; }
+  if (MOCK) {
+    enterDemo('file:// 或 ?mock=1');
+    if (typeof Splash !== 'undefined') Splash.finish();
+    return;
+  }
   renderPanes(); renderTabbar(); renderSidebar(); renderFoot(); renderStatLine(); renderDock();
   try {
     const st = await api('state', {});
     if (!st || st.ok === false) throw new Error(st && st.error ? st.error : '状态请求失败');
     S.everConnected = true; S.connected = true;
     applyHello(st, true);
+    applySplashPrefs();
     Transport.init();
     fetchSkills(); // /skill 的参数补全：后台拉一次，失败就退回空列表（不挡启动）
     refreshUsages(false); // 侧栏「用量」chip 的后台取数（失败就保持「—」）
   } catch (e) {
     enterDemo('无法连接后端：' + (e && e.message ? e.message : e));
   }
+  if (typeof Splash !== 'undefined') Splash.finish(); // 启动完成，淡出启动页
+}
+
+/* 启动页配置来自 .cell/cell-app.json（state.prefs.splash）：默认什么都不写
+   就是内置动画。演示模式（无后端）没有 prefs，走默认。 */
+function applySplashPrefs() {
+  if (typeof Splash === 'undefined') return;
+  const sp = (S.prefs || {}).splash;
+  if (sp) Splash.apply(sp);
+  else Splash.finish();
 }
 
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
@@ -18735,6 +19169,224 @@ async function openReleasePage(url) {
     return;
   }
   if (!window.open(url, '_blank', 'noopener')) toast('请手动打开：' + url, 'info', 8000);
+}
+
+/* ==== js/10-shell.js ================================================= */
+
+/* =====================================================================
+   O. 桌面壳：无边框窗口 + 启动页
+
+   O.1 窗口
+   ---------------------------------------------------------------------
+   Windows 上窗口是真的没有边框（src/cell-app.cpp 的 frame：WM_NCCALCSIZE
+   把非客户区算成 0），所以「拖窗口 / 缩放 / 最小化 / 最大化 / 关闭」全得
+   由这一栏自己发起，走 host_win 绑定：
+
+       drag    → 系统自己的移动循环（Aero Snap、贴边分屏照旧）
+       resize  → 同一个循环的缩放版本
+       min / max / restore / toggle / close
+
+   WebView2 是覆盖整个客户区的子窗口，父窗口收不到 WM_NCHITTEST，所以
+   连"鼠标在不在边框上"都只能由页面判断 —— 这就是 #edges 那八条热区的
+   由来（光标样式也交给 CSS）。
+
+   浏览器里打开同一个页面时 host_win 不存在：窗口按钮和热区都不出现，
+   布局照旧（那一栏仍然可用，只是没有窗口操作）。
+
+   O.2 启动页
+   ---------------------------------------------------------------------
+   整窗覆盖，第一帧就在（HTML 里先于 #app），boot 完成后淡出。内容按
+   .cell/cell-app.json 的 splash 段定制，三种形态：
+     内置动画（默认）/ 自定义图片 / 自定义整页（.cell/splash/index.html）
+   ===================================================================== */
+
+/* ---------- O.1 窗口控制 ------------------------------------------- */
+const Win = {
+  avail: typeof window.host_win === 'function',
+  maximized: false,
+
+  call(op, extra) {
+    if (!this.avail) return Promise.resolve(null);
+    const payload = Object.assign({ op: op }, extra || {});
+    return window.host_win(payload).then(r => {
+      if (r && typeof r.maximized === 'boolean') this.setMax(r.maximized);
+      return r;
+    }).catch(() => null);
+  },
+
+  // 最大化状态：按钮图标、缩放热区、页面留白都跟着它变
+  setMax(on) {
+    on = !!on;
+    if (on === this.maximized) return;
+    this.maximized = on;
+    const b = $('#wcMax');
+    if (b) {
+      b.title = on ? '还原' : '最大化';
+      b.setAttribute('aria-label', b.title);
+      const a = b.querySelector('.ico-max'), r = b.querySelector('.ico-restore');
+      if (a) a.hidden = on;
+      if (r) r.hidden = !on;
+    }
+    // 最大化时没有可拖的边
+    const e = $('#edges');
+    if (e) e.hidden = !this.avail || on;
+  },
+
+  drag() { return this.call('drag'); },
+  resize(dir) { return this.call('resize', { dir: dir }); },
+  minimize() { return this.call('min'); },
+  toggle() { return this.call('toggle'); },
+  close() { return this.call('close'); },
+  ready() { return this.call('ready'); },
+};
+// C++ 侧在 WM_SIZE 里广播：双击 / Win+↑ / 贴边分屏都不经过页面
+window.__cellWinState = st => { if (st && typeof st.maximized === 'boolean') Win.setMax(st.maximized); };
+
+/* ---------- O.2 启动页 --------------------------------------------- */
+const SPLASH_DEFAULT_SUB = '本地代理工作台';
+
+const Splash = {
+  node: null,
+  tpl: null,
+  started: 0,
+  minMs: 1400,
+  hidden: false,
+  cfg: null,
+
+  init() {
+    this.node = $('#splash');
+    if (!this.node) return;
+    this.tpl = this.node.cloneNode(true); // 「预览」时用它重挂一份
+    this.started = performance.now();
+  },
+
+  remount() {
+    if (!this.tpl) return null;
+    if (this.node) this.node.remove();
+    const n = this.tpl.cloneNode(true);
+    document.body.insertBefore(n, document.body.firstChild);
+    this.node = n;
+    this.hidden = false;
+    this.started = performance.now();
+    return n;
+  },
+
+  /* cfg = prefs.splash：{on, ms, title, sub, bg, image, anim, page} */
+  apply(cfg) {
+    cfg = cfg || {};
+    if (!this.node) this.init();
+    if (!this.node) return;
+    this.cfg = cfg;
+    if (cfg.on === false) { this.hideNow(); return; }
+
+    this.minMs = Math.max(0, Number(cfg.ms) || 0);
+    const root = this.node;
+    root.style.background = cfg.bg || '';
+
+    const title = $('#splashTitle'), sub = $('#splashSub');
+    if (title) title.textContent = (cfg.title || '').trim() || 'cell';
+    if (sub) sub.textContent = (cfg.sub || '').trim() || SPLASH_DEFAULT_SUB;
+
+    // 自定义整页优先：同源 iframe 铺满，内置内容整体让位
+    const frame = $('#splashFrame'), inner = $('#splashInner');
+    if (cfg.page && frame) {
+      if (!frame.getAttribute('src')) frame.src = '/api/splash/page';
+      frame.hidden = false;
+      if (inner) inner.hidden = true;
+      return;
+    }
+    if (frame) frame.hidden = true;
+    if (inner) inner.hidden = false;
+
+    // 自定义图片替换 logo；图片坏了就退回内置 logo（onerror）
+    const img = $('#splashImage'), logo = $('#splashLogo');
+    if (cfg.image && img) {
+      img.onerror = () => { img.hidden = true; if (logo) logo.hidden = false; };
+      img.src = '/api/splash/asset?v=' + Date.now();
+      img.hidden = false;
+      if (logo) logo.hidden = true;
+    } else {
+      if (img) { img.hidden = true; img.removeAttribute('src'); }
+      if (logo) logo.hidden = false;
+    }
+
+    if (logo) {
+      const anim = cfg.anim || 'draw';
+      logo.classList.toggle('anim-pulse', anim === 'pulse');
+      logo.classList.toggle('anim-none', anim === 'none');
+    }
+  },
+
+  /* boot 结束：至少展示 minMs 再淡出（快启动时不会一闪而过） */
+  finish() {
+    if (this.hidden || !this.node) return;
+    const wait = Math.max(0, this.minMs - (performance.now() - this.started));
+    setTimeout(() => this.hideNow(), wait);
+  },
+
+  hideNow() {
+    const n = this.node;
+    if (!n || this.hidden) return;
+    this.hidden = true;
+    n.classList.add('gone');
+    setTimeout(() => { if (n.parentNode) n.remove(); if (this.node === n) this.node = null; }, 700);
+  },
+
+  /* 设置页的「预览」：重挂一份，按当前配置跑一遍再收起来 */
+  preview(cfg) {
+    if (!this.tpl) this.init();
+    this.remount();
+    this.apply(cfg);
+    this.finish();
+  },
+};
+
+/* ---------- O.3 装配 ------------------------------------------------- */
+function wireShell() {
+  if (!Win.avail) return;
+
+  const ctl = $('#winCtl');
+  if (ctl) ctl.hidden = false;
+  const edges = $('#edges');
+  if (edges) edges.hidden = false;
+
+  const min = $('#wcMin'), max = $('#wcMax'), close = $('#wcClose');
+  if (min) min.onclick = () => Win.minimize();
+  if (max) max.onclick = () => Win.toggle();
+  if (close) close.onclick = () => Win.close();
+
+  // 标题栏空白处 = 拖拽区。按钮 / 页签 / 输入控件不算。
+  const tb = $('#titlebar');
+  if (tb) {
+    let lastDown = 0;
+    tb.addEventListener('mousedown', ev => {
+      if (ev.button !== 0) return;
+      if (ev.target.closest('button, a, input, textarea, select, .tab, .no-drag')) return;
+      ev.preventDefault();
+      const now = performance.now();
+      // 双击标题栏 = 最大化/还原。不能靠浏览器 dblclick：第一次按下就把
+      // 线程交给系统的移动循环了，第二次按下未必还能凑成一次 dblclick。
+      if (now - lastDown < 420) { lastDown = 0; Win.toggle(); return; }
+      lastDown = now;
+      Win.drag();
+    });
+  }
+
+  // 四边四角的缩放热区
+  $$('#edges i').forEach(h => {
+    h.addEventListener('mousedown', ev => {
+      if (ev.button !== 0) return;
+      ev.preventDefault();
+      Win.resize(h.dataset.dir);
+    });
+  });
+
+  Win.ready(); // 告诉 C++：页面在听了，最大化状态可以广播过来
+  // 首帧**先要实色**、画完再切透明：alpha=0 的第一帧会让窗口最上面几像素
+  // 留成白色（"左上角一条浅灰带"，2026-10-31）。延迟放在启动页还盖着的时候。
+  setTimeout(() => Win.call('glass'), 260);
+
+
 }
 
 </script>

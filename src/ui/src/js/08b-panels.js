@@ -414,8 +414,9 @@ var PMOCK_TEXT = {
     '    curl -s localhost:8787/api/cmd/git.status -d "{}"\n',
   'src/ui/src/index.html': '<!DOCTYPE html>\n<html lang="zh-CN" data-anim="2">\n<head>\n' +
     '<meta charset="utf-8">\n<title>cell · 本地代理工作台</title>\n</head>\n<body>\n' +
-    '<div id="app">\n  <div id="shell">\n    <aside id="sidebar">…</aside>\n' +
-    '    <div id="main">\n      <div id="topbar">…</div>\n      <div id="workarea">\n' +
+    '<div id="splash">…</div>\n<div id="app">\n  <header id="titlebar">…</header>\n  <div id="shell">\n' +
+    '    <aside id="sidebar">…</aside>\n' +
+    '    <div id="main">\n      <div id="workarea">\n' +
     '        <div id="centre"><div id="tabview"></div></div>\n' +
     '        <aside id="rightdock"><div class="dockhead">…</div><div id="dockBody"></div></aside>\n' +
     '      </div>\n    </div>\n  </div>\n</div>\n</body>\n</html>\n',

@@ -1,15 +1,24 @@
 /* ---- §3 分子 Molecules -------------------------------------------- */
 /* 3.1 侧栏 ---------------------------------------------------------- */
-#sidebar{padding:10px 10px 8px}
-.sb-head{display:flex;align-items:center;gap:8px;padding:2px 4px 12px}
-.brand{display:flex;align-items:center;gap:8px;min-width:0;flex:1;cursor:default}
-.brand .logo{width:22px;height:22px;flex:none;color:var(--fg)}
+#sidebar{padding:12px 10px 8px}
+/* 品牌标识住在标题栏里（不是侧栏顶部）：一条栏里同时是 logo、窗口按钮和
+   页签，所以这里只负责它自己的排布，flex 由 #titlebar 决定。 */
+.brand{display:flex;align-items:center;gap:8px;min-width:0;cursor:default}
+.brand .logo{width:22px;height:22px;flex:none;color:var(--fg);position:relative}
 .brand .logo svg{width:100%;height:100%}
-.brand-name{font-size:17px;font-weight:650;letter-spacing:-.02em;line-height:1}
-.brand-badge{font-family:var(--mono);font-size:9px;font-weight:700;letter-spacing:.1em;
-  padding:2px 5px;border-radius:5px;color:var(--fg3);background:var(--raise);
-  border:1px solid var(--line2);line-height:1.2}
+.brand-name{font-size:16px;font-weight:650;letter-spacing:-.02em;line-height:1}
+/* 徽章和 16px 的文字、20px 的 logo 同高（14px），只靠淡底色 + 1px 内描边
+   区分，不占布局 —— 加外边框会把它抬成一个按钮，在这一行里比品牌名还抢眼。 */
+.brand-badge{display:inline-flex;align-items:center;height:14px;padding:0 5px;
+  font-family:var(--mono);font-size:8.5px;font-weight:700;letter-spacing:.09em;line-height:1;
+  border-radius:4px;color:var(--fg3);background:var(--raise);
+  box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--fg) 7%,transparent)}
 .brand.busy .logo{animation:breathe 1.6s var(--ease) infinite}
+/* 工作时：logo 外面套一圈转动的弧，比单纯缩放更能说明「正在跑」 */
+.brand.working .logo::after{content:"";position:absolute;inset:-5px;border-radius:50%;
+  border:1.5px solid transparent;border-top-color:var(--accent);
+  border-right-color:color-mix(in srgb,var(--accent) 45%,transparent);
+  animation:spin 1.05s linear infinite;pointer-events:none}
 .logo .ava{width:100%;height:100%}
 .ava-frame{opacity:.9}
 .ava-path{stroke-dasharray:100;animation:avaDraw 1.1s var(--ease) infinite}
@@ -70,7 +79,7 @@
 .sb-filterbox{padding:4px 2px 6px;flex:none}
 .sb-filter{height:30px!important;font-size:12.5px;background:var(--bg3);border-color:var(--line2)}
 /* 3.2 标签栏 -------------------------------------------------------- */
-.tab{display:flex;align-items:center;gap:7px;height:30px;padding:0 8px 0 10px;border-radius:9px;
+.tab{display:flex;align-items:center;gap:7px;height:32px;padding:0 8px 0 10px;border-radius:9px;
   color:var(--fg2);font-size:13px;cursor:pointer;flex:none;max-width:220px;border:1px solid transparent;
   transition:background var(--dur) var(--ease),color var(--dur) var(--ease),border-color var(--dur) var(--ease)}
 .tab:hover{background:var(--raise);color:var(--fg)}
@@ -83,10 +92,10 @@
   transition:opacity var(--dur) var(--ease),background var(--dur) var(--ease),color var(--dur) var(--ease)}
 .tab:hover .x,.tab.active .x{opacity:1}
 .tab .x:hover{background:var(--raise2);color:var(--fg)}
-.tab-add{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:7px;
+.tab-add{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:8px;
   color:var(--fg3);flex:none;transition:background var(--dur) var(--ease),color var(--dur) var(--ease)}
 .tab-add:hover{background:var(--raise);color:var(--fg)}
-.tab-add .uico{width:14px;height:14px}
+.tab-add .uico{width:16px;height:16px}
 /* 标签菜单 */
 .tabmenu{position:fixed;z-index:130;min-width:240px;max-width:360px;padding:5px;
   background:var(--panel2);border:1px solid var(--line2);border-radius:12px;box-shadow:var(--shadow);
@@ -135,7 +144,7 @@
 #navUpdate:hover{color:var(--accent-hi);background:var(--accent-soft);border-color:var(--accent-soft)}
 /* 3.4 右侧面板外壳 -------------------------------------------------- */
 .dockhead{height:46px;flex:none;display:flex;align-items:center;gap:6px;padding:0 8px 0 10px;
-  border-bottom:1px solid var(--line);background:var(--bg)}
+  border-bottom:1px solid var(--glass-hair);background:transparent}
 .docktabs{flex:1;min-width:0;display:flex;align-items:center;gap:2px;overflow-x:auto;scrollbar-width:none}
 .docktabs::-webkit-scrollbar{height:0}
 .docktab{display:inline-flex;align-items:center;gap:5px;height:29px;padding:0 8px;border-radius:8px;
@@ -145,7 +154,7 @@
 .docktab:hover{background:var(--raise);color:var(--fg2)}
 .docktab.on{background:var(--accent-soft);color:var(--accent)}
 .docktab.on:hover{background:color-mix(in srgb,var(--accent) 18%,transparent)}
-.dockbody{flex:1;min-height:0;overflow:hidden;display:flex;flex-direction:column;background:var(--bg)}
+.dockbody{flex:1;min-height:0;overflow:hidden;display:flex;flex-direction:column;background:transparent}
 #rightdock{container-type:inline-size;container-name:dk}
 @container dk (max-width: 520px){
   .docktab span{display:none}

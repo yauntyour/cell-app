@@ -1,0 +1,64 @@
+/* =====================================================================
+   §10 启动页（splash）
+   ---------------------------------------------------------------------
+   整窗覆盖的一屏，页面第一帧就是它 —— 窗口打开时不会先闪一屏空白。
+   默认是内置 logo 的描边动画；也可以换成自定义图片（.cell/splash/<file>）
+   或整页 HTML（.cell/splash/index.html）。配置在 .cell/cell-app.json 的
+   splash 段，设置 → 外观 → 启动页 里改。
+
+   动画约定（10-shell.js 只切 class，不写内联样式）：
+     · 默认（无 class）     描边循环绘制
+     · .anim-pulse         整体呼吸，线条常亮
+     · .anim-none          静止常亮
+   ===================================================================== */
+#splash{position:fixed;inset:0;z-index:500;display:flex;align-items:center;justify-content:center;
+  background:var(--bg);overflow:hidden;isolation:isolate;
+  transition:opacity 380ms var(--ease),visibility 0s linear 380ms}
+#splash.gone{opacity:0;visibility:hidden;pointer-events:none}
+/* 关掉启动页时由 C++ 在文档创建前打上这个 class（src/cell-app.cpp 的
+   w.init）：首帧就没有启动页，而不是画出来再淡出。 */
+html.no-splash #splash{display:none}
+/* 启动页背后的一团冷光：让整屏不至于是一块死平的颜色 */
+#splash::before{content:"";position:absolute;width:min(72vw,560px);aspect-ratio:1;border-radius:50%;
+  background:radial-gradient(circle,var(--accent-soft),transparent 68%);
+  opacity:.75;filter:blur(6px);z-index:0;pointer-events:none}
+
+#splash .sp-inner{display:flex;flex-direction:column;align-items:center;position:relative;z-index:2;
+  animation:fadeUp 420ms var(--ease)}
+.sp-logo{width:96px;height:96px;color:var(--fg);margin-bottom:24px}
+.sp-logo svg{width:100%;height:100%;overflow:visible}
+.sp-frame{stroke-dasharray:100;stroke-dashoffset:100;opacity:.85;
+  animation:spFrameIn 2.4s var(--ease) infinite}
+.sp-path{stroke-dasharray:100;stroke-dashoffset:100;
+  animation:spDrawIn 2.4s var(--ease) infinite}
+.sp-logo.anim-pulse{animation:spPulse 2.2s var(--ease) infinite}
+.sp-logo.anim-pulse .sp-frame,.sp-logo.anim-pulse .sp-path,
+.sp-logo.anim-none .sp-frame,.sp-logo.anim-none .sp-path{animation:none;stroke-dashoffset:0}
+
+/* 自定义图片：替换 logo，仍保留标题/副标题 */
+.sp-image{max-width:min(62vw,420px);max-height:46vh;object-fit:contain;margin-bottom:24px;
+  border-radius:14px}
+
+.sp-title{font-family:var(--sans-display);font-size:27px;font-weight:650;letter-spacing:-.03em;
+  line-height:1.15;color:var(--fg)}
+.sp-sub{margin-top:7px;font-size:12.5px;color:var(--fg3);letter-spacing:.03em}
+.sp-bar{margin-top:26px;width:136px;height:2px;border-radius:2px;background:var(--line);overflow:hidden}
+.sp-bar i{display:block;width:42%;height:100%;border-radius:2px;background:var(--accent);
+  animation:spBar 1.35s var(--ease) infinite}
+
+/* 自定义整页：同源 iframe 铺满，内置内容全部让位 */
+.sp-page{position:absolute;inset:0;width:100%;height:100%;border:0;background:transparent;z-index:2}
+
+@keyframes spFrameIn{0%{stroke-dashoffset:100;opacity:0}18%{opacity:.85}55%{stroke-dashoffset:0;opacity:.85}100%{stroke-dashoffset:0;opacity:.85}}
+@keyframes spDrawIn{0%{stroke-dashoffset:100}12%{stroke-dashoffset:100}62%{stroke-dashoffset:0}100%{stroke-dashoffset:0}}
+@keyframes spPulse{0%,100%{opacity:.78;transform:scale(.985)}50%{opacity:1;transform:scale(1.02)}}
+@keyframes spBar{0%{transform:translateX(-110%)}55%{transform:translateX(70%)}100%{transform:translateX(250%)}}
+
+/* 动效关掉（设置里的动画等级 = 关，或系统 prefers-reduced-motion）时
+   animation 全部失效，描边会停在 dashoffset:100 的"还没画"状态 —— logo
+   整块空白。这里直接给成画完的样子。 */
+html[data-anim="0"] .sp-frame,
+html[data-anim="0"] .sp-path{animation:none;stroke-dashoffset:0}
+
+/* 浅色主题下冷光别太亮 */
+html[data-theme="light"] #splash::before{opacity:.5}

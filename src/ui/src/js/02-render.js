@@ -357,12 +357,14 @@ function renderBrand() {
   const box = $('#brandLogo');
   if (!box) return;
   if (!brandIconNode) brandIconNode = box.firstElementChild;
-  const t = S.tabs.get(S.active);
-  const busy = !!(t && t.busy);
+  // 标题栏里的 logo 是全局的：任何一个工作区在跑，它就该动起来
+  // （后台工作区发起的回合同样算"工作中"）
+  let busy = false;
+  for (const [, t] of S.tabs) { if (t && t.busy) { busy = true; break; } }
   if (busy === brandBusy) return;
   brandBusy = busy;
   const brand = $('#brandWrap');
-  if (brand) brand.classList.toggle('busy', busy);
+  if (brand) { brand.classList.toggle('busy', busy); brand.classList.toggle('working', busy); }
   box.classList.toggle('busy', busy);
   box.title = busy ? '运行中' : '';
   box.replaceChildren(busy ? avaSVG() : brandIconNode);
@@ -541,8 +543,8 @@ function renderStartPanel(body, t) {
 const SIDEBAR_KEY = 'cell.sidebarCollapsed';
 function paintSidebarToggle() {
   const col = !!S.sidebarCollapsed;
-  // 顶栏按钮在侧栏收起后仍然可见——它是重新打开侧栏的入口
-  const top = $('#btnSidebarTop');
+  // 标题栏里的开关在侧栏收起后仍然可见——它是重新打开侧栏的入口
+  const top = $('#btnSidebarToggle') || $('#btnSidebarTop');
   if (top) {
     top.setAttribute('aria-pressed', col ? 'false' : 'true');
     top.title = (col ? '展开侧栏' : '收起侧栏') + ' (Ctrl+B)';

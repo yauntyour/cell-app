@@ -1,9 +1,16 @@
 /* ---- §1 基础 ------------------------------------------------------ */
 *{box-sizing:border-box}
 html,body{height:100%;margin:0}
-html{background:var(--bg)}
+/* 窗口是透明的：底色由 #app 的 --glass-scrim 统一给，页面本身不能有不透明底，
+   否则 DWM 的背衬（磨砂后的桌面）会被这张底盖住。 */
+html,body{background:transparent}
+/* 背景透明度（设置 → 外观 → 窗口背景）：这层实色画布压在页面最底下，
+   --glass-solid = 1 - 透明度。0 = 完全没有这层（纯玻璃，壁纸最清楚），
+   1 = 完全不透明（和改造前的实色窗口一样）。 */
+body::before{content:"";position:fixed;inset:0;z-index:-1;background:var(--bg);
+  opacity:var(--glass-solid,0);pointer-events:none}
 body{
-  background:var(--bg); color:var(--fg); font-family:var(--sans);
+  color:var(--fg); font-family:var(--sans);
   font-size:14px; line-height:1.6; overflow:hidden;
   -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale;
   text-rendering:optimizeLegibility;

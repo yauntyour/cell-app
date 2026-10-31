@@ -25,7 +25,7 @@
 
 /* 会话顶栏：会话标题 + 清空上下文（hero 态隐藏，让空态更纯粹） */
 .chathead{display:flex;align-items:center;gap:10px;flex:none;height:40px;padding:0 20px;
-  border-bottom:1px solid var(--line);background:var(--bg)}
+  border-bottom:1px solid var(--glass-hair);background:transparent}
 .chathead .cht-title{font-size:13px;font-weight:600;color:var(--fg2);min-width:0}
 .chathead .cht-title:hover{color:var(--fg)}
 .chathead .icon-btn{color:var(--fg4)}
@@ -33,6 +33,14 @@
 .tabpane.hero .chathead{display:none}
 
 .chat{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;
+  /* 正文压在会滚动的玻璃上：壁纸亮的地方白字会糊。这里给消息列一层很淡的
+     中心纱（不是面板，没有边），远离中心的地方全透明 —— 窗口的"透明"由
+     四周交代，可读性由中间这层纱交代。 */
+  background:radial-gradient(115% 95% at 50% 45%,
+    rgba(8,8,11,.34) 0%,
+    rgba(8,8,11,.20) 55%,
+    rgba(8,8,11,.06) 82%,
+    rgba(8,8,11,0) 100%);
   /* 底部留白读 --composer-pad（由 02-render2-chat.js 的 syncJumpAnchors 按卡片
      **实测**上界写入）：卡片高度在 Teamwork 模式 / 72vh 限高下都不等于
      --composer-h，用变量推算会把最后几条消息压在卡片底下。

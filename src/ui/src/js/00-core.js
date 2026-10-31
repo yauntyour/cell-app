@@ -94,7 +94,9 @@ function esc(s) {
    见 02-atoms.css §2.8）。iconHtml 给 innerHTML 场景，iconEl 给
    appendChild 场景；名字取不到时返回空 SVG（不抛错）。              */
 const ICON_PATHS = {
-  plus: '<path d="M12 5v14M5 12h14"/>',
+  // 满格（17/24）：加号原本只占 14/24，和 search / panel 这些 71% 的图标
+  // 摆在一行里明显偏小，标题栏上尤其明显
+  plus: '<path d="M12 3.5v17M3.5 12h17"/>',
   folder: '<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
   search: '<circle cx="11" cy="11" r="7"/><path d="M20.5 20.5 16.2 16.2"/>',
   sliders: '<path d="M4 8.5h8.5M17.5 8.5H20M4 15.5h2.5M11.5 15.5H20"/><circle cx="15" cy="8.5" r="2.2"/><circle cx="9" cy="15.5" r="2.2"/>',

@@ -31,6 +31,7 @@
 #include <csignal>
 #include <cstdlib> // std::strtol for the --serve/--headless port parser
 #ifdef _WIN32
+#include <dwmapi.h>   // DwmSetWindowAttribute — 圆角 / 深色窗口框（frame）
 #include <shellapi.h> // NOTIFYICONDATAW / Shell_NotifyIconW — the tray icon
 #include <shobjidl.h> // IFileOpenDialog — the native picker behind host_pick_folder
 #endif
@@ -352,6 +353,328 @@ namespace app
             }
         }
     } // namespace tray
+
+    // =====================================================================
+    //  frame — 真·无边框窗口（页面自绘标题栏）
+    //
+    //  Windows 上**保留** WS_CAPTION / WS_THICKFRAME：DWM 的投影、贴边分屏、
+    //  最大化动画都挂在它们身上。真正去掉标题栏的是 WM_NCCALCSIZE
+    //  —— 它把非客户区算成 0，于是客户区就是整个窗口，边框和标题栏都不再
+    //  占位也不被绘制。窗口看上去只剩内容，但仍然是系统眼里的"正常窗口"。
+    //
+    //  鼠标交互由页面负责：WebView2 是覆盖整个客户区的子窗口，父窗口根本
+    //  收不到 WM_NCHITTEST，所以拖拽/缩放只能由页面发起 —— 页面的拖拽区调
+    //  host_win {op:"drag"}，这里换发 WM_NCLBUTTONDOWN + HTCAPTION，走的是
+    //  系统自己的移动循环，Aero Snap、拖到边缘分屏、最大化后拖拽还原全部
+    //  照旧。缩放同理（HTLEFT / HTTOPLEFT / …）。
+    // =====================================================================
+    namespace frame
+    {
+        static HWND g_win = nullptr;
+        static WNDPROC g_prev = nullptr; // webview.h 原来的窗口过程
+        static bool g_page_ready = false;
+        static std::function<void(const std::string &)> g_eval; // UI 线程上的 eval
+        static void *g_controller = nullptr;                    // ICoreWebView2Controller*
+        static int frame_pad()
+        {
+            return GetSystemMetrics(SM_CXSIZEFRAME) + GetSystemMetrics(SM_CXPADDEDBORDER);
+        }
+
+        // 最大化状态变了就告诉页面：窗口按钮要在 最大化 ⇄ 还原 之间切换，
+        // 而 Win+↑ / 双击 / 贴边分屏都不经过页面，只能由这里广播。
+        static void notify_state()
+        {
+            if (!g_win || !g_page_ready || !g_eval)
+                return;
+            const bool maxed = IsZoomed(g_win) != 0;
+            g_eval(std::string("window.__cellWinState&&window.__cellWinState({maximized:") +
+                   (maxed ? "true" : "false") + "})");
+        }
+
+        static LRESULT CALLBACK proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
+        {
+            switch (msg)
+            {
+            case WM_NCCALCSIZE:
+                // 唯一的"去边框"动作：客户区 = 窗口矩形。
+                // 最大化时系统给的矩形比屏幕大一圈（正是边框厚度），不减掉
+                // 内容会溢出到屏幕外、底部被任务栏切掉。
+                if (wp)
+                {
+                    if (IsZoomed(hwnd))
+                    {
+                        auto *p = reinterpret_cast<NCCALCSIZE_PARAMS *>(lp);
+                        const int b = frame_pad();
+                        p->rgrc[0].left += b;
+                        p->rgrc[0].right -= b;
+                        p->rgrc[0].top += b;
+                        p->rgrc[0].bottom -= b;
+                    }
+                }
+                return 0;
+            case WM_SIZE:
+                if (wp != SIZE_MINIMIZED)
+                    notify_state();
+                break;
+            case WM_NCACTIVATE:
+                // 没有非客户区可重绘：直接放行会闪一下旧边框
+                if (wp == FALSE)
+                    return TRUE;
+                break;
+            case WM_ERASEBKGND:
+                // 透明窗口不能擦背景：擦一次就是一帧不透明的底色
+                return 1;
+            case WM_SYSKEYDOWN:
+                // WS_SYSMENU 被摘掉后（见 paint_dwm）DefWindowProc 不再把
+                // Alt+F4 翻成 SC_CLOSE，这里自己补上，行为与系统窗口一致。
+                if (wp == VK_F4 && (lp & (1 << 29)))
+                {
+                    PostMessageW(hwnd, WM_CLOSE, 0, 0);
+                    return 0;
+                }
+                break;
+            default:
+                break;
+            }
+            return CallWindowProcW(g_prev, hwnd, msg, wp, lp);
+        }
+
+        static void paint_dwm(HWND hwnd)
+        {
+            // Win11：圆角 + 深色窗口框；旧系统上这两个属性不存在，失败无妨
+            constexpr DWORD kCorner = 33; // DWMWA_WINDOW_CORNER_PREFERENCE
+            constexpr int kRound = 2;     // DWMWCP_ROUND
+            int pref = kRound;
+            DwmSetWindowAttribute(hwnd, kCorner, &pref, sizeof(pref));
+            BOOL dark = TRUE;
+            DwmSetWindowAttribute(hwnd, 20 /*DWMWA_USE_IMMERSIVE_DARK_MODE*/, &dark, sizeof(dark));
+
+            // 整窗透明：整块客户区交给 DWM 的「系统背衬」，壁纸在窗后直接取景。
+            // 页面不再画不透明底（见 01-base.css），只用自己的 alpha 叠在背衬上，
+            // 于是玻璃面板下看到的是磨砂过的桌面，而不是一张静态截图。
+            // 背衬要铺满客户区，必须把边框整个扩展出去（-1 = 整窗都是边框）；
+            // 不扩展时背衬只盖住边框，客户区看到的是**没磨砂的桌面**（2026-10-31 实测）。
+            // 左上角那条 8px 浅灰带是 DWM 画的调整边框，靠下面的 BORDER_COLOR=none 去掉。
+            MARGINS m{-1, -1, -1, -1};
+            DwmExtendFrameIntoClientArea(hwnd, &m);
+            constexpr DWORD kBackdrop = 38; // DWMWA_SYSTEMBACKDROP_TYPE
+            constexpr int kAcrylic = 3;     // DWMSBT_TRANSIENTWINDOW（丙烯酸）
+            int backdrop = kAcrylic;
+            DwmSetWindowAttribute(hwnd, kBackdrop, &backdrop, sizeof(backdrop));
+            // 边框线也去掉：无边框窗口不该有那 1px 的系统描边
+            constexpr DWORD kBorder = 34;          // DWMWA_BORDER_COLOR
+            constexpr DWORD kNoBorder = 0xFFFFFFFE; // DWMWA_COLOR_NONE
+            DwmSetWindowAttribute(hwnd, kBorder, &kNoBorder, sizeof(kNoBorder));
+            // 这里原来装的是实色画刷（#111113）：它会盖住背衬，透明窗口不能有底色。
+            // 首帧的深色由页面自己的 scrim（--glass-scrim）负责，不再靠窗口刷子。
+            SetClassLongPtrW(hwnd, GCLP_HBRBACKGROUND, 0);
+
+            // 窗口按钮的重影：边框整窗扩展后，DWM 会把**自己的**最小化/最大化/
+            // 关闭也画进这块边框里；客户区一透明，它们就从页面那三颗按钮底下透
+            // 出来（右上角一组错位的 10px 字形，2026-10-31 用户截图）。
+            // WS_SYSMENU 就是那三颗系统按钮的开关：摘掉它 DWM 不再画
+            // （DWMWA_CAPTION_BUTTON_BOUNDS 宽度 185→0 实测），其余全部保留 ——
+            // WS_CAPTION / WS_THICKFRAME / MIN·MAXBOX 在位，投影、贴边分屏、
+            // 最大化动画以及 SC_MINIMIZE/MAXIMIZE/RESTORE/CLOSE 都不受影响；
+            // 只有 DefWindowProc 的 Alt+F4→SC_CLOSE 翻译没了，由 proc 补上。
+            const LONG_PTR style = GetWindowLongPtrW(hwnd, GWL_STYLE);
+            SetWindowLongPtrW(hwnd, GWL_STYLE, style & ~WS_SYSMENU);
+        }
+
+        // 只画 WebView2 没覆盖到的缝：子窗口会把属于自己的区域裁掉，所以这层
+        // 底色不会顶替页面的透明区（玻璃照旧取 DWM 背衬）。
+        static void paint_client(HWND hwnd, COLORREF rgb)
+        {
+            HBRUSH br = CreateSolidBrush(rgb);
+            if (!br)
+                return;
+            RECT rc{};
+            GetClientRect(hwnd, &rc);
+            if (HDC dc = GetDC(hwnd))
+            {
+                FillRect(dc, &rc, br);
+                ReleaseDC(hwnd, dc);
+            }
+            DeleteObject(br);
+        }
+
+        // 页面底色：WebView2 默认铺一层不透明白底，不关掉它，DWM 背衬永远被盖在
+        // 一张白纸后面。但**首帧必须是实色**：alpha=0 的第一帧在没有背衬的时候
+        // 会让窗口最上面几像素留成白色，所以启动时先给页面一层 #111113，等页面
+        // ready（Win.ready() → op "ready"）再切成全透明。切透明那一刻，客户区里
+        // 没被 WebView2 盖住的缝会露出建窗时的浅色底 —— 由 op "glass" 里的
+        // paint_client 先刷成同一个深色（2026-10-31）。
+        static void page_background(unsigned char alpha)
+        {
+            auto *c = static_cast<ICoreWebView2Controller *>(g_controller);
+            if (!c)
+                return;
+            ICoreWebView2Controller2 *c2 = nullptr;
+            if (FAILED(c->QueryInterface(IID_ICoreWebView2Controller2, reinterpret_cast<void **>(&c2))) || !c2)
+                return;
+            COREWEBVIEW2_COLOR col{alpha, 0x11, 0x11, 0x13}; // A R G B
+            c2->put_DefaultBackgroundColor(col);
+            c2->Release();
+        }
+
+        // 装到活的 webview 窗口上（UI 线程、run() 之前）。必须在 tray::attach
+        // 之前调用：tray 的过程会链到这里的 proc，再链到 webview 自己的。
+        static void set_controller(void *controller) { g_controller = controller; }
+
+        static bool install(HWND hwnd, std::function<void(const std::string &)> eval)
+        {
+            if (!hwnd || g_win)
+                return false;
+            g_eval = std::move(eval);
+            g_prev = reinterpret_cast<WNDPROC>(
+                SetWindowLongPtrW(hwnd, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(proc)));
+            if (!g_prev)
+                return false;
+            g_win = hwnd;
+            paint_dwm(hwnd);
+            // 让系统按新的非客户区立刻重算一次（否则要等下次 SetWindowPos）
+            SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
+                         SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+            return true;
+        }
+
+        static UINT hit_code(const std::string &dir)
+        {
+            if (dir == "n")
+                return HTTOP;
+            if (dir == "s")
+                return HTBOTTOM;
+            if (dir == "w")
+                return HTLEFT;
+            if (dir == "e")
+                return HTRIGHT;
+            if (dir == "nw")
+                return HTTOPLEFT;
+            if (dir == "ne")
+                return HTTOPRIGHT;
+            if (dir == "sw")
+                return HTBOTTOMLEFT;
+            if (dir == "se")
+                return HTBOTTOMRIGHT;
+            return 0;
+        }
+
+        static std::string state_json(HWND hwnd)
+        {
+            const bool maxed = hwnd && IsZoomed(hwnd);
+            return std::string("{\"ok\":true,\"maximized\":") + (maxed ? "true" : "false") +
+                   ",\"minimized\":false}";
+        }
+
+        // host_win 的实现：{"op":"drag"|"resize"|"min"|"max"|"restore"|
+        // "toggle"|"close"|"ready"|"state", "dir":"nw"}
+        static std::string op(HWND hwnd, const std::string &args)
+        {
+            if (!hwnd || !IsWindow(hwnd))
+                return "{\"ok\":false}";
+            nlohmann::json a = nlohmann::json::parse(args, nullptr, false);
+            if (a.is_array() && !a.empty())
+                a = a[0];
+            if (!a.is_object())
+                a = nlohmann::json::object();
+            const std::string what = a.value("op", "state");
+            if (what == "drag")
+            {
+                // 系统自己的移动循环：松手前不返回（绑定是同步的，页面等它）
+                POINT pt{};
+                GetCursorPos(&pt);
+                ReleaseCapture();
+                SendMessageW(hwnd, WM_NCLBUTTONDOWN, HTCAPTION,
+                             MAKELPARAM(pt.x, pt.y));
+                return state_json(hwnd);
+            }
+            if (what == "resize")
+            {
+                const UINT hit = hit_code(a.value("dir", ""));
+                if (!hit || IsZoomed(hwnd))
+                    return state_json(hwnd);
+                POINT pt{};
+                GetCursorPos(&pt);
+                ReleaseCapture();
+                SendMessageW(hwnd, WM_NCLBUTTONDOWN, hit, MAKELPARAM(pt.x, pt.y));
+                return state_json(hwnd);
+            }
+            if (what == "min")
+                ShowWindow(hwnd, SW_MINIMIZE);
+            else if (what == "max")
+                ShowWindow(hwnd, SW_MAXIMIZE);
+            else if (what == "restore")
+                ShowWindow(hwnd, SW_RESTORE);
+            else if (what == "toggle")
+                ShowWindow(hwnd, IsZoomed(hwnd) ? SW_RESTORE : SW_MAXIMIZE);
+            else if (what == "close")
+                // 走 WM_CLOSE：tray::main_proc 会把它变成"收到托盘"或真退出
+                PostMessageW(hwnd, WM_CLOSE, 0, 0);
+            else if (what == "ready")
+                g_page_ready = true;
+            else if (what == "glass")
+            {
+                // 切透明之前先把客户区刷成页面的 scrim 色：建窗时系统刷的那层
+                // 浅灰底没人会再画，WebView2 一变透明就从标题栏左上角透出来
+                // 一条 129×7 的浅灰带（2026-10-31 用户截图，hide+show 才会掉）。
+                paint_client(hwnd, RGB(0x11, 0x11, 0x13));
+                page_background(0); // 页面首帧画完才切透明（见 page_background）
+            }
+            return state_json(hwnd);
+        }
+    } // namespace frame
+
+    // =====================================================================
+    //  pick_image — 启动页自定义图片的选择框（host_pick_splash 绑定）。
+    //  选中的文件被复制到 .cell/splash/ 下（HTTP 路由只从那里取图），返回
+    //  文件名；页面随后用 prefs.set 把它记进配置。
+    // =====================================================================
+    static std::string pick_splash_image(HWND owner)
+    {
+        std::string out = "{\"ok\":false}";
+        IFileOpenDialog *dlg = nullptr;
+        if (FAILED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER,
+                                    IID_PPV_ARGS(&dlg))))
+            return out;
+        FILEOPENDIALOGOPTIONS opts = 0;
+        if (SUCCEEDED(dlg->GetOptions(&opts)))
+            dlg->SetOptions(opts | FOS_FORCEFILESYSTEM | FOS_FILEMUSTEXIST | FOS_PATHMUSTEXIST);
+        const COMDLG_FILTERSPEC types[] = {
+            {L"图片", L"*.png;*.jpg;*.jpeg;*.gif;*.webp;*.avif;*.bmp;*.svg"},
+            {L"所有文件", L"*.*"}};
+        dlg->SetFileTypes(2, types);
+        if (SUCCEEDED(dlg->Show(owner)))
+        {
+            IShellItem *item = nullptr;
+            if (SUCCEEDED(dlg->GetResult(&item)) && item)
+            {
+                PWSTR p = nullptr;
+                if (SUCCEEDED(item->GetDisplayName(SIGDN_FILESYSPATH, &p)) && p)
+                {
+                    std::filesystem::path src(p);
+                    CoTaskMemFree(p);
+                    // 文件名清洗：只留字母数字和 . - _，其余换下划线
+                    std::string name = src.filename().string();
+                    for (char &c : name)
+                        if (!(std::isalnum((unsigned char)c) || c == '.' || c == '-' || c == '_'))
+                            c = '_';
+                    if (!name.empty() && app::prefs::plain_name_ok(name))
+                    {
+                        std::error_code ec;
+                        auto dir = app::prefs::splash_dir();
+                        std::filesystem::create_directories(dir, ec);
+                        std::filesystem::copy_file(src, dir / name,
+                                                   std::filesystem::copy_options::overwrite_existing, ec);
+                        if (!ec)
+                            out = nlohmann::json{{"ok", true}, {"name", name}}.dump();
+                    }
+                }
+                item->Release();
+            }
+        }
+        dlg->Release();
+        return out;
+    }
 #endif
 
     static void print_usage()
@@ -639,6 +962,16 @@ namespace app
                 w.set_title("cell");
                 w.set_size(900, 600, WEBVIEW_HINT_MIN);
                 w.set_size(1160, 800, WEBVIEW_HINT_NONE);
+#ifdef _WIN32
+                // 页面底色必须在导航之前定下来：alpha=0 的第一帧会让窗口最上面
+                // 几像素留成白色（见 frame::page_background）。先铺实色，页面
+                // ready 后再切透明 —— 顺序反了那条白带就洗不掉了。
+                if (auto c = w.browser_controller(); c.ok())
+                {
+                    frame::set_controller(c.value());
+                    frame::page_background(255);
+                }
+#endif
                 // WebView2 has finished its one-time initialization by now (it
                 // runs inside the constructor): safe to bring the HTTP service
                 // up without its winsock cleanup racing the acceptor (see the
@@ -756,6 +1089,24 @@ namespace app
                     if (auto win = w.window(); win.ok())
                         owner = reinterpret_cast<HWND>(win.value());
                     return pick_folder(owner); });
+
+                // host_pick_splash — 启动页自定义图片的选择框：选中的图被复制到
+                // .cell/splash/，返回文件名（页面随后用 prefs.set 记住它）。
+                w.bind("host_pick_splash", [&w](std::string) -> std::string
+                       {
+                    HWND owner = nullptr;
+                    if (auto win = w.window(); win.ok())
+                        owner = reinterpret_cast<HWND>(win.value());
+                    return pick_splash_image(owner); });
+
+                // host_win — 无边框窗口的窗口操作。页面自绘标题栏，最小化 /
+                // 最大化 / 关闭 / 拖拽 / 缩放都从这里进系统（见 frame）。
+                w.bind("host_win", [&w](std::string args) -> std::string
+                       {
+                    HWND hwnd = nullptr;
+                    if (auto win = w.window(); win.ok())
+                        hwnd = reinterpret_cast<HWND>(win.value());
+                    return frame::op(hwnd, args); });
 #endif
                 // host_open_url — the update chip: the page hands the release
                 // link over and the shell pops the user's default browser.
@@ -774,11 +1125,31 @@ namespace app
                         owner = reinterpret_cast<void *>(win.value());
                     return open_url(url, owner) ? "{\"ok\":true}" : "{\"ok\":false}"; });
 
+                // 启动页的开关必须在页面首次绘制前生效：页面里 #splash 是静
+                // 态的、默认就画出来，关掉后要等 state 回来才隐藏 —— 那之前
+                // 会白闪一屏。开关走 URL（页面 <head> 里的内联脚本读它，外
+                // 链脚本都晚于首次绘制）；没有 HTTP 时的内嵌页直接把同一段
+                // 脚本插进 <head>。
+                const bool show_splash = core.prefs.splash;
+                auto embedded_html = [&]() -> std::string
+                {
+                    std::string html = app::kUiHtml;
+                    if (show_splash)
+                        return html;
+                    const auto at = html.find("<head>");
+                    if (at == std::string::npos)
+                        return html;
+                    html.insert(at + 6,
+                                "<script>document.documentElement.classList.add('no-splash')</script>");
+                    return html;
+                };
+
                 if (served)
                 {
                     try
                     {
-                        w.navigate(std::format("http://127.0.0.1:{}/", serve_port));
+                        w.navigate(std::format("http://127.0.0.1:{}/{}", serve_port,
+                                               show_splash ? "" : "?splash=0"));
                     }
                     catch (const std::exception &e)
                     {
@@ -788,7 +1159,7 @@ namespace app
                 }
                 if (!served)
                 {
-                    w.set_html(app::kUiHtml);
+                    w.set_html(embedded_html());
                     if (smoke)
                     {
                         printf("SMOKE_FAIL (no HTTP page to probe)\n");
@@ -814,6 +1185,12 @@ namespace app
                     // other window. Flips at runtime dispatch to the UI thread.
                     core.on_tray = [&w](bool on)
                     { w.dispatch([on] { tray::set_enabled(on); }); };
+                    // 真·无边框：页面自绘标题栏，系统标题栏在这里被去掉。
+                    // 必须在 tray::attach 之前 —— tray 的过程会链到这里，再链回
+                    // webview 自己的过程。
+                    if (!frame::install(hwnd, [&w](const std::string &js)
+                                        { w.eval(js); }))
+                        log.warn("app", "frame: could not go borderless - keeping the system title bar");
                     if (!tray::attach(hwnd, core.prefs.tray))
                         log.warn("app", "tray: icon install failed - closing the window will quit");
                     else if (core.prefs.tray)

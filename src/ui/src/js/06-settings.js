@@ -781,6 +781,52 @@ function buildAppearance(st) {
   animField.appendChild(el('div', 'set-hint', '跟随系统 prefers-reduced-motion；选择保存在本机浏览器。'));
   s.appendChild(card([setCardHead('动效'), animField]));
 
+  // 启动页（桌面壳偏好：.cell/cell-app.json 的 splash 段）
+  s.appendChild(buildSplashCard());
+
+  /* 窗口背景透明度：整窗透明后，壁纸的可见度和正文可读性是一对矛盾，
+     这里给一个旋钮（页面最底下的实色画布不透明度），不动面板材质 */
+  if (typeof WINGLASS !== 'undefined' && typeof setWindowTransparency === 'function') {
+    const wt = Math.round(WINGLASS.t * 100);
+    const wrange = el('input');
+    wrange.type = 'range';
+    wrange.min = '0'; wrange.max = '100'; wrange.step = '5';
+    wrange.value = String(wt);
+    wrange.className = 'set-range';
+    const wval = el('span', 'rangeval', wt + '%');
+    const wrow = el('div', 'think-row');
+    wrow.appendChild(wrange);
+    wrow.appendChild(wval);
+    const wticks = el('div', 'range-ticks');
+    const wtickEls = [];
+    for (const [txt, at] of [['不透明', 0], ['半透', 50], ['全透明', 100]]) {
+      const tk = el('span', 'range-tick' + (Math.abs(at - wt) <= 25 ? ' on' : ''), txt);
+      wtickEls.push([tk, at]);
+      wticks.appendChild(tk);
+    }
+    const wdesc = el('div', 'set-hint');
+    const paintWin = () => {
+      const v = Number(wrange.value);
+      wval.textContent = v + '%';
+      wdesc.textContent = v >= 100
+        ? '整窗只剩磨砂玻璃，壁纸在窗后完全可见。'
+        : v <= 0
+          ? '整窗不透明，和普通深色窗口一样（壁纸完全看不到）。'
+          : '页面最底下压 ' + (100 - v) + '% 的实色画布，壁纸仍然透过玻璃可见。';
+      for (const [tk, at] of wtickEls) tk.classList.toggle('on', Math.abs(at - v) <= 25);
+    };
+    wrange.oninput = paintWin;
+    wrange.onchange = () => setWindowTransparency(Number(wrange.value));
+    paintWin();
+    const wfield = el('div', 'set-field');
+    wfield.appendChild(el('label', 'set-label', '背景透明度'));
+    wfield.appendChild(wrow);
+    wfield.appendChild(wticks);
+    wfield.appendChild(wdesc);
+    wfield.appendChild(el('div', 'set-hint', '整窗是 Win11 的系统丙烯酸背衬（壁纸在窗后取景、自动磨砂），这个滑块只改页面自己的底色深浅。设置保存在本机浏览器。'));
+    s.appendChild(card([setCardHead('窗口背景'), wfield]));
+  }
+
   /* 输入卡玻璃：完全无色的材质，唯一可调的是高斯模糊（跟随"透明度"） */
   if (typeof GLASS !== 'undefined' && typeof setGlassPref === 'function') {
     const gt = Math.round(GLASS.t * 100);
@@ -827,6 +873,90 @@ function buildAppearance(st) {
   note.appendChild(el('span', null, '（与配置、会话、凭据同一目录）放置 theme.json（label / type / desc / swatch）与 theme.css（覆盖 CSS 变量），刷新本页即可在此选择。'));
   s.appendChild(note);
   return s;
+}
+
+/* 4.7b 启动页 --------------------------------------------------------
+   整窗覆盖的一屏，配置存在 .cell/cell-app.json（随 exe 走，与浏览器
+   profile 无关 —— 它必须在页面加载前就生效）。三种形态：
+     · 内置动画：logo 描边循环 + 标题/副标题 + 进度线
+     · 自定义图片：.cell/splash/<file>（替换 logo）
+     · 自定义整页：.cell/splash/index.html（整屏 iframe，优先级最高） */
+function buildSplashCard() {
+  const sp = Object.assign(
+    { on: true, ms: 1400, title: '', sub: '', bg: '', image: '', anim: 'draw', page: false },
+    (S.prefs || {}).splash || {});
+  const save = patch => setShellPrefs({ splash: patch }).then(out => { if (out && out.ok) renderSettings(); return out; });
+  const kids = [setCardHead('启动页', setBtn('预览', 'ghost sm', () => {
+    if (typeof Splash !== 'undefined') Splash.preview(Object.assign({}, sp, { on: true }));
+  }, 'play'))];
+
+  kids.push(switchRow('显示启动页', sp.on !== false, v => save({ on: v }),
+    '启动/刷新时先显示一屏启动页，界面就绪后淡出。关掉就直接进工作台。'));
+
+  const ti = setInput('cell', sp.title || '');
+  ti.onchange = () => save({ title: ti.value.trim() });
+  kids.push(field('标题', ti, '留空用内置的「cell」。'));
+
+  const su = setInput('本地代理工作台', sp.sub || '');
+  su.onchange = () => save({ sub: su.value.trim() });
+  kids.push(field('副标题', su, '一行说明文字，留空用内置文案。'));
+
+  // 背景色 + 跟随主题
+  const bg = el('input', 'set-color');
+  bg.type = 'color';
+  bg.value = sp.bg || '#111113';
+  bg.onchange = () => save({ bg: bg.value });
+  const bgReset = setBtn('跟随主题', 'ghost sm', () => save({ bg: '' }));
+  const bgRow = el('div', 'splash-row');
+  bgRow.appendChild(bg);
+  bgRow.appendChild(bgReset);
+  kids.push(field('背景色', bgRow, '启动页整屏的底色；「跟随主题」时用当前外观的画布色。'));
+
+  // 展示时长
+  const range = el('input', 'set-range');
+  range.type = 'range';
+  range.min = '0'; range.max = '4000'; range.step = '100';
+  range.value = String(Number(sp.ms) || 0);
+  const val = el('span', 'rangeval', ((Number(sp.ms) || 0) / 1000).toFixed(1) + 's');
+  const row = el('div', 'think-row');
+  row.appendChild(range); row.appendChild(val);
+  range.oninput = () => { val.textContent = (Number(range.value) / 1000).toFixed(1) + 's'; };
+  range.onchange = () => save({ ms: Number(range.value) });
+  kids.push(field('最短展示时长', row, '界面比这更快就绪时，启动页也会停满这个时长，避免一闪而过。'));
+
+  kids.push(segRow('动画', [
+    { v: 'draw', label: '描边', desc: 'logo 线条循环绘制（默认）' },
+    { v: 'pulse', label: '呼吸', desc: '线条常亮，整体轻微呼吸' },
+    { v: 'none', label: '静止', desc: '不播放动画' },
+  ], sp.anim || 'draw', v => save({ anim: v }), '只影响内置 logo；自定义图片/整页由它自己的内容决定。'));
+
+  // 自定义图片
+  const imgRow = el('div', 'splash-row');
+  if (sp.image) {
+    const thumb = el('img', 'splash-thumb');
+    thumb.src = '/api/splash/asset?v=' + Date.now();
+    thumb.alt = '';
+    imgRow.appendChild(thumb);
+    imgRow.appendChild(el('span', 'splash-file', sp.image));
+  } else {
+    imgRow.appendChild(el('span', 'splash-file', '未选择（使用内置 logo）'));
+  }
+  const pick = setBtn('选择图片…', 'sm', async () => {
+    if (typeof window.host_pick_splash !== 'function') { toast('只在桌面壳里可以选本地图片', 'info'); return; }
+    const r = await window.host_pick_splash();
+    if (r && r.ok && r.name) { await save({ image: r.name }); toast('已设为启动页图片', 'ok'); }
+  }, 'file');
+  imgRow.appendChild(pick);
+  if (sp.image) imgRow.appendChild(setBtn('清除', 'ghost sm', () => save({ image: '' })));
+  kids.push(field('自定义图片', imgRow, 'png / jpg / gif / webp / svg；选中后复制到 exe 目录的 .cell/splash/，替换 logo（标题仍在图片下方）。'));
+
+  const cardEl = card(kids);
+  if (sp.page) {
+    cardEl.appendChild(setNote('检测到 .cell/splash/index.html：启动页会整屏加载这个页面，上面的标题/图片/动画都不再生效。', 'info'));
+  } else {
+    cardEl.appendChild(setNote('想完全自己画一屏？把任意 HTML 放到 exe 目录的 .cell/splash/index.html（同源、可引用 .cell/splash/ 下的图片），它会整屏接管启动页。', 'info'));
+  }
+  return cardEl;
 }
 
 /* 4.8 关于 */

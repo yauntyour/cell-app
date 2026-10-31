@@ -12,6 +12,10 @@
 //                       themes live in <exe dir>/.cell/theme/<name>/,
 //                       the same root as config/sessions/vault)
 //   GET  /api/theme/:name  a third-party theme's theme.css
+//   GET  /api/splash/asset the custom splash image
+//                       (<exe dir>/.cell/splash/<name>)
+//   GET  /api/splash/page  a custom whole-page splash
+//                       (<exe dir>/.cell/splash/index.html)
 //
 // Security model: the service is a local control surface for a full-access
 // agent, so it must never be reachable from a web page or from the LAN.
@@ -128,6 +132,49 @@ namespace app
         for (auto &[name, t] : ext)
             out.push_back(t);
         return out;
+    }
+
+    // 启动页图片的 MIME。未知扩展名返回空 → 路由直接 404：.cell/splash/ 里
+    // 除了图片和 index.html 之外的文件不会被顺手当成资源发出去。
+    inline std::string splash_mime(const std::string &name)
+    {
+        auto dot = name.find_last_of('.');
+        if (dot == std::string::npos)
+            return "";
+        std::string ext;
+        for (char c : name.substr(dot + 1))
+            ext += (char)std::tolower((unsigned char)c);
+        if (ext == "png")
+            return "image/png";
+        if (ext == "jpg" || ext == "jpeg")
+            return "image/jpeg";
+        if (ext == "gif")
+            return "image/gif";
+        if (ext == "webp")
+            return "image/webp";
+        if (ext == "avif")
+            return "image/avif";
+        if (ext == "bmp")
+            return "image/bmp";
+        if (ext == "svg")
+            return "image/svg+xml";
+        return "";
+    }
+
+    // 读一个小文件（启动页资源都很小；上限兜住误配置的大文件）
+    inline bool read_small_file(const std::filesystem::path &p, size_t max_bytes, std::string &out)
+    {
+        std::error_code ec;
+        if (!std::filesystem::is_regular_file(p, ec))
+            return false;
+        auto size = std::filesystem::file_size(p, ec);
+        if (ec || size == 0 || size > max_bytes)
+            return false;
+        std::ifstream f(p, std::ios::binary);
+        if (!f)
+            return false;
+        out.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+        return !out.empty();
     }
 
     // one live SSE connection: the bus sink only enqueues (never writes, so a
@@ -354,6 +401,51 @@ namespace app
                     }
                 }
                 out = text_response("404 Not Found", "theme not found");
+                return rt::FLAG_DONE; });
+
+            // GET /api/splash/asset — 启动页自定义图片（.cell/splash/<name>）
+            // 只按 prefs 里记下的**纯文件名**取，路径分隔符在写入时就已被
+            // prefs::plain_name_ok 拒绝，这里再判一次 MIME 就够安全。
+            ros.on("api/splash/asset", [this](std::string &req, std::string &out, const std::map<std::string, std::string> &) -> int
+                   {
+                if (std::string bad = check_request(req, "GET"); !bad.empty())
+                {
+                    out = std::move(bad);
+                    return rt::FLAG_DONE;
+                }
+                const std::string name = app::prefs::load().splash_image;
+                const std::string mime = splash_mime(name);
+                std::string body;
+                if (mime.empty() || !app::prefs::plain_name_ok(name) ||
+                    !read_small_file(app::prefs::splash_dir() / name, 32u * 1024 * 1024, body))
+                {
+                    out = text_response("404 Not Found", "no splash image");
+                    return rt::FLAG_DONE;
+                }
+                out = http_response("200 OK", mime, body);
+                // 换图后刷新即生效，不必重启
+                size_t head = out.find("\r\n\r\n");
+                out.insert(head, "\r\nCache-Control: no-store");
+                return rt::FLAG_DONE; });
+
+            // GET /api/splash/page — 自定义整页启动页（.cell/splash/index.html）
+            // 页面把它放进同源 iframe，整屏铺满；不存在时前端用内置动画。
+            ros.on("api/splash/page", [this](std::string &req, std::string &out, const std::map<std::string, std::string> &) -> int
+                   {
+                if (std::string bad = check_request(req, "GET"); !bad.empty())
+                {
+                    out = std::move(bad);
+                    return rt::FLAG_DONE;
+                }
+                std::string html;
+                if (!read_small_file(app::prefs::splash_dir() / "index.html", 4u * 1024 * 1024, html))
+                {
+                    out = text_response("404 Not Found", "no custom splash page");
+                    return rt::FLAG_DONE;
+                }
+                out = http_response("200 OK", "text/html; charset=utf-8", html);
+                size_t head = out.find("\r\n\r\n");
+                out.insert(head, "\r\nCache-Control: no-store");
                 return rt::FLAG_DONE; });
 
             // POST /api/cmd/:name — the command bus
