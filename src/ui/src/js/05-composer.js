@@ -240,33 +240,48 @@ function buildComposerDom() {
   }
 
   ensureSlashPanel();
-  host.classList.remove('glass-refract');   // 旧类名（已废弃，见 I1b）
+  host.classList.remove('glass-refract');   // 旧类名（已废弃）
   setupLens(host);
   host.__cmpBuilt = true;
   return true;
 }
 
-/* ---------- I1b. 液态玻璃：SVG 折射（复刻 shuding/liquid-glass）--------
-   管线与参考实现（github.com/shuding/liquid-glass，MIT）一致：
-     ① 逐像素算「采样点偏移」贴图：圆角矩形 SDF → 离边越近把采样点沿内法线
-        推得越多（= 边缘放大/压缩），编成 R/G 位移图（0.5 = 不动）；
-     ② <filter> 里 feImage 装贴图 → feGaussianBlur 磨砂 → feDisplacementMap
-        折射，经 backdrop-filter:url(#cmp-lens) 作用在**真实背景**上；
-     ③ 滤镜链里**只有** url()：backdrop-filter 里 url() 会吞掉同一行后面的
-        blur()/contrast()/saturate()（Chromium 实测），磨砂和调色必须写进
-        同一条 SVG 滤镜，否则背景是"锐利透出 + 边缘折影"——2026-10-31 用户
-        报的错乱就是这个（背景文字和占位符叠在一起、边缘发彩）。
-   ⚠️ 关键（第一版死在这里）：<filter> 必须 filterUnits="userSpaceOnUse" 并给出
-   **像素**的 x/y/width/height。用默认的 objectBoundingBox + width="100%" 时
-   Chromium 会把整条滤镜吞掉 —— 既不模糊也不折射，背后文字原样透上来，
-   看着就是"上界没固定、两端没渲染好"。别再误判成"Chromium 不支持 url()"。
-   贴图尺寸/圆角一变（拖手柄、Teamwork、窗口缩放）就重画，见 syncLens()。 */
+/* ---------- I1b. 引力透镜玻璃（SVG 折射链） ----------------------------
+   卡片本体是一块**引力透镜**，不是磨砂板：背后的会话文字会真的透过玻璃、
+   并被这张透镜弯过来。参考实现 D:\Developments\js\引力透镜滕王阁序\test1\
+   gravity-lens（WebGL 片元着色器）按点质量透镜做像方→物方反解：
+       α̂(θ) = k·θ / (|θ|² + ε)      k = M(1+ε)，ε = Plummer 软化半径
+       β = θ − α̂(θ)                 （采样点沿半径向质心内拉）
+   这里把同一个场逐像素烤成 R/G 位移贴图，喂给 <filter> 里的
+   feImage → feGaussianBlur → feColorMatrix(saturate) → feDisplacementMap，
+   再经 backdrop-filter:url(#cmp-lens) 作用在真实背景上。中心 β/θ 收敛 →
+   放大（≈1.8×，放大镜），贴边偏折最大 → 压缩；单调不回弹，所以不会折出硬缝。
+
+   两处与参考实现有意不同：
+     · **等值线内切卡片**：参考是圆透镜（|θ| 用同一个像素半径）。卡片是
+       700×156 的横条，同一半径会得到"中间一团糊、两侧没变形"，所以场的自变量
+       x/y 各除以半宽/半高 —— 等偏折线退化成内切椭圆，卡片边界正好是一条等值线。
+       偏移量本身仍按同一个像素半径（几何平均）给，保持偏折角各向同性。
+     · **pull < 1**：真实点质量在 |β| < θE 内宇称翻转（盘心倒像），参考实现
+       靠大 ε 把倒像压成"接近可读的放大镜"。UI 里倒字不可接受，于是给整个
+       偏折角乘一个比例：pull·k/ε < 1 时全场正像，只剩放大与贴边压缩。
+       爱因斯坦环那圈会聚亮线不单独画，外形线索交给 --cmp-rim 渐变描边。
+
+   ⚠️ 三条踩过的坑（别再犯）：
+     · <filter> 必须 filterUnits="userSpaceOnUse" 并给**像素** x/y/width/height。
+       用默认 objectBoundingBox 时 Chromium 会把整条滤镜吞掉 —— 既不弯也不糊，
+       背景原样透上来。
+     · backdrop-filter 里一出现 url()，同一行后面的 blur()/saturate() 会被
+       Chromium 整段丢掉 → 磨砂只能写进同一条滤镜（feGaussianBlur 排在位移
+       之前），「输入卡磨砂」滑块改的是 stdDeviation，不是 CSS blur。
+     · 贴图按卡片像素尺寸烤，尺寸一变（拖高度手柄 / Teamwork / 缩窗口）必须
+       重烤，见 syncLens()。 */
 const LENS = {
-  w: 0, h: 0, r: 0,          // 上次画贴图时的尺寸（同尺寸不重画）
-  band: 0.08,                // 折射带宽度 = 短边 × 这个比例（夹在 [8,16]px）
-  strength: 0.55,            // 贴边位移 = 带宽 × 这个比例（太大就会把背后的
-                             // 文字折出重影，2026-10-31 实测 0.9 太多）
-  filter: null, map: null, disp: null, blur: null, host: null, raf: 0,
+  mass: 1,      // M
+  soft: 1.35,   // ε：软化半径，越大→盘心越接近放大镜
+  pull: 0.26,   // 偏折比例：1 = 物理量；> soft/(M(1+soft)) ≈ .57 时盘心开始倒像
+  w: 0, h: 0,   // 上次烤贴图时的尺寸（同尺寸不重烤）
+  filter: null, map: null, disp: null, blur: null, sat: null, host: null, raf: 0,
 };
 
 function lensSVG() {
@@ -287,94 +302,89 @@ function lensSVG() {
   blur.setAttribute('in', 'SourceGraphic');
   blur.setAttribute('result', 'soft');
   blur.setAttribute('stdDeviation', '0');
+  // url() 会吞掉同一行的 saturate()，所以提饱和也塞进链里（跟降级路径同观感）
+  const sat = document.createElementNS(NS, 'feColorMatrix');
+  sat.setAttribute('in', 'soft');
+  sat.setAttribute('type', 'saturate');
+  sat.setAttribute('values', '1.18');
+  sat.setAttribute('result', 'vivid');
   const disp = document.createElementNS(NS, 'feDisplacementMap');
-  disp.setAttribute('in', 'soft');
+  disp.setAttribute('in', 'vivid');
   disp.setAttribute('in2', 'map');
   disp.setAttribute('xChannelSelector', 'R');
   disp.setAttribute('yChannelSelector', 'G');
   disp.setAttribute('scale', '0');
   f.appendChild(img);
   f.appendChild(blur);
+  f.appendChild(sat);
   f.appendChild(disp);
   svg.appendChild(f);
   document.body.appendChild(svg);
-  LENS.filter = f; LENS.map = img; LENS.blur = blur; LENS.disp = disp;
+  LENS.filter = f; LENS.map = img; LENS.blur = blur; LENS.sat = sat; LENS.disp = disp;
   return f;
 }
 
-/* 圆角矩形 SDF：0 在边界，内部为负（与参考实现的 roundedRectSDF 同式） */
-function lensSDF(px, py, hw, hh, r) {
-  const qx = Math.abs(px) - hw + r;
-  const qy = Math.abs(py) - hh + r;
-  return Math.min(Math.max(qx, qy), 0) + Math.hypot(Math.max(qx, 0), Math.max(qy, 0)) - r;
-}
-function smoothstep01(t) { t = Math.min(1, Math.max(0, t)); return t * t * (3 - 2 * t); }
-
-function paintLens(w, h, radius) {
+function paintLens(w, h) {
   const cw = Math.max(8, Math.round(w)), ch = Math.max(8, Math.round(h));
-  if (LENS.w === cw && LENS.h === ch && LENS.r === radius) return;
-  LENS.w = cw; LENS.h = ch; LENS.r = radius;
-
-  const band = Math.min(16, Math.max(8, Math.min(cw, ch) * LENS.band));
-  // 位移场极平滑，大卡片按 1/2 分辨率算（贴图由 feImage 拉伸回原尺寸）：
-  // 678×600 的重绘从 ~18ms 降到 ~4ms，拖手柄时不会掉帧。
-  const step = Math.min(cw, ch) > 240 ? 2 : 1;
-  const mw = Math.ceil(cw / step), mh = Math.ceil(ch / step);
+  if (LENS.w === cw && LENS.h === ch) return;
+  LENS.w = cw; LENS.h = ch;
+  // 场本身极平滑，半分辨率烤图再由 feImage 拉回原尺寸（700×156 → 2.7 万像素）
+  const step = 2;
+  const mw = Math.max(4, Math.ceil(cw / step)), mh = Math.max(4, Math.ceil(ch / step));
   const cv = document.createElement('canvas');
   cv.width = mw; cv.height = mh;
   const g = cv.getContext('2d');
   const img = g.createImageData(mw, mh);
   const data = img.data;
   const hw = cw / 2, hh = ch / 2;
-  const r = Math.max(0, Math.min(radius, Math.min(hw, hh)));
-  const dxs = new Float32Array(mw * mh), dys = new Float32Array(mw * mh);
-  let maxAbs = 0;
+  const k = LENS.mass * (1 + LENS.soft);
+  // 场按内切椭圆归一，偏移量按同一个像素半径给（见上面"等值线内切卡片"那条）
+  const R = Math.sqrt(hw * hh);
+  const off = new Float32Array(mw * mh * 2);
+  let maxAbs = 1e-3;
   for (let y = 0; y < mh; y++) {
+    const ey = ((y + 0.5) * step - hh) / hh;
     for (let x = 0; x < mw; x++) {
-      const px = (x + 0.5) * step - hw, py = (y + 0.5) * step - hh;
-      const d = lensSDF(px, py, hw, hh, r);        // 0 在边、内负
-      // 剖面与参考一致：带内缘 0 → 边界 1，单调不回弹（回弹会折出硬缝）
-      const t = smoothstep01(1 + d / band);
-      const mag = band * LENS.strength * t;
-      // 方向取 SDF 梯度（外法线），采样点反向（向里）= 边缘放大
-      const nx = lensSDF(px + 0.5, py, hw, hh, r) - lensSDF(px - 0.5, py, hw, hh, r);
-      const ny = lensSDF(px, py + 0.5, hw, hh, r) - lensSDF(px, py - 0.5, hw, hh, r);
-      const nl = Math.hypot(nx, ny) || 1;
-      const i = y * mw + x;
-      dxs[i] = -nx / nl * mag;
-      dys[i] = -ny / nl * mag;
-      if (mag > maxAbs) maxAbs = mag;
+      const ex = ((x + 0.5) * step - hw) / hw;
+      // |α̂|/|θ| = 内拉比例；r→0 不发散（ε 兜住奇点）
+      const f = LENS.pull * k / (ex * ex + ey * ey + LENS.soft);
+      const i = (y * mw + x) * 2;
+      off[i] = -ex * f * R;
+      off[i + 1] = -ey * f * R;
+      const a = Math.max(Math.abs(off[i]), Math.abs(off[i + 1]));
+      if (a > maxAbs) maxAbs = a;
     }
   }
-  const scale = maxAbs > 0 ? maxAbs * 2 : 1;
-  for (let i = 0, j = 0; i < dxs.length; i++, j += 4) {
-    data[j] = (dxs[i] / scale + 0.5) * 255;
-    data[j + 1] = (dys[i] / scale + 0.5) * 255;
+  // feDisplacementMap 只有一个各向同性的 scale：把两轴偏移都归一到 ±0.5
+  const scale = maxAbs * 2;
+  for (let i = 0, j = 0; i < off.length; i += 2, j += 4) {
+    data[j] = (off[i] / scale + 0.5) * 255;
+    data[j + 1] = (off[i + 1] / scale + 0.5) * 255;
     data[j + 2] = 0;
     data[j + 3] = 255;
   }
   g.putImageData(img, 0, 0);
-  const url = cv.toDataURL();
-  LENS.map.setAttribute('href', url);
+  LENS.map.setAttribute('href', cv.toDataURL());
   LENS.disp.setAttribute('scale', scale.toFixed(2));
 }
 
-/* 尺寸/圆角同步：滤镜区域是 userSpaceOnUse 的像素矩形，必须跟着元素走 */
+/* 尺寸同步：滤镜区域是 userSpaceOnUse 的像素矩形，必须跟着元素走 */
 function syncLens() {
   const host = LENS.host;
   if (!host) return;
   const rect = host.getBoundingClientRect();
   if (rect.width < 16 || rect.height < 16) return;
-  const radius = parseFloat(getComputedStyle(host).borderTopLeftRadius) || 24;
-  const f = lensSVG();
   const w = Math.round(rect.width), h = Math.round(rect.height);
+  const f = lensSVG();
   f.setAttribute('x', '0'); f.setAttribute('y', '0');
   f.setAttribute('width', String(w)); f.setAttribute('height', String(h));
   LENS.map.setAttribute('width', String(w));
   LENS.map.setAttribute('height', String(h));
-  // 磨砂写在这条滤镜里（url() 会吞掉同一行 backdrop-filter 的 blur()）
+  // 磨砂与提饱和都写在这条滤镜里（url() 会吞掉同一行 backdrop-filter 的其它函数）
   LENS.blur.setAttribute('stdDeviation', GLASS.blur.toFixed(2));
-  paintLens(w, h, radius);
+  const sat = parseFloat(getComputedStyle(host).getPropertyValue('--cmp-sat'));
+  if (isFinite(sat)) LENS.sat.setAttribute('values', sat.toFixed(2));
+  paintLens(w, h);
 }
 function scheduleLens() {
   if (LENS.raf) return;
@@ -392,19 +402,17 @@ function setupLens(host) {
   window.addEventListener('resize', scheduleLens);
 }
 
-/* 磨砂强度偏好（本机 localStorage，不进后端设置）。折射始终开启；
-   这个滑块只改高斯模糊 —— 0 = 完全通透（只剩折射），100 = 强磨砂。 */
+/* 磨砂强度偏好（本机 localStorage，不进后端设置 —— 跟主题、动画等级一样只在
+   这台机器的浏览器里生效）。滑块 0→100% 映射到 0→40px 高斯模糊，折射始终开启。
+   默认 10% ≈ 2.2px：这是"透过玻璃能认出背后的字"的那一档 —— 用户 2026-11-01
+   的反馈是上一版 22px 把会话文字彻底磨没了，透明效果等于没有。
+   键名升到 .v4：v3 存的是强磨砂默认值，换键 = 老用户也回到通透的新起点。 */
 const GLASS = {
-  t: 0.4,             // 透明度偏好（0=清晰 … 1=磨砂最强），见 applyGlassPref
-  blur: 5.06,         // 高斯模糊（CSS px）：由透明度推出来
+  t: 0.10,            // 磨砂强度偏好（0=完全通透 … 1=最强）
+  blur: 2.25,         // 高斯模糊（CSS px）：由 t 推出来，见 glassBlur
 };
-
-/* 玻璃观感偏好（本机 localStorage，不进后端设置 —— 跟主题、动画等级一样只在
-   这台机器的浏览器里生效）。材质无色：只有白/黑色层次，不带任何颜色。
-   键名带 .v2：v1 时代默认是"强磨砂"，换成折射材质后旧值会让卡片糊成一块，
-   直接换键 = 老用户也拿到新的默认观感（2.5px，接近参考实现的通透度）。 */
-const GLASS_PREF_KEY = 'cell.glass.v2';
-function glassBlur(t) { return 20 * Math.pow(Math.min(1, Math.max(0, t)), 1.5); }
+const GLASS_PREF_KEY = 'cell.glass.v4';
+function glassBlur(t) { return 40 * Math.pow(Math.min(1, Math.max(0, t)), 1.25); }
 
 function loadGlassPref() {
   let t = GLASS.t;
@@ -414,14 +422,12 @@ function loadGlassPref() {
   } catch (e) {}
   applyGlassPref(t, true);
 }
-/* 立即生效：只改一个 CSS 变量，卡片与卡内控件共用它 */
+/* 立即生效：CSS 变量给卡内小控件的降级路径，滤镜里的 stdDeviation 给卡片本体 */
 function applyGlassPref(t, silent) {
   if (t != null) GLASS.t = Math.min(1, Math.max(0, Number(t) || 0));
-  const px = glassBlur(GLASS.t);
-  GLASS.blur = px;
-  document.documentElement.style.setProperty('--cmp-glass-blur', px.toFixed(2) + 'px');
-  // 卡片的磨砂在 SVG 滤镜里（url() 吞掉同行的 blur()），这里同步过去
-  if (LENS.blur) LENS.blur.setAttribute('stdDeviation', px.toFixed(2));
+  GLASS.blur = glassBlur(GLASS.t);
+  document.documentElement.style.setProperty('--cmp-blur', GLASS.blur.toFixed(2) + 'px');
+  if (LENS.blur) LENS.blur.setAttribute('stdDeviation', GLASS.blur.toFixed(2));
 }
 function setGlassPref(t) {
   applyGlassPref(t, false);
@@ -445,9 +451,15 @@ loadGlassPref();
             VSCode 的窗口透明就是这一个做法）：背后清晰可见，代价是页面与
             文字一起变淡，所以这时页面必须不透明（否则透明处会露出窗口底色）。
 
-   浮层（菜单 / 弹窗）不跟，任何时候都要读得清。 */
-const WINGLASS = { t: 1 };            // 0..1 透明度（1 = 页面一点也不盖）
-const WINGLASS_PREF_KEY = 'cell.win.glass';
+   浮层（菜单 / 弹窗）不跟，任何时候都要读得清。
+
+   ⚠️ 默认值从 1（100% 透明）改成 .5：量程上限意味着"页面一面不给"，
+   文字直接压在壁纸上 —— 浅色主题尤其糊（2026-11-01 用户截图：侧栏导航、
+   分组标题、hero 副标题全部看不清）。.5 = 撤掉实色画布但保留整窗那层纱，
+   仍然看得见背后，只是有一块可以放字的介质。键名升到 .v2 = 老用户也回到
+   这个可读的起点，之后仍可自己拖。 */
+const WINGLASS = { t: 0.5 };           // 0..1 透明度（1 = 页面一点也不盖）
+const WINGLASS_PREF_KEY = 'cell.win.glass.v2';
 const WINBLUR = { on: true };          // 磨砂（系统背衬）
 const WINBLUR_PREF_KEY = 'cell.win.blur';
 const WINBLUR_MIN_ALPHA = 0.5;         // 整窗 alpha 最低到 50%（再低就真看不见了）

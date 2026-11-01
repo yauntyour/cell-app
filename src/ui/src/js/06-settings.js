@@ -865,8 +865,8 @@ function buildAppearance(st) {
       const v = Number(grange.value);
       gval.textContent = v + '%';
       const b = typeof glassBlur === 'function' ? glassBlur(v / 100) : 0;
-      gdesc.textContent = '高斯模糊 ' + b.toFixed(1) + 'px —— 边缘折射（透镜弯折）始终开启，'
-        + '这个滑块只加磨砂；拖到最左就是完全通透、只有折射。';
+      gdesc.textContent = '高斯模糊 ' + b.toFixed(1) + 'px —— 折射（引力透镜）始终开着，这个滑块只往上加磨砂。'
+        + '0% = 完全通透，透过输入栏直接读得清背后的会话文字；默认 10% ≈ 2.2px 只把笔画磨软一点；拖到底就糊成一团。';
       for (const [tk, at] of gtickEls) tk.classList.toggle('on', Math.abs(at - v) <= 25);
     };
     grange.oninput = paintGlass;
@@ -877,7 +877,7 @@ function buildAppearance(st) {
     gfield.appendChild(grow);
     gfield.appendChild(gticks);
     gfield.appendChild(gdesc);
-    gfield.appendChild(el('div', 'set-hint', '卡片与卡内控件（+ / 模式 / 模型 / 发送）同一套液态玻璃：边缘按圆角做真实折射，中间通透。设置保存在本机浏览器。'));
+    gfield.appendChild(el('div', 'set-hint', '卡片是一块引力透镜玻璃：背后的内容沿半径被弯向卡心（中心放大、贴边压缩），会话文字因此能透过输入栏看见；再叠上亮下暗的边缘受光与投影交代外形。底色随上面的「背景透明度」一起撤掉。设置保存在本机浏览器。'));
     s.appendChild(card([setCardHead('输入卡材质'), gfield]));
   }
 

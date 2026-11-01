@@ -40,26 +40,32 @@ namespace app
   /* ---- 表面（由暗到亮） ------------------------------------------- */
   /* 窗口是透明的（DWM 背衬在后面），所以"表面"不再是实色，而是叠在背衬上的
      一层层白/黑 alpha：越靠上越亮一点，读到的是同一块玻璃的不同厚度。
-     唯一的实色是 --bg —— 留给终端、启动页这类必须挡住身后的整屏内容。 */
+     唯一的实色是 --bg —— 留给终端、启动页这类必须挡住身后的整屏内容。
+     ⚠️ 每一档的 alpha 都要"压得住壁纸"：壁纸是任意内容，alpha 给低了
+     文字就压在壁纸上（2026-11-01 用户截图的主诉）。层级差 ≥ .04 才看得出是
+     两块不同的面，而不是同一块玻璃上随机脏了几块。 */
   --bg:#111113;            /* 实色画布（终端 / 启动页 / 兜底） */
-  --bg2:rgba(255,255,255,.045);   /* 次级表面（表单元 / 代码外框） */
-  --bg3:rgba(255,255,255,.07);    /* 代码块 / 输入底 */
-  --panel:rgba(19,19,24,.48);     /* 侧栏 / 右栏 */
-  --panel2:rgba(34,34,40,.82);    /* 浮层 / 弹出菜单（要压住下面的内容） */
-  --raise:rgba(255,255,255,.07);  /* hover */
-  --raise2:rgba(255,255,255,.12); /* 选中 / 按下 */
-  --elev-1:rgba(255,255,255,.05); /* 卡片 */
-  --elev-2:rgba(255,255,255,.085);/* 悬浮输入卡 */
+  --bg2:rgba(255,255,255,.055);   /* 次级表面（表单元 / 代码外框） */
+  --bg3:rgba(255,255,255,.085);   /* 代码块 / 输入底 */
+  --panel:rgba(18,18,23,.62);     /* 侧栏 / 右栏 */
+  --panel2:rgba(30,30,36,.94);    /* 浮层 / 弹出菜单（要压住下面的内容） */
+  --raise:rgba(255,255,255,.075);  /* hover */
+  --raise2:rgba(255,255,255,.13);  /* 选中 / 按下 */
+  --elev-1:rgba(255,255,255,.062); /* 卡片 */
+  --elev-2:rgba(255,255,255,.10);  /* 悬浮输入卡 */
 
   /* ---- 描边 ------------------------------------------------------- */
-  --line:rgba(255,255,255,.08);
-  --line2:rgba(255,255,255,.15);
+  --line:rgba(255,255,255,.09);
+  --line2:rgba(255,255,255,.17);
 
-  /* ---- 文本 ------------------------------------------------------- */
-  --fg:#f2f3f5;
-  --fg2:#a8abb2;
-  --fg3:#7b7e86;
-  --fg4:#585b63;
+  /* ---- 文本 -------------------------------------------------------
+     深色主题的层级差要小、但最暗一档也不能低于 4.5:1（压在 --glass-read
+     这层床上量的）。fg3/fg4 比旧值各提一档。 */
+  --fg:#f4f5f7;
+  --fg2:#b3b6bd;
+  --fg3:#8d909a;
+  --fg4:#7b7f89;
+
 
   /* ---- 强调色（唯一彩色主色） ------------------------------------- */
   --accent:#6c7cff;
@@ -76,40 +82,86 @@ namespace app
   --del:#f85149;
   --run:#a8abb2;
 
-  /* ---- 液态玻璃材质（输入卡本体与卡内控件共用一套） ---------------- */
-  /* 只有白/黑的透明度层次，不带任何颜色：玻璃是"介质"，颜色只留给强调色 */
-  --glass-face:linear-gradient(180deg,rgba(255,255,255,.13),rgba(255,255,255,.052));
-  --glass-face-hover:linear-gradient(180deg,rgba(255,255,255,.20),rgba(255,255,255,.085));
-  --glass-face-on:linear-gradient(180deg,rgba(255,255,255,.24),rgba(255,255,255,.12));
-  --glass-line:rgba(255,255,255,.16);
-  --glass-line-hover:rgba(255,255,255,.26);
-  --glass-hi:inset 0 1px 0 rgba(255,255,255,.22);   /* 顶面镜面反光 */
-  --glass-lo:inset 0 -1px 0 rgba(0,0,0,.26);        /* 底缘回光（暗） */
-  --glass-drop:0 1px 2px rgba(0,0,0,.26);           /* 离面一点点 */
-  --glass-blur:blur(10px) saturate(1.12);           /* 磨砂（控件层） */
+  /* ---- 玻璃小控件（chip / 圆钮 / 悬浮按钮） ------------------------
+     一块能认出来的"凸起玻璃"要三样同时在场：面（上亮下暗的竖向渐变）、
+     发丝边（inset 0 0 0 1px，不是 border —— 不占布局也不会在圆角处断开）、
+     顶缘受光 + 贴地投影。少任何一样都会塌成"背景上一块脏色"。 */
+  --glass-face:linear-gradient(180deg,rgba(255,255,255,.145),rgba(255,255,255,.055));
+  --glass-face-hover:linear-gradient(180deg,rgba(255,255,255,.22),rgba(255,255,255,.095));
+  --glass-face-on:linear-gradient(180deg,rgba(255,255,255,.28),rgba(255,255,255,.14));
+  --glass-line:rgba(255,255,255,.18);
+  --glass-line-hover:rgba(255,255,255,.30);
+  --glass-hi:inset 0 1px 0 rgba(255,255,255,.24);    /* 顶面镜面反光 */
+  --glass-lo:inset 0 -1px 0 rgba(0,0,0,.26);         /* 底缘回光（暗） */
+  --glass-ring:inset 0 0 0 1px var(--glass-line);    /* 发丝边 */
+  --glass-drop:0 1px 2px rgba(0,0,0,.30);            /* 离面一点点 */
+  --glass-blur:blur(22px) saturate(1.5);             /* 磨砂（控件层） */
+
+  /* ---- 输入卡本体（引力透镜玻璃）----------------------------------
+     卡片是这一族里最大的一块，材质拆成五层，从后往前：
+       ① 透镜  backdrop-filter:url(#cmp-lens) —— 一条 SVG 滤镜里做完
+              「feGaussianBlur 磨砂 + feDisplacementMap 折射」。折射场是
+              Plummer 软化点质量透镜 β = θ − kθ/(|θ|²+ε)（推导与取值见
+              05-composer.js §I1b）：中心把背后的会话文字放大、贴边把它
+              压缩，所以玻璃里**看得见内容**，不是磨成一块灰。
+       ② 底    --cmp-base：玻璃自身极淡的一层着色，只在深色下压住折射内容
+              对正文的干扰。**alpha 一律乘 --glass-film** —— 窗口透明度拖到
+              100% 时这张卡必须跟着一起清掉，否则"整窗透明"对输入栏不生效
+              （2026-11-01 用户主诉）。
+       ③ 面    --cmp-face：顶部受光、底部略沉，中间不着色（中段着色读作塑料）。
+       ④ 边    --cmp-rim：1px 竖向渐变描边（border-box 一层 background），
+              玻璃唯一的"厚度"线索，同时兼任透镜那圈会聚亮边。
+       ⑤ 影    --cmp-shadow：贴地接触影 + 大而散的远影。 */
+  --cmp-blur:2.25px;
+  --cmp-sat:1.18;
+  --cmp-bri:1;
+  --cmp-base:linear-gradient(180deg,
+    rgba(8,8,11,calc(.12 * var(--glass-film))) 0%,
+    rgba(6,6,9,calc(.18 * var(--glass-film))) 100%);
+  --cmp-face:linear-gradient(180deg,
+    rgba(255,255,255,calc(.115 * var(--glass-film))) 0%,
+    rgba(255,255,255,calc(.030 * var(--glass-film))) 34%,
+    rgba(0,0,0,calc(.040 * var(--glass-film))) 68%,
+    rgba(0,0,0,calc(.10 * var(--glass-film))) 100%);
+  --cmp-rim:linear-gradient(180deg,
+    rgba(255,255,255,.50) 0%,
+    rgba(255,255,255,.16) 40%,
+    rgba(255,255,255,.05) 72%,
+    rgba(255,255,255,.24) 100%);
+  --cmp-shadow:
+    inset 0 1px 0 rgba(255,255,255,.30),
+    inset 0 -18px 30px -22px rgba(0,0,0,.55),
+    0 2px 6px -2px rgba(0,0,0,.45),
+    0 20px 46px -22px rgba(0,0,0,.78);
+  /* 一圈**等亮度**的发丝环，垫在渐变描边之内。渐变描边只负责"光从上面来"，
+     它交代不了边界：浅色主题顶缘是纯白，落在同样发白的页面上就整条消失
+     （2026-11-01 用户第 3 张截图：hero 的卡只剩下面一道影）。 */
+  --cmp-edge:inset 0 0 0 1px rgba(255,255,255,.05);
 
   /* ---- 液态玻璃（窗口级）------------------------------------------ */
   /* 窗口本身是透明的（DWM 丙烯酸背衬），页面只允许用 alpha 叠在背衬上：
      scrim 是整窗那一层纱，panel 是贴边的大面板（标题栏 / 侧栏），
-     dock 是右侧面板，float 是浮在内容之上的菜单/弹窗（要更实才读得清）。
+     dock 是右侧面板，read 是正文列那一层"床"（消息流压在上面），
+     float 是浮在内容之上的菜单/弹窗（要更实才读得清）。
 
-     --glass-film 是「这层纱还剩多少」：1 = 完整，0 = 一点不剩。它只乘在
-     整窗材质（纱 / 侧栏 / 右栏）上，浮层 opacity 不变。设置里的窗口透明度
-     拖到 100% 时它归零（见 05-composer.js 的 applyWindowOpacity），窗口就
-     真的只剩系统背衬的磨砂，不再有一层灰纱压在壁纸上。 */
+     --glass-film 是「这层纱还剩多少」：1 = 完整，0 = 一点不剩。设置里的窗口
+     透明度拖到 100% 时它归零（见 05-composer.js 的 applyWindowOpacity）。
+     ⚠️ 量程上限的代价就是文字直接压壁纸，所以默认值不再是 100%（旧默认
+     一开机就没有任何一面，浅色主题尤其糊）。 */
   --glass-film:1;
   --glass-scrim:linear-gradient(180deg,
-    rgba(9,9,12,calc(.34 * var(--glass-film))) 0%,
-    rgba(9,9,12,calc(.22 * var(--glass-film))) 26%,
-    rgba(9,9,12,calc(.24 * var(--glass-film))) 72%,
-    rgba(6,6,9,calc(.38 * var(--glass-film))) 100%);
-  --glass-panel:rgba(12,12,17,calc(.30 * var(--glass-film)));
-  --glass-dock:rgba(10,10,14,calc(.14 * var(--glass-film)));
+    rgba(8,8,11,calc(.58 * var(--glass-film))) 0%,
+    rgba(8,8,11,calc(.48 * var(--glass-film))) 28%,
+    rgba(8,8,11,calc(.50 * var(--glass-film))) 72%,
+    rgba(5,5,8,calc(.62 * var(--glass-film))) 100%);
+  --glass-panel:rgba(10,10,14,calc(.52 * var(--glass-film)));
+  --glass-dock:rgba(9,9,13,calc(.42 * var(--glass-film)));
   --glass-float:var(--panel2);
-  --glass-hair:rgba(255,255,255,.055);              /* 面板之间的那道极淡分隔 */
-  --glass-edge:rgba(255,255,255,.10);               /* 面板外缘的受光 */
-  --glass-veil:rgba(7,7,10,.55);                    /* 遮罩（设置页 / 弹窗） */
-  --glass-float-blur:blur(28px) saturate(1.25);
+  --glass-hair:rgba(255,255,255,.07);               /* 面板之间的那道极淡分隔 */
+  --glass-edge:rgba(255,255,255,.12);               /* 面板外缘的受光 */
+  --glass-veil:rgba(7,7,10,.88);                    /* 遮罩（设置页 / 弹窗） */
+  --glass-float-blur:blur(30px) saturate(1.3);
+
 
   /* ---- 形状 / 字体 / 动效 ----------------------------------------- */
   --radius:14px; --radius-s:9px; --radius-xs:6px;
@@ -133,16 +185,16 @@ namespace app
   --composer-h:156px;      /* 实际值由 03-layout.js 写 inline */
 
   /* ---- 兼容别名（导出页 / 旧 CSS / 主题） -------------------------- */
-  --bg-soft:rgba(255,255,255,.04);
-  --line-soft:rgba(255,255,255,.06);
-  --code-bg:rgba(6,6,9,.38);
+  --bg-soft:rgba(255,255,255,.05);
+  --line-soft:rgba(255,255,255,.07);
+  --code-bg:rgba(6,6,9,.46);
   --fg-dim:var(--fg2);
   --fg-faint:var(--fg3);
-  --user:#c3c5cb;
-  --assistant:#f2f3f5;
-  --tool:#a8abb2;
-  --system:#8e9199;
-  --other:#7b7e86;
+  --user:#cfd1d7;
+  --assistant:#f4f5f7;
+  --tool:#b3b6bd;
+  --system:#969aa3;
+  --other:#8d909a;
 }
 
 /* ==== css/01-base.css ================================================= */
@@ -704,14 +756,15 @@ body.locked{overflow:hidden}
 .tabpane.hero .chathead{display:none}
 
 .chat{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;
-  /* 正文压在会滚动的玻璃上：壁纸亮的地方白字会糊。这里给消息列一层很淡的
-     中心纱（不是面板，没有边），远离中心的地方全透明 —— 窗口的"透明"由
-     四周交代，可读性由中间这层纱交代。纱的强度乘 --glass-film：透明度
-     拖到 100% 时连它一起收掉，否则"完全透明"中间还压着一团灰。 */
-  background:radial-gradient(115% 95% at 50% 45%,
-    rgba(8,8,11,calc(.34 * var(--glass-film))) 0%,
-    rgba(8,8,11,calc(.20 * var(--glass-film))) 55%,
-    rgba(8,8,11,calc(.06 * var(--glass-film))) 82%,
+  /* 正文压在会滚动的玻璃上：壁纸亮的地方白字会糊。这里给消息列一层"床"
+     ——中间是一整块够厚的暗（浅色系里是够亮的白，见 09-theme-light.css），
+     到边缘才渐隐，所以窗口的"透明"仍由四周交代，可读性由中间这块床交代。
+     ⚠️ 旧版中心只给 .34 且一路渐隐到 0，等于没有床：壁纸的亮块直接和正文
+     抢笔画（2026-11-01 用户截图）。纱的强度照旧乘 --glass-film。 */
+  background:radial-gradient(112% 92% at 50% 44%,
+    rgba(8,8,11,calc(.50 * var(--glass-film))) 0%,
+    rgba(8,8,11,calc(.50 * var(--glass-film))) 44%,
+    rgba(8,8,11,calc(.30 * var(--glass-film))) 74%,
     rgba(8,8,11,0) 100%);
   /* 底部留白读 --composer-pad（由 02-render2-chat.js 的 syncJumpAnchors 按卡片
      **实测**上界写入）：卡片高度在 Teamwork 模式 / 72vh 限高下都不等于
@@ -1163,20 +1216,21 @@ body.locked{overflow:hidden}
    里的 --glass-face / --glass-line / --glass-hi / --glass-lo，只是尺寸不同。
    ===================================================================== */
 
-/* ---------- 5b.1 卡片本体（液态玻璃 · 复刻 shuding/liquid-glass） ----- */
-/* 材质分三层：
-     ① 折射+磨砂  backdrop-filter: url(#cmp-lens) —— 一条 SVG 滤镜里做两件事：
-              feGaussianBlur 把背景磨掉，feDisplacementMap（feImage 装的圆角
-              SDF 位移图）再贴边把背景沿内法线弯折。磨砂强度由「输入卡材质」
-              滑块写进滤镜的 stdDeviation，折射带宽度固定为短边的 8%。
-     ② 厚度   只有内顶镜面 + 沿边柔光 + 底部内阴影，**不画描边**。
-     ③ 面     极淡的「白 → 透明 → 黑」竖向渐变 + 参考实现那条
-              `inset 0 -10px 25px rgba(0,0,0,.15)` 的底部内阴影。
-   ⚠️ 引用 url(#cmp-lens) 的那条声明单独挂在 .glass-lens 上：滤镜元素是 JS
-   建的，在它存在之前引用一个不存在的 filter 会让整条 backdrop-filter 失效
-   （首帧直接变透明）。所以基类是纯 blur，JS 建好滤镜再加类。
-   ⚠️ url() 在 backdrop-filter 里会吞掉同一行的其它函数（blur/contrast/…），
-   所以那些效果只能写进滤镜，见 05-composer.js 的 I1b。
+/* ---------- 5b.1 卡片本体（引力透镜玻璃） --------------------------- */
+/* 材质五层，从后往前（令牌见 00-tokens.css §输入卡本体）：
+     ① 透镜  backdrop-filter:url(#cmp-lens) —— 一条 SVG 滤镜里做完磨砂 +
+             折射，折射场是点质量透镜 β = θ − kθ/(|θ|²+ε)：卡片中心把背后的
+             会话文字放大、贴边把它弯折压缩，**看得见内容**才算玻璃。
+             滤镜本身由 js/05-composer.js §I1b 建，所以基类写的是纯 blur 降级
+             路径，JS 建好滤镜才加 .glass-lens 切到 url()。
+     ② 底    --cmp-base：极淡一层着色，alpha 乘 --glass-film（窗口透明拖到
+             100% 时卡片要跟着一起清掉）。
+     ③ 面    --cmp-face：顶部受光、底部略沉，中间不着色。
+     ④ 边    --cmp-rim：1px 竖向渐变描边，走 background-clip 分层
+             （padding-box 在上面、border-box 在下面），底色永远盖不住它。
+     ⑤ 影    --cmp-shadow：顶缘内高光 + 底部内沉 + 接触影 + 远影。
+   ⚠️ url() 在 backdrop-filter 里会吞掉同一行的其它函数（blur/saturate/…），
+   所以磨砂必须写进滤镜本身，见 05-composer.js。
    尺寸：**高度固定** = 拖拽设定的 --composer-h（Layout 已把它夹在 72vh 内，
    与 max-height 同一个数）。上界不随内容/附件移动，输入超出在编辑区内部
    滚动；「回到底部」按钮按卡片**实测**上界定位（见 02-render2-chat.js）。 */
@@ -1188,55 +1242,40 @@ body.locked{overflow:hidden}
   height:var(--composer-h,156px);
   max-height:72vh;
   border-radius:var(--radius-xl);
-  /* 上内边距 20px：折射带（≈短边 12%，约 19px）落在这段空白里 ——
-     文字压在带内会被"从下面拉上来"的背后内容糊住（2026-10-31 实测） */
-  padding:20px 12px 8px;
+  /* 上内边距 20px：顶部受光带落在这段空白里 —— 文字压在带上会被高光糊住 */
+  padding:20px 13px 9px;
   overflow:hidden;
   isolation:isolate;
-  border:0;
-  /* ③ 面：顶部受光、底部略沉，全是白/黑透明度，没有彩色。
-     窗口透明以后，卡片的背景可能是明亮的壁纸，纯白叠白会让整块玻璃"化掉"：
-     中间一段压一点黑，卡片才在任何底子上都读得出来是一块玻璃。 */
-  background:linear-gradient(180deg,
-    rgba(255,255,255,.07) 0%,
-    rgba(255,255,255,.015) 10%,
-    rgba(8,8,12,.22) 30%,
-    rgba(0,0,0,.28) 100%);
-  /* ① 降级路径（滤镜还没建好 / 老引擎）：纯磨砂 */
-  -webkit-backdrop-filter:blur(var(--cmp-glass-blur,3px)) saturate(1.1);
-  backdrop-filter:blur(var(--cmp-glass-blur,3px)) saturate(1.1);
-  /* ② 厚度：只有"顶部受光 + 底部内阴影 + 投影"三样，**一条描边都没有**。
-     顶部受光用大模糊+负扩散（0 20px 24px -20px）而不是 `inset 0 1px 0`：
-     后者在圆角处会描出一圈 1px 的亮弧，看起来仍然像描边（2026-10-31 实测），
-     现在它是一层往上渐隐的柔光，只交代"光从上面来"，不交代边界。
-     投影分两层：贴地的接触阴影负责"离面"，大而散的远影负责"浮起来"——
-     没有描边时，这两层影子就是卡片唯一的外形线索。 */
-  box-shadow:
-    inset 0 20px 24px -20px rgba(255,255,255,.22),
-    inset 0 -10px 25px rgba(0,0,0,.15),
-    0 2px 10px -4px rgba(0,0,0,.55),
-    0 20px 48px -28px rgba(0,0,0,.90);
+  border:1px solid transparent;
+  /* ③ 面（受光）+ ② 底（着色）都只铺 padding-box，④ 边铺 border-box 在最下：
+     三层靠 clip 分工，底色永远盖不住那 1px 的受光描边。 */
+  background:var(--cmp-face) padding-box,
+             var(--cmp-base) padding-box,
+             var(--cmp-rim) border-box;
+  /* ① 降级路径（滤镜还没建好 / 不支持 url() 的引擎）：纯磨砂 */
+  -webkit-backdrop-filter:blur(var(--cmp-blur,2.25px)) saturate(var(--cmp-sat,1.18)) brightness(var(--cmp-bri,1));
+  backdrop-filter:blur(var(--cmp-blur,2.25px)) saturate(var(--cmp-sat,1.18)) brightness(var(--cmp-bri,1));
+  /* ⑤ 影（含 ④ 的发丝环） */
+  box-shadow:var(--cmp-edge),var(--cmp-shadow);
+  transition:box-shadow var(--dur) var(--ease),background var(--dur) var(--ease);
 }
-/* ① 折射：整条链都在 SVG 滤镜里（磨砂 = feGaussianBlur、折射 = feDisplacementMap）。
-   ⚠️ 这里**不能**再写 blur()/contrast()/saturate()：backdrop-filter 里出现
-   url() 时，同一行后面的函数会被 Chromium 整段丢掉 —— 那正是"背景锐利透出、
-   文字和占位符糊在一起"的成因（2026-10-31）。磨砂强度改由 JS 写进滤镜。 */
+/* ① 折射：整条链都在 SVG 滤镜里（磨砂 = feGaussianBlur，折射 = feDisplacementMap，
+   位移贴图是 feImage 装的椭圆内切引力透镜场）。
+   ⚠️ 这里**不能**再写 blur()/saturate()/brightness()：backdrop-filter 里出现 url()
+   时，同一行后面的函数会被 Chromium 整段丢掉 —— 磨砂强度改由 JS 写进滤镜的
+   stdDeviation（设置页「输入卡磨砂」）。 */
 #composerInner.glass-lens{
   -webkit-backdrop-filter:url(#cmp-lens);
   backdrop-filter:url(#cmp-lens);
 }
-/* ② 描边：**没有**。原来的 conic 渐变环（mask 掏空只留 1.25px 亮边）与
-   内环/外暗线在 2026-10-31 一并删掉——用户要的是"没有边框"的玻璃：边缘由
-   折射带（①）+ 内顶镜面（受光）交代，不再画任何一圈线。 */
-/* 聚焦：**不加环、也不撤环**。撤掉 box-shadow 会让整块玻璃失去边界，
-   上界瞬间"消失"（旧写法 :focus-within{box-shadow:none} 就是这个坑）；
-   只把顶部柔光与底部内阴影略微加深，作为"可输入"的提示。 */
+/* 聚焦：**不加环**。强调色光环会把玻璃变成"输入框"，而它本来就只在聚焦时
+   可打字 —— 边界已经由 ③ 交代。只把顶缘受光与远影提一档，读作"抬起来了"。 */
 #composerInner:focus-within{
-  box-shadow:
-    inset 0 20px 24px -20px rgba(255,255,255,.28),
-    inset 0 -10px 25px rgba(0,0,0,.17),
-    0 2px 10px -4px rgba(0,0,0,.55),
-    0 20px 48px -28px rgba(0,0,0,.90);
+  box-shadow:var(--cmp-edge),
+    inset 0 1px 0 rgba(255,255,255,.42),
+    inset 0 -18px 30px -22px rgba(0,0,0,.55),
+    0 3px 8px -2px rgba(0,0,0,.48),
+    0 26px 54px -24px rgba(0,0,0,.82);
 }
 /* Teamwork 模式：工作流编辑器要更多纵向空间，高度直接给到 64vh（上界同样固定）；
    平时的高度见上一条 —— 拖拽值决定，内容不再参与 */
@@ -1274,7 +1313,7 @@ body.locked{overflow:hidden}
   display:inline-flex;align-items:center;gap:6px;max-width:270px;
   padding:3px 5px 3px 7px;border-radius:var(--radius-s);
   background:var(--glass-face);border:0;
-  box-shadow:var(--glass-hi),var(--glass-lo);
+  box-shadow:var(--glass-ring),var(--glass-hi),var(--glass-lo);
   font-size:12px;color:var(--fg2);
   animation:msgIn var(--dur) var(--ease);
 }
@@ -1290,8 +1329,8 @@ body.locked{overflow:hidden}
 .cf-x:hover{background:var(--raise2);color:var(--bad)}
 .cf-chip.up{opacity:.78}
 .cf-chip.up .cf-ico .uico{animation:spin 1.1s linear infinite}
-/* 出错态：没有描边了，用一圈极淡的 red 外发光代替原来那条红边 */
-.cf-chip.err{box-shadow:var(--glass-hi),var(--glass-lo),
+/* 出错态：一圈极淡的 red 发丝边 + 外发光 */
+.cf-chip.err{box-shadow:var(--glass-ring),var(--glass-hi),var(--glass-lo),
   0 0 0 1.5px color-mix(in srgb,var(--bad) 30%,transparent)}
 .cf-chip.err .cf-size,.cf-chip.err .cf-ico{color:var(--bad)}
 
@@ -1333,12 +1372,12 @@ body.locked{overflow:hidden}
   color:var(--fg2);
   border:0;
   background:var(--glass-face);
-  box-shadow:var(--glass-hi),var(--glass-lo),var(--glass-drop);
+  box-shadow:var(--glass-ring),var(--glass-hi),var(--glass-lo),var(--glass-drop);
   transition:background var(--dur) var(--ease),color var(--dur) var(--ease),
              box-shadow var(--dur) var(--ease);
 }
 .cmp-add:hover{background:var(--glass-face-hover);color:var(--fg);
-  box-shadow:var(--glass-hi),var(--glass-lo),0 2px 6px -2px rgba(0,0,0,.5)}
+  box-shadow:var(--glass-ring),var(--glass-hi),var(--glass-lo),0 2px 6px -2px rgba(0,0,0,.5)}
 .cmp-add:active{background:var(--glass-face-on)}
 .cmp-add .uico{width:16px;height:16px;stroke-width:1.8}
 .cmp-add[disabled]{opacity:.4;pointer-events:none}
@@ -1348,18 +1387,18 @@ body.locked{overflow:hidden}
   border-radius:var(--radius-full);
   border:0;
   background:var(--glass-face);
-  box-shadow:var(--glass-hi),var(--glass-lo),var(--glass-drop);
+  box-shadow:var(--glass-ring),var(--glass-hi),var(--glass-lo),var(--glass-drop);
   color:var(--fg2);font-size:12.5px;line-height:1;max-width:100%;min-width:0;
   transition:background var(--dur) var(--ease),
              color var(--dur) var(--ease),box-shadow var(--dur) var(--ease);
 }
 .cmp-chip:hover{background:var(--glass-face-hover);
-  color:var(--fg);box-shadow:var(--glass-hi),var(--glass-lo),0 2px 6px -2px rgba(0,0,0,.5)}
+  color:var(--fg);box-shadow:var(--glass-ring),var(--glass-hi),var(--glass-lo),0 2px 6px -2px rgba(0,0,0,.5)}
 .cmp-chip:active{background:var(--glass-face-on)}
 /* 展开态：没有描边可染色，改用一圈极淡的 accent 外发光（不画线，只发光） */
 .cmp-chip[aria-expanded="true"]{
   background:var(--glass-face-on);color:var(--fg);
-  box-shadow:var(--glass-hi),var(--glass-lo),
+  box-shadow:var(--glass-ring),var(--glass-hi),var(--glass-lo),
              0 0 0 2px color-mix(in srgb,var(--accent) 16%,transparent);
 }
 .cmp-chip[disabled]{opacity:.42;pointer-events:none}
@@ -1382,7 +1421,7 @@ body.locked{overflow:hidden}
 .cmp-chip-model.need{
   color:var(--bad);
   background:color-mix(in srgb,var(--bad) 14%,rgba(255,255,255,.04));
-  box-shadow:var(--glass-hi),var(--glass-lo),
+  box-shadow:var(--glass-ring),var(--glass-hi),var(--glass-lo),
              0 0 0 2px color-mix(in srgb,var(--bad) 22%,transparent);
 }
 .cmp-chip-model.need:hover{background:color-mix(in srgb,var(--bad) 22%,rgba(255,255,255,.04))}
@@ -1393,7 +1432,7 @@ body.locked{overflow:hidden}
 
 /* 供应商 chip：名字一般比模型名短，窄一点即够；未配置时走 need 红字 */
 .cmp-chip-prov .cmp-chip-txt{max-width:120px;font-size:12px;color:var(--fg)}
-.cmp-chip-prov.need{box-shadow:var(--glass-hi),var(--glass-lo),
+.cmp-chip-prov.need{box-shadow:var(--glass-ring),var(--glass-hi),var(--glass-lo),
   0 0 0 2px color-mix(in srgb,var(--bad) 22%,transparent)}
 .cmp-chip-prov.need .cmp-chip-txt,.cmp-chip-prov.need .cmp-chip-ico .uico{color:var(--bad)}
 
@@ -1448,7 +1487,7 @@ body.locked{overflow:hidden}
 /* 空输入：没有可发的动作，就退回「一块普通玻璃」——不再是实心浅灰圆饼 */
 .cmp-send.dim{
   background:var(--glass-face);color:var(--fg3);
-  box-shadow:var(--glass-hi),var(--glass-lo),var(--glass-drop);
+  box-shadow:var(--glass-ring),var(--glass-hi),var(--glass-lo),var(--glass-drop);
 }
 .cmp-send.dim:hover{background:var(--glass-face-hover);color:var(--fg2)}
 /* 运行中：同一块玻璃，只把**内高光与外发光**染成 bad 调（不整块填红——
@@ -1878,8 +1917,8 @@ body.locked{overflow:hidden}
 #settings .set-main{flex:1;min-width:0;min-height:0;overflow-y:auto;position:relative;
   overscroll-behavior:contain}
 #settings .set-head{position:sticky;top:0;z-index:3;display:flex;align-items:center;gap:14px;
-  padding:16px 30px 13px;background:rgba(16,16,21,.55);border-bottom:1px solid var(--glass-hair);
-  -webkit-backdrop-filter:blur(18px);backdrop-filter:blur(18px)}
+  padding:16px 30px 13px;background:rgba(14,14,19,.86);border-bottom:1px solid var(--glass-hair);
+  -webkit-backdrop-filter:blur(24px) saturate(1.3);backdrop-filter:blur(24px) saturate(1.3)}
 #settings .set-head-main{min-width:0;display:flex;flex-direction:column;gap:2px}
 #settings .set-head-title{margin:0;font-size:17px;font-weight:650;letter-spacing:-.01em;color:var(--fg)}
 #settings .set-head-desc{margin:0;font-size:11.5px;line-height:1.55;color:var(--fg3);
@@ -3166,8 +3205,8 @@ mark{background:var(--accent-soft);color:var(--accent);border-radius:3px;padding
    4. 浮层：文件预览 / diff
    ===================================================================== */
 .pnl-ov{position:fixed;inset:0;display:none;z-index:64;
-  background:color-mix(in srgb,var(--bg,#111113) 62%,transparent);
-  backdrop-filter:blur(3px)}
+  background:var(--glass-veil);
+  backdrop-filter:blur(28px) saturate(1.2)}
 .pnl-ov.show{display:flex}
 .fpv-ov{align-items:flex-start;justify-content:center;padding:6vh 26px 26px}
 .fpv-box{display:flex;flex-direction:column;width:min(1100px,94vw);
@@ -3349,33 +3388,33 @@ mark{background:var(--accent-soft);color:var(--accent);border-radius:3px;padding
   color-scheme:light;
 
   /* ---- 表面（由亮到暗：画布 -> 面板 -> 卡片 -> 浮层） -------------- */
-  --bg:#f6f6f7;
-  --bg2:#efeff2;
-  --bg3:#e9e9ed;
+  --bg:#f7f7f9;
+  --bg2:#eeeef2;
+  --bg3:#e6e6ec;
   --panel:#fbfbfc;
   --panel2:#ffffff;
-  --raise:#eeeef1;
-  --raise2:#e3e3e8;
-  --elev-1:#ffffff;
-  --elev-2:#ffffff;
+  --raise:#eaeaef;
+  --raise2:#dedee6;
+  --elev-1:rgba(255,255,255,.86);
+  --elev-2:rgba(255,255,255,.96);
 
   /* ---- 描边 ------------------------------------------------------- */
-  --line:#e4e4e9;
-  --line2:#d2d2da;
+  --line:rgba(24,26,36,.11);
+  --line2:rgba(24,26,36,.20);
 
   /* ---- 文本 -------------------------------------------------------
      浅色主题的文字必须真的"深"：整窗透明时正文压在被磨砂的壁纸上，原来那套
      中灰（#53545c / #787983 / #9fa0a9）在灰底上几乎没有对比（2026-11-01 用户
      截图：侧栏导航与分组标题看不清）。整体压深一到两档，层级仍靠明度拉开。 */
-  --fg:#141416;
-  --fg2:#33343b;
-  --fg3:#4e4f58;
-  --fg4:#77787f;
+  --fg:#121214;
+  --fg2:#2c2d33;
+  --fg3:#4a4b53;
+  --fg4:#676872;
 
   /* ---- 强调色（浅底上要压深一档才够对比度） ----------------------- */
   --accent:#4f5bd5;
   --accent-hi:#3f4bc4;
-  --accent-soft:rgba(79,91,213,.10);
+  --accent-soft:rgba(79,91,213,.11);
   --link:#3f4bc4;
 
   /* ---- 语义色 ----------------------------------------------------- */
@@ -3387,33 +3426,68 @@ mark{background:var(--accent-soft);color:var(--accent);border-radius:3px;padding
   --del:#cf222e;
   --run:#6a6b74;
 
-  /* ---- 玻璃材质：白面 + 深发丝边（深色版是白透明叠黑） -------------
-     2026-10-31 提通透：面从 .94/.74 降到 .78/.48 —— 深色版的白透明叠在
-     黑底上"透"是白得发亮，浅色版必须真的半透明才看得出玻璃（用户反馈
-     "浅色下太不透"）。小控件比卡片本体略实一点，保证 chip 里的字读得清。 */
-  --glass-face:linear-gradient(180deg,rgba(255,255,255,.78),rgba(255,255,255,.48));
-  --glass-face-hover:linear-gradient(180deg,rgba(255,255,255,.90),rgba(255,255,255,.64));
-  --glass-face-on:linear-gradient(180deg,rgba(255,255,255,.96),rgba(244,245,251,.78));
-  --glass-line:rgba(24,26,36,.11);
-  --glass-line-hover:rgba(24,26,36,.20);
-  --glass-hi:inset 0 1px 0 rgba(255,255,255,.95);
+  /* ---- 玻璃小控件：白面 + 深发丝边 ---------------------------------
+     深色版的"玻璃"是白透明叠在黑上；浅色底上同一套 alpha 会直接化掉。
+     浅色的小控件因此是**乳白面 + 一圈冷灰发丝边**，边比面更重要：
+     没有它，chip 就是一片看不出轮廓的白。 */
+  --glass-face:linear-gradient(180deg,rgba(255,255,255,.96),rgba(252,252,254,.80));
+  --glass-face-hover:linear-gradient(180deg,rgba(255,255,255,1),rgba(255,255,255,.92));
+  --glass-face-on:linear-gradient(180deg,rgba(255,255,255,1),rgba(246,247,252,.96));
+  --glass-line:rgba(24,26,36,.13);
+  --glass-line-hover:rgba(24,26,36,.22);
+  --glass-hi:inset 0 1px 0 rgba(255,255,255,1);
   --glass-lo:inset 0 -1px 0 rgba(24,26,36,.05);
-  --glass-drop:0 1px 2px rgba(24,26,36,.07);
+  --glass-ring:inset 0 0 0 1px var(--glass-line);
+  --glass-drop:0 1px 2px rgba(24,26,36,.08);
 
-  /* ---- 窗口级材质：深色版那层"黑纱"，浅色版只能翻成"白纱" --------
-     这几个令牌默认按深色写的（rgba(9,9,12,.34) 之类），浅色下照抄会让
-     整窗变成一块灰玻璃、侧栏和标题栏比卡片还深。浅色版一律改成低饱和的
-     白雾，透明度乘同一个 --glass-film（100% 透明度时一起归零）。 */
+  /* ---- 输入卡本体：乳白 + 上亮下暗的边 ----------------------------
+     浅底上"玻璃"的边界线索和深底是反的：顶缘靠纯白受光，**底缘靠一条冷灰
+     回光线**（折射在玻璃下沿留下的暗边）。只给白色描边的话，卡片下沿会
+     直接化进页面。
+     底色/面色都乘 --glass-film，且给得比深色那套更薄 —— 引力透镜要透过
+     卡片看见会话文字，乳白给厚了就又变回"一块不透明的纸"。 */
+  --cmp-base:linear-gradient(180deg,
+    rgba(255,255,255,calc(.10 * var(--glass-film))) 0%,
+    rgba(250,250,254,calc(.14 * var(--glass-film))) 100%);
+  --cmp-face:linear-gradient(180deg,
+    rgba(255,255,255,calc(.34 * var(--glass-film))) 0%,
+    rgba(255,255,255,calc(.12 * var(--glass-film))) 34%,
+    rgba(250,250,253,calc(.06 * var(--glass-film))) 68%,
+    rgba(243,243,248,calc(.10 * var(--glass-film))) 100%);
+  --cmp-rim:linear-gradient(180deg,
+    rgba(255,255,255,.98) 0%,
+    rgba(255,255,255,.62) 40%,
+    rgba(24,26,36,.10) 74%,
+    rgba(24,26,36,.20) 100%);
+  --cmp-bri:1;
+  /* 浅色页面上"白边"等于没有边：整圈发丝环 + 一圈**四边都有**的环境影，
+     才是卡片轮廓的来源（下面两条 0 2px / 0 20px 只往脚下投影，顶缘无人管）。 */
+  --cmp-edge:inset 0 0 0 1px rgba(24,26,36,.22);
+  --cmp-shadow:
+    inset 0 1px 0 rgba(255,255,255,.95),
+    inset 0 -18px 30px -22px rgba(24,26,36,.16),
+    0 0 1px 1px rgba(24,26,36,.07),
+    0 2px 6px -2px rgba(24,26,36,.10),
+    0 20px 46px -24px rgba(24,26,36,.28);
+
+  /* ---- 窗口级材质：浅色是"纸"，不是"烟" --------------------------
+     这是浅色主题可读性的根。壁纸是任意内容（用户桌面常是深色图），
+     白雾给得不够时，白雾 + 暗壁纸 = 中灰底 + 深灰字 = 看不清
+     （2026-11-01 用户截图：侧栏导航、分组标题、hero 副标题全部糊掉）。
+     macOS 浅色侧栏的实测观感就是"几乎不透明的纸 + 一点点底色"，
+     所以这里纱 .86~.94、面板 .80、正文床 .84 —— 通透感交给 --cmp-* 的
+     输入卡和 DWM 背衬去表达，正文一律压在纸上。 */
   --glass-scrim:linear-gradient(180deg,
-    rgba(250,250,252,calc(.62 * var(--glass-film))) 0%,
-    rgba(250,250,252,calc(.46 * var(--glass-film))) 26%,
-    rgba(250,250,252,calc(.48 * var(--glass-film))) 72%,
-    rgba(246,246,249,calc(.64 * var(--glass-film))) 100%);
-  --glass-panel:rgba(255,255,255,calc(.50 * var(--glass-film)));
-  --glass-dock:rgba(255,255,255,calc(.30 * var(--glass-film)));
-  --glass-hair:rgba(24,26,36,.075);
-  --glass-edge:rgba(255,255,255,.65);
-  --glass-veil:rgba(247,247,250,.74);
+    rgba(250,250,252,calc(.92 * var(--glass-film))) 0%,
+    rgba(250,250,252,calc(.86 * var(--glass-film))) 28%,
+    rgba(250,250,252,calc(.88 * var(--glass-film))) 72%,
+    rgba(246,246,249,calc(.94 * var(--glass-film))) 100%);
+  --glass-panel:rgba(255,255,255,calc(.80 * var(--glass-film)));
+  --glass-dock:rgba(255,255,255,calc(.72 * var(--glass-film)));
+  --glass-read:rgba(255,255,255,calc(.84 * var(--glass-film)));
+  --glass-hair:rgba(24,26,36,.085);
+  --glass-edge:rgba(255,255,255,.9);
+  --glass-veil:rgba(247,247,250,.94);
 
   /* ---- 阴影：浅、散、低饱和 --------------------------------------- */
   --shadow:0 18px 44px rgba(24,26,36,.14),0 1px 2px rgba(24,26,36,.07);
@@ -3424,73 +3498,52 @@ mark{background:var(--accent-soft);color:var(--accent);border-radius:3px;padding
   --line-soft:#e9e9ed;
   --code-bg:#f2f2f5;
   --user:#2c2d34;
-  --assistant:#141416;
+  --assistant:#121214;
   --tool:#3b3c43;
   --system:#4a4b54;
   --other:#545560;
 }
 
-/* ---------- 9.2 输入卡（液态玻璃的浅色版） --------------------------
-   深色版的材质是"白透明叠在黑上"，浅色底上照抄会白成一片；同时浅色版的
-   不透明度原来给到 .95→.74，卡片几乎是不透明的白板（2026-10-31 用户反馈
-   "浅色下太不透"）。现在：
-     · 面  只留一层很薄的乳白（.62→.38），背后内容透得出来，靠 backdrop
-           的 blur + 折射带把文字糊开，读起来还是干净的；
-     · 厚度 只保留内顶镜面与沿边柔光，**不画描边**（与深色版一致：内环、
-           外暗线、conic 亮边都已去掉）；
-     · 边界 由「背后内容被模糊 + 折射 + 顶部受光 + 一层很散的投影」交代。 */
-:root[data-theme="light"] #composerInner{
-  background:linear-gradient(180deg,
-    rgba(255,255,255,.62) 0%,
-    rgba(255,255,255,.50) 14%,
-    rgba(255,255,255,.42) 44%,
-    rgba(244,244,248,.38) 100%);
-  box-shadow:
-    inset 0 20px 24px -20px rgba(255,255,255,.60),
-    inset 0 -10px 25px rgba(24,26,36,.05),
-    0 2px 8px -2px rgba(24,26,36,.10),
-    0 18px 44px -30px rgba(24,26,36,.40);
-}
-/* 聚焦：只把顶部柔光提亮 + 一层极淡的 accent 内发光，不画环 */
+/* ---------- 9.2 输入卡聚焦：只提顶缘受光，不画环 -------------------- */
 :root[data-theme="light"] #composerInner:focus-within{
-  box-shadow:
-    inset 0 20px 24px -20px rgba(255,255,255,.78),
-    inset 0 0 12px -2px color-mix(in srgb,var(--accent) 16%,transparent),
-    inset 0 -10px 25px rgba(24,26,36,.05),
-    0 2px 8px -2px rgba(24,26,36,.10),
-    0 18px 44px -30px rgba(24,26,36,.40);
+  box-shadow:var(--cmp-edge),
+    inset 0 1px 0 rgba(255,255,255,1),
+    inset 0 -18px 30px -22px rgba(24,26,36,.16),
+    0 3px 8px -2px rgba(24,26,36,.11),
+    0 26px 54px -26px rgba(24,26,36,.30);
 }
-/* 卡内控件（+ / chip / 发送）的投影：深色版用 50% 黑做"离面一点"，
-   浅色底上会糊成黑边，换成 18%~22% 的冷灰 */
+/* 卡内控件的投影：深色版用 50% 黑做"离面一点"，浅色底上会糊成黑边，
+   换成 14%~18% 的冷灰 */
 :root[data-theme="light"] .cmp-add:hover,
-:root[data-theme="light"] .cmp-chip:hover,
-:root[data-theme="light"] .cmp-send{
-  box-shadow:var(--glass-hi),var(--glass-lo),0 2px 6px -2px rgba(24,26,36,.18);
+:root[data-theme="light"] .cmp-chip:hover{
+  box-shadow:var(--glass-ring),var(--glass-hi),var(--glass-lo),0 2px 6px -2px rgba(24,26,36,.14);
 }
-:root[data-theme="light"] .cmp-send:hover{
-  box-shadow:var(--glass-hi),var(--glass-lo),0 3px 8px -2px rgba(24,26,36,.22);
+:root[data-theme="light"] .cmp-send{
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.42),inset 0 -1px 0 rgba(0,0,0,.20),
+             0 4px 12px -6px color-mix(in srgb,var(--accent) 70%,transparent);
 }
 
 /* ---------- 9.3 悬浮按钮 / 遮罩 ------------------------------------- */
 :root[data-theme="light"] .jump-bottom,
 :root[data-theme="light"] .jump-top{
-  box-shadow:var(--glass-hi),var(--glass-lo),0 6px 18px -12px rgba(24,26,36,.55);
+  box-shadow:var(--glass-ring),var(--glass-hi),var(--glass-lo),0 6px 18px -12px rgba(24,26,36,.55);
 }
 :root[data-theme="light"] .jump-bottom:hover,
 :root[data-theme="light"] .jump-top:hover{
-  box-shadow:var(--glass-hi),var(--glass-lo),0 8px 22px -12px rgba(24,26,36,.6);
+  box-shadow:var(--glass-ring),var(--glass-hi),var(--glass-lo),0 8px 22px -12px rgba(24,26,36,.6);
 }
 /* 弹窗/浮层遮罩：深色版是近乎纯黑 55%，浅色下压到 30% 的冷灰 */
 :root[data-theme="light"] .modal{background:rgba(24,26,36,.30)}
 :root[data-theme="light"] .pnl-ov{background:color-mix(in srgb,var(--bg) 55%,rgba(24,26,36,.45))}
-/* 消息列的中心纱（05-stream.css）：深色版是压暗换可读性，浅色版必须提亮 ——
-   照抄就是空态/正文底下压着一团灰（2026-10-31 截图里主区发灰的原因） */
+/* 消息列的"床"（05-stream.css）：深色版压暗换可读性，浅色版反过来提亮 ——
+   照抄深色那团黑就是主区发灰（2026-10-31 截图）。中间一段要给足，
+   只在边缘才渐隐，否则正文仍然和壁纸抢笔画。 */
 :root[data-theme="light"] .chat{
-  background:radial-gradient(115% 95% at 50% 45%,
-    rgba(250,250,252,calc(.72 * var(--glass-film))) 0%,
-    rgba(250,250,252,calc(.46 * var(--glass-film))) 55%,
-    rgba(250,250,252,calc(.14 * var(--glass-film))) 82%,
-    rgba(250,250,252,0) 100%);}
+  background:radial-gradient(112% 92% at 50% 44%,
+    rgba(255,255,255,calc(.88 * var(--glass-film))) 0%,
+    rgba(255,255,255,calc(.88 * var(--glass-film))) 44%,
+    rgba(255,255,255,calc(.56 * var(--glass-film))) 74%,
+    rgba(255,255,255,0) 100%);}
 
 /* ---------- 9.4 语义小徽标 / 停止钮：浅色下白字白底读不出来 ----------
    .badge.warn/.badge.ok 在深色版用深字压彩色底；.cmp-send.stop 用白字压
@@ -3543,7 +3596,7 @@ mark{background:var(--accent-soft);color:var(--accent);border-radius:3px;padding
    （2026-10-31 用户截图）。浅色版反过来：两块都比纱更亮一档，边界交给
    那一道发丝线。 */
 :root[data-theme="light"] #settings .set-side{background:rgba(255,255,255,.55)}
-:root[data-theme="light"] #settings .set-head{background:rgba(255,255,255,.72)}
+:root[data-theme="light"] #settings .set-head{background:rgba(255,255,255,.90)}
 
 /* ==== css/10-splash.css =============================================== */
 
@@ -10347,33 +10400,48 @@ function buildComposerDom() {
   }
 
   ensureSlashPanel();
-  host.classList.remove('glass-refract');   // 旧类名（已废弃，见 I1b）
+  host.classList.remove('glass-refract');   // 旧类名（已废弃）
   setupLens(host);
   host.__cmpBuilt = true;
   return true;
 }
 
-/* ---------- I1b. 液态玻璃：SVG 折射（复刻 shuding/liquid-glass）--------
-   管线与参考实现（github.com/shuding/liquid-glass，MIT）一致：
-     ① 逐像素算「采样点偏移」贴图：圆角矩形 SDF → 离边越近把采样点沿内法线
-        推得越多（= 边缘放大/压缩），编成 R/G 位移图（0.5 = 不动）；
-     ② <filter> 里 feImage 装贴图 → feGaussianBlur 磨砂 → feDisplacementMap
-        折射，经 backdrop-filter:url(#cmp-lens) 作用在**真实背景**上；
-     ③ 滤镜链里**只有** url()：backdrop-filter 里 url() 会吞掉同一行后面的
-        blur()/contrast()/saturate()（Chromium 实测），磨砂和调色必须写进
-        同一条 SVG 滤镜，否则背景是"锐利透出 + 边缘折影"——2026-10-31 用户
-        报的错乱就是这个（背景文字和占位符叠在一起、边缘发彩）。
-   ⚠️ 关键（第一版死在这里）：<filter> 必须 filterUnits="userSpaceOnUse" 并给出
-   **像素**的 x/y/width/height。用默认的 objectBoundingBox + width="100%" 时
-   Chromium 会把整条滤镜吞掉 —— 既不模糊也不折射，背后文字原样透上来，
-   看着就是"上界没固定、两端没渲染好"。别再误判成"Chromium 不支持 url()"。
-   贴图尺寸/圆角一变（拖手柄、Teamwork、窗口缩放）就重画，见 syncLens()。 */
+/* ---------- I1b. 引力透镜玻璃（SVG 折射链） ----------------------------
+   卡片本体是一块**引力透镜**，不是磨砂板：背后的会话文字会真的透过玻璃、
+   并被这张透镜弯过来。参考实现 D:\Developments\js\引力透镜滕王阁序\test1\
+   gravity-lens（WebGL 片元着色器）按点质量透镜做像方→物方反解：
+       α̂(θ) = k·θ / (|θ|² + ε)      k = M(1+ε)，ε = Plummer 软化半径
+       β = θ − α̂(θ)                 （采样点沿半径向质心内拉）
+   这里把同一个场逐像素烤成 R/G 位移贴图，喂给 <filter> 里的
+   feImage → feGaussianBlur → feColorMatrix(saturate) → feDisplacementMap，
+   再经 backdrop-filter:url(#cmp-lens) 作用在真实背景上。中心 β/θ 收敛 →
+   放大（≈1.8×，放大镜），贴边偏折最大 → 压缩；单调不回弹，所以不会折出硬缝。
+
+   两处与参考实现有意不同：
+     · **等值线内切卡片**：参考是圆透镜（|θ| 用同一个像素半径）。卡片是
+       700×156 的横条，同一半径会得到"中间一团糊、两侧没变形"，所以场的自变量
+       x/y 各除以半宽/半高 —— 等偏折线退化成内切椭圆，卡片边界正好是一条等值线。
+       偏移量本身仍按同一个像素半径（几何平均）给，保持偏折角各向同性。
+     · **pull < 1**：真实点质量在 |β| < θE 内宇称翻转（盘心倒像），参考实现
+       靠大 ε 把倒像压成"接近可读的放大镜"。UI 里倒字不可接受，于是给整个
+       偏折角乘一个比例：pull·k/ε < 1 时全场正像，只剩放大与贴边压缩。
+       爱因斯坦环那圈会聚亮线不单独画，外形线索交给 --cmp-rim 渐变描边。
+
+   ⚠️ 三条踩过的坑（别再犯）：
+     · <filter> 必须 filterUnits="userSpaceOnUse" 并给**像素** x/y/width/height。
+       用默认 objectBoundingBox 时 Chromium 会把整条滤镜吞掉 —— 既不弯也不糊，
+       背景原样透上来。
+     · backdrop-filter 里一出现 url()，同一行后面的 blur()/saturate() 会被
+       Chromium 整段丢掉 → 磨砂只能写进同一条滤镜（feGaussianBlur 排在位移
+       之前），「输入卡磨砂」滑块改的是 stdDeviation，不是 CSS blur。
+     · 贴图按卡片像素尺寸烤，尺寸一变（拖高度手柄 / Teamwork / 缩窗口）必须
+       重烤，见 syncLens()。 */
 const LENS = {
-  w: 0, h: 0, r: 0,          // 上次画贴图时的尺寸（同尺寸不重画）
-  band: 0.08,                // 折射带宽度 = 短边 × 这个比例（夹在 [8,16]px）
-  strength: 0.55,            // 贴边位移 = 带宽 × 这个比例（太大就会把背后的
-                             // 文字折出重影，2026-10-31 实测 0.9 太多）
-  filter: null, map: null, disp: null, blur: null, host: null, raf: 0,
+  mass: 1,      // M
+  soft: 1.35,   // ε：软化半径，越大→盘心越接近放大镜
+  pull: 0.26,   // 偏折比例：1 = 物理量；> soft/(M(1+soft)) ≈ .57 时盘心开始倒像
+  w: 0, h: 0,   // 上次烤贴图时的尺寸（同尺寸不重烤）
+  filter: null, map: null, disp: null, blur: null, sat: null, host: null, raf: 0,
 };
 
 function lensSVG() {
@@ -10394,94 +10462,89 @@ function lensSVG() {
   blur.setAttribute('in', 'SourceGraphic');
   blur.setAttribute('result', 'soft');
   blur.setAttribute('stdDeviation', '0');
+  // url() 会吞掉同一行的 saturate()，所以提饱和也塞进链里（跟降级路径同观感）
+  const sat = document.createElementNS(NS, 'feColorMatrix');
+  sat.setAttribute('in', 'soft');
+  sat.setAttribute('type', 'saturate');
+  sat.setAttribute('values', '1.18');
+  sat.setAttribute('result', 'vivid');
   const disp = document.createElementNS(NS, 'feDisplacementMap');
-  disp.setAttribute('in', 'soft');
+  disp.setAttribute('in', 'vivid');
   disp.setAttribute('in2', 'map');
   disp.setAttribute('xChannelSelector', 'R');
   disp.setAttribute('yChannelSelector', 'G');
   disp.setAttribute('scale', '0');
   f.appendChild(img);
   f.appendChild(blur);
+  f.appendChild(sat);
   f.appendChild(disp);
   svg.appendChild(f);
   document.body.appendChild(svg);
-  LENS.filter = f; LENS.map = img; LENS.blur = blur; LENS.disp = disp;
+  LENS.filter = f; LENS.map = img; LENS.blur = blur; LENS.sat = sat; LENS.disp = disp;
   return f;
 }
 
-/* 圆角矩形 SDF：0 在边界，内部为负（与参考实现的 roundedRectSDF 同式） */
-function lensSDF(px, py, hw, hh, r) {
-  const qx = Math.abs(px) - hw + r;
-  const qy = Math.abs(py) - hh + r;
-  return Math.min(Math.max(qx, qy), 0) + Math.hypot(Math.max(qx, 0), Math.max(qy, 0)) - r;
-}
-function smoothstep01(t) { t = Math.min(1, Math.max(0, t)); return t * t * (3 - 2 * t); }
-
-function paintLens(w, h, radius) {
+function paintLens(w, h) {
   const cw = Math.max(8, Math.round(w)), ch = Math.max(8, Math.round(h));
-  if (LENS.w === cw && LENS.h === ch && LENS.r === radius) return;
-  LENS.w = cw; LENS.h = ch; LENS.r = radius;
-
-  const band = Math.min(16, Math.max(8, Math.min(cw, ch) * LENS.band));
-  // 位移场极平滑，大卡片按 1/2 分辨率算（贴图由 feImage 拉伸回原尺寸）：
-  // 678×600 的重绘从 ~18ms 降到 ~4ms，拖手柄时不会掉帧。
-  const step = Math.min(cw, ch) > 240 ? 2 : 1;
-  const mw = Math.ceil(cw / step), mh = Math.ceil(ch / step);
+  if (LENS.w === cw && LENS.h === ch) return;
+  LENS.w = cw; LENS.h = ch;
+  // 场本身极平滑，半分辨率烤图再由 feImage 拉回原尺寸（700×156 → 2.7 万像素）
+  const step = 2;
+  const mw = Math.max(4, Math.ceil(cw / step)), mh = Math.max(4, Math.ceil(ch / step));
   const cv = document.createElement('canvas');
   cv.width = mw; cv.height = mh;
   const g = cv.getContext('2d');
   const img = g.createImageData(mw, mh);
   const data = img.data;
   const hw = cw / 2, hh = ch / 2;
-  const r = Math.max(0, Math.min(radius, Math.min(hw, hh)));
-  const dxs = new Float32Array(mw * mh), dys = new Float32Array(mw * mh);
-  let maxAbs = 0;
+  const k = LENS.mass * (1 + LENS.soft);
+  // 场按内切椭圆归一，偏移量按同一个像素半径给（见上面"等值线内切卡片"那条）
+  const R = Math.sqrt(hw * hh);
+  const off = new Float32Array(mw * mh * 2);
+  let maxAbs = 1e-3;
   for (let y = 0; y < mh; y++) {
+    const ey = ((y + 0.5) * step - hh) / hh;
     for (let x = 0; x < mw; x++) {
-      const px = (x + 0.5) * step - hw, py = (y + 0.5) * step - hh;
-      const d = lensSDF(px, py, hw, hh, r);        // 0 在边、内负
-      // 剖面与参考一致：带内缘 0 → 边界 1，单调不回弹（回弹会折出硬缝）
-      const t = smoothstep01(1 + d / band);
-      const mag = band * LENS.strength * t;
-      // 方向取 SDF 梯度（外法线），采样点反向（向里）= 边缘放大
-      const nx = lensSDF(px + 0.5, py, hw, hh, r) - lensSDF(px - 0.5, py, hw, hh, r);
-      const ny = lensSDF(px, py + 0.5, hw, hh, r) - lensSDF(px, py - 0.5, hw, hh, r);
-      const nl = Math.hypot(nx, ny) || 1;
-      const i = y * mw + x;
-      dxs[i] = -nx / nl * mag;
-      dys[i] = -ny / nl * mag;
-      if (mag > maxAbs) maxAbs = mag;
+      const ex = ((x + 0.5) * step - hw) / hw;
+      // |α̂|/|θ| = 内拉比例；r→0 不发散（ε 兜住奇点）
+      const f = LENS.pull * k / (ex * ex + ey * ey + LENS.soft);
+      const i = (y * mw + x) * 2;
+      off[i] = -ex * f * R;
+      off[i + 1] = -ey * f * R;
+      const a = Math.max(Math.abs(off[i]), Math.abs(off[i + 1]));
+      if (a > maxAbs) maxAbs = a;
     }
   }
-  const scale = maxAbs > 0 ? maxAbs * 2 : 1;
-  for (let i = 0, j = 0; i < dxs.length; i++, j += 4) {
-    data[j] = (dxs[i] / scale + 0.5) * 255;
-    data[j + 1] = (dys[i] / scale + 0.5) * 255;
+  // feDisplacementMap 只有一个各向同性的 scale：把两轴偏移都归一到 ±0.5
+  const scale = maxAbs * 2;
+  for (let i = 0, j = 0; i < off.length; i += 2, j += 4) {
+    data[j] = (off[i] / scale + 0.5) * 255;
+    data[j + 1] = (off[i + 1] / scale + 0.5) * 255;
     data[j + 2] = 0;
     data[j + 3] = 255;
   }
   g.putImageData(img, 0, 0);
-  const url = cv.toDataURL();
-  LENS.map.setAttribute('href', url);
+  LENS.map.setAttribute('href', cv.toDataURL());
   LENS.disp.setAttribute('scale', scale.toFixed(2));
 }
 
-/* 尺寸/圆角同步：滤镜区域是 userSpaceOnUse 的像素矩形，必须跟着元素走 */
+/* 尺寸同步：滤镜区域是 userSpaceOnUse 的像素矩形，必须跟着元素走 */
 function syncLens() {
   const host = LENS.host;
   if (!host) return;
   const rect = host.getBoundingClientRect();
   if (rect.width < 16 || rect.height < 16) return;
-  const radius = parseFloat(getComputedStyle(host).borderTopLeftRadius) || 24;
-  const f = lensSVG();
   const w = Math.round(rect.width), h = Math.round(rect.height);
+  const f = lensSVG();
   f.setAttribute('x', '0'); f.setAttribute('y', '0');
   f.setAttribute('width', String(w)); f.setAttribute('height', String(h));
   LENS.map.setAttribute('width', String(w));
   LENS.map.setAttribute('height', String(h));
-  // 磨砂写在这条滤镜里（url() 会吞掉同一行 backdrop-filter 的 blur()）
+  // 磨砂与提饱和都写在这条滤镜里（url() 会吞掉同一行 backdrop-filter 的其它函数）
   LENS.blur.setAttribute('stdDeviation', GLASS.blur.toFixed(2));
-  paintLens(w, h, radius);
+  const sat = parseFloat(getComputedStyle(host).getPropertyValue('--cmp-sat'));
+  if (isFinite(sat)) LENS.sat.setAttribute('values', sat.toFixed(2));
+  paintLens(w, h);
 }
 function scheduleLens() {
   if (LENS.raf) return;
@@ -10499,19 +10562,17 @@ function setupLens(host) {
   window.addEventListener('resize', scheduleLens);
 }
 
-/* 磨砂强度偏好（本机 localStorage，不进后端设置）。折射始终开启；
-   这个滑块只改高斯模糊 —— 0 = 完全通透（只剩折射），100 = 强磨砂。 */
+/* 磨砂强度偏好（本机 localStorage，不进后端设置 —— 跟主题、动画等级一样只在
+   这台机器的浏览器里生效）。滑块 0→100% 映射到 0→40px 高斯模糊，折射始终开启。
+   默认 10% ≈ 2.2px：这是"透过玻璃能认出背后的字"的那一档 —— 用户 2026-11-01
+   的反馈是上一版 22px 把会话文字彻底磨没了，透明效果等于没有。
+   键名升到 .v4：v3 存的是强磨砂默认值，换键 = 老用户也回到通透的新起点。 */
 const GLASS = {
-  t: 0.4,             // 透明度偏好（0=清晰 … 1=磨砂最强），见 applyGlassPref
-  blur: 5.06,         // 高斯模糊（CSS px）：由透明度推出来
+  t: 0.10,            // 磨砂强度偏好（0=完全通透 … 1=最强）
+  blur: 2.25,         // 高斯模糊（CSS px）：由 t 推出来，见 glassBlur
 };
-
-/* 玻璃观感偏好（本机 localStorage，不进后端设置 —— 跟主题、动画等级一样只在
-   这台机器的浏览器里生效）。材质无色：只有白/黑色层次，不带任何颜色。
-   键名带 .v2：v1 时代默认是"强磨砂"，换成折射材质后旧值会让卡片糊成一块，
-   直接换键 = 老用户也拿到新的默认观感（2.5px，接近参考实现的通透度）。 */
-const GLASS_PREF_KEY = 'cell.glass.v2';
-function glassBlur(t) { return 20 * Math.pow(Math.min(1, Math.max(0, t)), 1.5); }
+const GLASS_PREF_KEY = 'cell.glass.v4';
+function glassBlur(t) { return 40 * Math.pow(Math.min(1, Math.max(0, t)), 1.25); }
 
 function loadGlassPref() {
   let t = GLASS.t;
@@ -10521,14 +10582,12 @@ function loadGlassPref() {
   } catch (e) {}
   applyGlassPref(t, true);
 }
-/* 立即生效：只改一个 CSS 变量，卡片与卡内控件共用它 */
+/* 立即生效：CSS 变量给卡内小控件的降级路径，滤镜里的 stdDeviation 给卡片本体 */
 function applyGlassPref(t, silent) {
   if (t != null) GLASS.t = Math.min(1, Math.max(0, Number(t) || 0));
-  const px = glassBlur(GLASS.t);
-  GLASS.blur = px;
-  document.documentElement.style.setProperty('--cmp-glass-blur', px.toFixed(2) + 'px');
-  // 卡片的磨砂在 SVG 滤镜里（url() 吞掉同行的 blur()），这里同步过去
-  if (LENS.blur) LENS.blur.setAttribute('stdDeviation', px.toFixed(2));
+  GLASS.blur = glassBlur(GLASS.t);
+  document.documentElement.style.setProperty('--cmp-blur', GLASS.blur.toFixed(2) + 'px');
+  if (LENS.blur) LENS.blur.setAttribute('stdDeviation', GLASS.blur.toFixed(2));
 }
 function setGlassPref(t) {
   applyGlassPref(t, false);
@@ -10552,9 +10611,15 @@ loadGlassPref();
             VSCode 的窗口透明就是这一个做法）：背后清晰可见，代价是页面与
             文字一起变淡，所以这时页面必须不透明（否则透明处会露出窗口底色）。
 
-   浮层（菜单 / 弹窗）不跟，任何时候都要读得清。 */
-const WINGLASS = { t: 1 };            // 0..1 透明度（1 = 页面一点也不盖）
-const WINGLASS_PREF_KEY = 'cell.win.glass';
+   浮层（菜单 / 弹窗）不跟，任何时候都要读得清。
+
+   ⚠️ 默认值从 1（100% 透明）改成 .5：量程上限意味着"页面一面不给"，
+   文字直接压在壁纸上 —— 浅色主题尤其糊（2026-11-01 用户截图：侧栏导航、
+   分组标题、hero 副标题全部看不清）。.5 = 撤掉实色画布但保留整窗那层纱，
+   仍然看得见背后，只是有一块可以放字的介质。键名升到 .v2 = 老用户也回到
+   这个可读的起点，之后仍可自己拖。 */
+const WINGLASS = { t: 0.5 };           // 0..1 透明度（1 = 页面一点也不盖）
+const WINGLASS_PREF_KEY = 'cell.win.glass.v2';
 const WINBLUR = { on: true };          // 磨砂（系统背衬）
 const WINBLUR_PREF_KEY = 'cell.win.blur';
 const WINBLUR_MIN_ALPHA = 0.5;         // 整窗 alpha 最低到 50%（再低就真看不见了）
@@ -13512,8 +13577,8 @@ function buildAppearance(st) {
       const v = Number(grange.value);
       gval.textContent = v + '%';
       const b = typeof glassBlur === 'function' ? glassBlur(v / 100) : 0;
-      gdesc.textContent = '高斯模糊 ' + b.toFixed(1) + 'px —— 边缘折射（透镜弯折）始终开启，'
-        + '这个滑块只加磨砂；拖到最左就是完全通透、只有折射。';
+      gdesc.textContent = '高斯模糊 ' + b.toFixed(1) + 'px —— 折射（引力透镜）始终开着，这个滑块只往上加磨砂。'
+        + '0% = 完全通透，透过输入栏直接读得清背后的会话文字；默认 10% ≈ 2.2px 只把笔画磨软一点；拖到底就糊成一团。';
       for (const [tk, at] of gtickEls) tk.classList.toggle('on', Math.abs(at - v) <= 25);
     };
     grange.oninput = paintGlass;
@@ -13524,7 +13589,7 @@ function buildAppearance(st) {
     gfield.appendChild(grow);
     gfield.appendChild(gticks);
     gfield.appendChild(gdesc);
-    gfield.appendChild(el('div', 'set-hint', '卡片与卡内控件（+ / 模式 / 模型 / 发送）同一套液态玻璃：边缘按圆角做真实折射，中间通透。设置保存在本机浏览器。'));
+    gfield.appendChild(el('div', 'set-hint', '卡片是一块引力透镜玻璃：背后的内容沿半径被弯向卡心（中心放大、贴边压缩），会话文字因此能透过输入栏看见；再叠上亮下暗的边缘受光与投影交代外形。底色随上面的「背景透明度」一起撤掉。设置保存在本机浏览器。'));
     s.appendChild(card([setCardHead('输入卡材质'), gfield]));
   }
 

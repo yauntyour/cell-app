@@ -33,14 +33,15 @@
 .tabpane.hero .chathead{display:none}
 
 .chat{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;
-  /* 正文压在会滚动的玻璃上：壁纸亮的地方白字会糊。这里给消息列一层很淡的
-     中心纱（不是面板，没有边），远离中心的地方全透明 —— 窗口的"透明"由
-     四周交代，可读性由中间这层纱交代。纱的强度乘 --glass-film：透明度
-     拖到 100% 时连它一起收掉，否则"完全透明"中间还压着一团灰。 */
-  background:radial-gradient(115% 95% at 50% 45%,
-    rgba(8,8,11,calc(.34 * var(--glass-film))) 0%,
-    rgba(8,8,11,calc(.20 * var(--glass-film))) 55%,
-    rgba(8,8,11,calc(.06 * var(--glass-film))) 82%,
+  /* 正文压在会滚动的玻璃上：壁纸亮的地方白字会糊。这里给消息列一层"床"
+     ——中间是一整块够厚的暗（浅色系里是够亮的白，见 09-theme-light.css），
+     到边缘才渐隐，所以窗口的"透明"仍由四周交代，可读性由中间这块床交代。
+     ⚠️ 旧版中心只给 .34 且一路渐隐到 0，等于没有床：壁纸的亮块直接和正文
+     抢笔画（2026-11-01 用户截图）。纱的强度照旧乘 --glass-film。 */
+  background:radial-gradient(112% 92% at 50% 44%,
+    rgba(8,8,11,calc(.50 * var(--glass-film))) 0%,
+    rgba(8,8,11,calc(.50 * var(--glass-film))) 44%,
+    rgba(8,8,11,calc(.30 * var(--glass-film))) 74%,
     rgba(8,8,11,0) 100%);
   /* 底部留白读 --composer-pad（由 02-render2-chat.js 的 syncJumpAnchors 按卡片
      **实测**上界写入）：卡片高度在 Teamwork 模式 / 72vh 限高下都不等于

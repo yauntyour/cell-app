@@ -15,26 +15,32 @@
   /* ---- 表面（由暗到亮） ------------------------------------------- */
   /* 窗口是透明的（DWM 背衬在后面），所以"表面"不再是实色，而是叠在背衬上的
      一层层白/黑 alpha：越靠上越亮一点，读到的是同一块玻璃的不同厚度。
-     唯一的实色是 --bg —— 留给终端、启动页这类必须挡住身后的整屏内容。 */
+     唯一的实色是 --bg —— 留给终端、启动页这类必须挡住身后的整屏内容。
+     ⚠️ 每一档的 alpha 都要"压得住壁纸"：壁纸是任意内容，alpha 给低了
+     文字就压在壁纸上（2026-11-01 用户截图的主诉）。层级差 ≥ .04 才看得出是
+     两块不同的面，而不是同一块玻璃上随机脏了几块。 */
   --bg:#111113;            /* 实色画布（终端 / 启动页 / 兜底） */
-  --bg2:rgba(255,255,255,.045);   /* 次级表面（表单元 / 代码外框） */
-  --bg3:rgba(255,255,255,.07);    /* 代码块 / 输入底 */
-  --panel:rgba(19,19,24,.48);     /* 侧栏 / 右栏 */
-  --panel2:rgba(34,34,40,.82);    /* 浮层 / 弹出菜单（要压住下面的内容） */
-  --raise:rgba(255,255,255,.07);  /* hover */
-  --raise2:rgba(255,255,255,.12); /* 选中 / 按下 */
-  --elev-1:rgba(255,255,255,.05); /* 卡片 */
-  --elev-2:rgba(255,255,255,.085);/* 悬浮输入卡 */
+  --bg2:rgba(255,255,255,.055);   /* 次级表面（表单元 / 代码外框） */
+  --bg3:rgba(255,255,255,.085);   /* 代码块 / 输入底 */
+  --panel:rgba(18,18,23,.62);     /* 侧栏 / 右栏 */
+  --panel2:rgba(30,30,36,.94);    /* 浮层 / 弹出菜单（要压住下面的内容） */
+  --raise:rgba(255,255,255,.075);  /* hover */
+  --raise2:rgba(255,255,255,.13);  /* 选中 / 按下 */
+  --elev-1:rgba(255,255,255,.062); /* 卡片 */
+  --elev-2:rgba(255,255,255,.10);  /* 悬浮输入卡 */
 
   /* ---- 描边 ------------------------------------------------------- */
-  --line:rgba(255,255,255,.08);
-  --line2:rgba(255,255,255,.15);
+  --line:rgba(255,255,255,.09);
+  --line2:rgba(255,255,255,.17);
 
-  /* ---- 文本 ------------------------------------------------------- */
-  --fg:#f2f3f5;
-  --fg2:#a8abb2;
-  --fg3:#7b7e86;
-  --fg4:#585b63;
+  /* ---- 文本 -------------------------------------------------------
+     深色主题的层级差要小、但最暗一档也不能低于 4.5:1（压在 --glass-read
+     这层床上量的）。fg3/fg4 比旧值各提一档。 */
+  --fg:#f4f5f7;
+  --fg2:#b3b6bd;
+  --fg3:#8d909a;
+  --fg4:#7b7f89;
+
 
   /* ---- 强调色（唯一彩色主色） ------------------------------------- */
   --accent:#6c7cff;
@@ -51,40 +57,86 @@
   --del:#f85149;
   --run:#a8abb2;
 
-  /* ---- 液态玻璃材质（输入卡本体与卡内控件共用一套） ---------------- */
-  /* 只有白/黑的透明度层次，不带任何颜色：玻璃是"介质"，颜色只留给强调色 */
-  --glass-face:linear-gradient(180deg,rgba(255,255,255,.13),rgba(255,255,255,.052));
-  --glass-face-hover:linear-gradient(180deg,rgba(255,255,255,.20),rgba(255,255,255,.085));
-  --glass-face-on:linear-gradient(180deg,rgba(255,255,255,.24),rgba(255,255,255,.12));
-  --glass-line:rgba(255,255,255,.16);
-  --glass-line-hover:rgba(255,255,255,.26);
-  --glass-hi:inset 0 1px 0 rgba(255,255,255,.22);   /* 顶面镜面反光 */
-  --glass-lo:inset 0 -1px 0 rgba(0,0,0,.26);        /* 底缘回光（暗） */
-  --glass-drop:0 1px 2px rgba(0,0,0,.26);           /* 离面一点点 */
-  --glass-blur:blur(10px) saturate(1.12);           /* 磨砂（控件层） */
+  /* ---- 玻璃小控件（chip / 圆钮 / 悬浮按钮） ------------------------
+     一块能认出来的"凸起玻璃"要三样同时在场：面（上亮下暗的竖向渐变）、
+     发丝边（inset 0 0 0 1px，不是 border —— 不占布局也不会在圆角处断开）、
+     顶缘受光 + 贴地投影。少任何一样都会塌成"背景上一块脏色"。 */
+  --glass-face:linear-gradient(180deg,rgba(255,255,255,.145),rgba(255,255,255,.055));
+  --glass-face-hover:linear-gradient(180deg,rgba(255,255,255,.22),rgba(255,255,255,.095));
+  --glass-face-on:linear-gradient(180deg,rgba(255,255,255,.28),rgba(255,255,255,.14));
+  --glass-line:rgba(255,255,255,.18);
+  --glass-line-hover:rgba(255,255,255,.30);
+  --glass-hi:inset 0 1px 0 rgba(255,255,255,.24);    /* 顶面镜面反光 */
+  --glass-lo:inset 0 -1px 0 rgba(0,0,0,.26);         /* 底缘回光（暗） */
+  --glass-ring:inset 0 0 0 1px var(--glass-line);    /* 发丝边 */
+  --glass-drop:0 1px 2px rgba(0,0,0,.30);            /* 离面一点点 */
+  --glass-blur:blur(22px) saturate(1.5);             /* 磨砂（控件层） */
+
+  /* ---- 输入卡本体（引力透镜玻璃）----------------------------------
+     卡片是这一族里最大的一块，材质拆成五层，从后往前：
+       ① 透镜  backdrop-filter:url(#cmp-lens) —— 一条 SVG 滤镜里做完
+              「feGaussianBlur 磨砂 + feDisplacementMap 折射」。折射场是
+              Plummer 软化点质量透镜 β = θ − kθ/(|θ|²+ε)（推导与取值见
+              05-composer.js §I1b）：中心把背后的会话文字放大、贴边把它
+              压缩，所以玻璃里**看得见内容**，不是磨成一块灰。
+       ② 底    --cmp-base：玻璃自身极淡的一层着色，只在深色下压住折射内容
+              对正文的干扰。**alpha 一律乘 --glass-film** —— 窗口透明度拖到
+              100% 时这张卡必须跟着一起清掉，否则"整窗透明"对输入栏不生效
+              （2026-11-01 用户主诉）。
+       ③ 面    --cmp-face：顶部受光、底部略沉，中间不着色（中段着色读作塑料）。
+       ④ 边    --cmp-rim：1px 竖向渐变描边（border-box 一层 background），
+              玻璃唯一的"厚度"线索，同时兼任透镜那圈会聚亮边。
+       ⑤ 影    --cmp-shadow：贴地接触影 + 大而散的远影。 */
+  --cmp-blur:2.25px;
+  --cmp-sat:1.18;
+  --cmp-bri:1;
+  --cmp-base:linear-gradient(180deg,
+    rgba(8,8,11,calc(.12 * var(--glass-film))) 0%,
+    rgba(6,6,9,calc(.18 * var(--glass-film))) 100%);
+  --cmp-face:linear-gradient(180deg,
+    rgba(255,255,255,calc(.115 * var(--glass-film))) 0%,
+    rgba(255,255,255,calc(.030 * var(--glass-film))) 34%,
+    rgba(0,0,0,calc(.040 * var(--glass-film))) 68%,
+    rgba(0,0,0,calc(.10 * var(--glass-film))) 100%);
+  --cmp-rim:linear-gradient(180deg,
+    rgba(255,255,255,.50) 0%,
+    rgba(255,255,255,.16) 40%,
+    rgba(255,255,255,.05) 72%,
+    rgba(255,255,255,.24) 100%);
+  --cmp-shadow:
+    inset 0 1px 0 rgba(255,255,255,.30),
+    inset 0 -18px 30px -22px rgba(0,0,0,.55),
+    0 2px 6px -2px rgba(0,0,0,.45),
+    0 20px 46px -22px rgba(0,0,0,.78);
+  /* 一圈**等亮度**的发丝环，垫在渐变描边之内。渐变描边只负责"光从上面来"，
+     它交代不了边界：浅色主题顶缘是纯白，落在同样发白的页面上就整条消失
+     （2026-11-01 用户第 3 张截图：hero 的卡只剩下面一道影）。 */
+  --cmp-edge:inset 0 0 0 1px rgba(255,255,255,.05);
 
   /* ---- 液态玻璃（窗口级）------------------------------------------ */
   /* 窗口本身是透明的（DWM 丙烯酸背衬），页面只允许用 alpha 叠在背衬上：
      scrim 是整窗那一层纱，panel 是贴边的大面板（标题栏 / 侧栏），
-     dock 是右侧面板，float 是浮在内容之上的菜单/弹窗（要更实才读得清）。
+     dock 是右侧面板，read 是正文列那一层"床"（消息流压在上面），
+     float 是浮在内容之上的菜单/弹窗（要更实才读得清）。
 
-     --glass-film 是「这层纱还剩多少」：1 = 完整，0 = 一点不剩。它只乘在
-     整窗材质（纱 / 侧栏 / 右栏）上，浮层 opacity 不变。设置里的窗口透明度
-     拖到 100% 时它归零（见 05-composer.js 的 applyWindowOpacity），窗口就
-     真的只剩系统背衬的磨砂，不再有一层灰纱压在壁纸上。 */
+     --glass-film 是「这层纱还剩多少」：1 = 完整，0 = 一点不剩。设置里的窗口
+     透明度拖到 100% 时它归零（见 05-composer.js 的 applyWindowOpacity）。
+     ⚠️ 量程上限的代价就是文字直接压壁纸，所以默认值不再是 100%（旧默认
+     一开机就没有任何一面，浅色主题尤其糊）。 */
   --glass-film:1;
   --glass-scrim:linear-gradient(180deg,
-    rgba(9,9,12,calc(.34 * var(--glass-film))) 0%,
-    rgba(9,9,12,calc(.22 * var(--glass-film))) 26%,
-    rgba(9,9,12,calc(.24 * var(--glass-film))) 72%,
-    rgba(6,6,9,calc(.38 * var(--glass-film))) 100%);
-  --glass-panel:rgba(12,12,17,calc(.30 * var(--glass-film)));
-  --glass-dock:rgba(10,10,14,calc(.14 * var(--glass-film)));
+    rgba(8,8,11,calc(.58 * var(--glass-film))) 0%,
+    rgba(8,8,11,calc(.48 * var(--glass-film))) 28%,
+    rgba(8,8,11,calc(.50 * var(--glass-film))) 72%,
+    rgba(5,5,8,calc(.62 * var(--glass-film))) 100%);
+  --glass-panel:rgba(10,10,14,calc(.52 * var(--glass-film)));
+  --glass-dock:rgba(9,9,13,calc(.42 * var(--glass-film)));
   --glass-float:var(--panel2);
-  --glass-hair:rgba(255,255,255,.055);              /* 面板之间的那道极淡分隔 */
-  --glass-edge:rgba(255,255,255,.10);               /* 面板外缘的受光 */
-  --glass-veil:rgba(7,7,10,.55);                    /* 遮罩（设置页 / 弹窗） */
-  --glass-float-blur:blur(28px) saturate(1.25);
+  --glass-hair:rgba(255,255,255,.07);               /* 面板之间的那道极淡分隔 */
+  --glass-edge:rgba(255,255,255,.12);               /* 面板外缘的受光 */
+  --glass-veil:rgba(7,7,10,.88);                    /* 遮罩（设置页 / 弹窗） */
+  --glass-float-blur:blur(30px) saturate(1.3);
+
 
   /* ---- 形状 / 字体 / 动效 ----------------------------------------- */
   --radius:14px; --radius-s:9px; --radius-xs:6px;
@@ -108,14 +160,14 @@
   --composer-h:156px;      /* 实际值由 03-layout.js 写 inline */
 
   /* ---- 兼容别名（导出页 / 旧 CSS / 主题） -------------------------- */
-  --bg-soft:rgba(255,255,255,.04);
-  --line-soft:rgba(255,255,255,.06);
-  --code-bg:rgba(6,6,9,.38);
+  --bg-soft:rgba(255,255,255,.05);
+  --line-soft:rgba(255,255,255,.07);
+  --code-bg:rgba(6,6,9,.46);
   --fg-dim:var(--fg2);
   --fg-faint:var(--fg3);
-  --user:#c3c5cb;
-  --assistant:#f2f3f5;
-  --tool:#a8abb2;
-  --system:#8e9199;
-  --other:#7b7e86;
+  --user:#cfd1d7;
+  --assistant:#f4f5f7;
+  --tool:#b3b6bd;
+  --system:#969aa3;
+  --other:#8d909a;
 }

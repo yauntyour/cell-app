@@ -383,8 +383,8 @@
    4. 浮层：文件预览 / diff
    ===================================================================== */
 .pnl-ov{position:fixed;inset:0;display:none;z-index:64;
-  background:color-mix(in srgb,var(--bg,#111113) 62%,transparent);
-  backdrop-filter:blur(3px)}
+  background:var(--glass-veil);
+  backdrop-filter:blur(28px) saturate(1.2)}
 .pnl-ov.show{display:flex}
 .fpv-ov{align-items:flex-start;justify-content:center;padding:6vh 26px 26px}
 .fpv-box{display:flex;flex-direction:column;width:min(1100px,94vw);
