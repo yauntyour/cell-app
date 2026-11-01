@@ -194,6 +194,13 @@ function rememberClosed(ws, cwdHint) {
     .slice(0, 8);
   saveClosedTabs();
 }
+/* 清除「最近关闭」：只清本地历史，零工作区主页的「最近打开」chip 随之消失 */
+function clearClosedTabs() {
+  S.closedTabs = [];
+  saveClosedTabs();
+  const wrap = $('#pane-empty .chatwrap');
+  if (wrap && wrap.__built) { wrap.__built = false; wrap.replaceChildren(); renderNoWs(); }
+}
 function tabAddMenu(ev) {
   hideTabMenu();
   const r = ev.currentTarget.getBoundingClientRect();
@@ -204,7 +211,18 @@ function tabAddMenu(ev) {
   m.appendChild(open);
   const list = S.closedTabs.filter(x => !S.workspaces.some(w => w.cwd === x.cwd));
   if (list.length) {
-    m.appendChild(el('div', 'mhead', '最近关闭'));
+    const head = el('div', 'mhead');
+    head.appendChild(el('span', null, '最近关闭'));
+    const clr = el('button', 'mclear', '清除');
+    clr.title = '清除最近关闭记录';
+    clr.onclick = ev => {
+      ev.stopPropagation();
+      hideTabMenu();
+      clearClosedTabs();
+      toast('已清除最近关闭记录', 'ok', 1400);
+    };
+    head.appendChild(clr);
+    m.appendChild(head);
     const lw = el('div', 'mlist');
     for (const c of list) {
       const b = el('button');
