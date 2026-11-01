@@ -30,6 +30,17 @@
 .chathead .cht-title:hover{color:var(--fg)}
 .chathead .icon-btn{color:var(--fg4)}
 .chathead .icon-btn:hover{color:var(--bad);background:color-mix(in srgb,var(--bad) 12%,transparent)}
+/* 会话顶栏的「本会话用量」chip：数字精确到个位（千分位），点开是一个明细浮层。
+   刻意不复用 .icon-btn 的 hover —— 那套是给危险动作（清空）用的红。 */
+.chathead .ch-usage{display:inline-flex;align-items:center;gap:6px;flex:none;height:24px;
+  padding:0 8px;border-radius:6px;color:var(--fg4);
+  transition:background var(--dur) var(--ease),color var(--dur) var(--ease)}
+.chathead .ch-usage .uico{width:13px;height:13px;stroke-width:1.8}
+.chathead .ch-usage .chu-val{font-family:var(--mono);font-size:11px;letter-spacing:-.1px;
+  font-variant-numeric:tabular-nums;color:var(--fg4)}
+.chathead .ch-usage.has-val .chu-val{color:var(--fg3)}
+.chathead .ch-usage:hover,.chathead .ch-usage.on{background:var(--raise);color:var(--fg2)}
+.chathead .ch-usage:hover .chu-val,.chathead .ch-usage.on .chu-val{color:var(--fg)}
 .tabpane.hero .chathead{display:none}
 
 .chat{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;

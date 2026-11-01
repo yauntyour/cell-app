@@ -2867,7 +2867,10 @@ namespace app
                                                 {"messages", geti(v, "messages")},
                                                 {"input_tokens", geti(v, "input_tokens")},
                                                 {"output_tokens", geti(v, "output_tokens")},
-                                                {"total_tokens", geti(v, "total_tokens")}});
+                                                {"total_tokens", geti(v, "total_tokens")},
+                                                // 字符数：会话页的用量浮层在供应商不回 usage 时退到它
+                                                {"input_chars", geti(v, "input_chars")},
+                                                {"output_chars", geti(v, "output_chars")}});
                         }
                     auto by_tokens = [](const nlohmann::json &a, const nlohmann::json &b)
                     { return a.value("total_tokens", 0LL) > b.value("total_tokens", 0LL); };

@@ -370,7 +370,7 @@ const S = {
   modelSet: true,
   providers: [], settings: {}, workspaces: [], sessions: [], sessionsTotal: 0, models: [],
   skills: [], skillsRoot: '',   // /skills、/skill 共用（启动时拉一次，/skills 强制刷新）
-  usages: null, usagesLoading: false, usagesOpen: false, // 用量缓存（usages.summary）+ 左侧栏收纳浮层是否展开
+  usages: null, usagesLoading: false, usagesOpen: false, usagesPending: false, // 用量缓存（usages.summary）+ 左侧栏收纳浮层是否展开 + 加载中又来的强刷
   connected: true, everConnected: false,
   dock: 'teamwork', dockOpen: false, settingsOpen: false, skillsOpen: false,
   recentCwds: [],
@@ -784,8 +784,9 @@ function onTurnEnd(e) {
   // 让面板重拉内容；出现新任务且右侧面板关着时自动展开 Teamwork 面板
   const beforeIds = new Set((t.jobs || []).map(j => j.id));
   t.jobsFor = '';
-  // 一轮跑完总会多出 token：顺手刷新侧栏「用量」chip（缓存 20s，最多两秒一次请求量级）
-  if (typeof refreshUsages === 'function') refreshUsages(false);
+  // 一轮跑完总会多出 token：强刷一次用量（侧栏 chip + 本会话页顶栏的数字）。
+  // 不走 20s 缓存 —— 回合结束正是用户去看「这轮花了多少」的时刻，数字必须立刻对。
+  if (typeof refreshUsages === 'function') refreshUsages(true);
   refreshTeamwork(e.ws, true).then(jobs => {
     if (e.ws === S.active && jobs && jobs.some(j => !beforeIds.has(j.id)) && !S.dockOpen)
       openDock('teamwork');

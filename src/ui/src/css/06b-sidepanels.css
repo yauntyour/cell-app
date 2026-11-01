@@ -316,3 +316,28 @@
 .usage-pop .us-tile.wide .us-v{font-size:22px;letter-spacing:-.4px}
 .usage-pop .us-bars{gap:9px;margin-bottom:14px}
 .usage-pop .us-srow{padding:7px 9px}
+
+/* ---- 6b.10 本会话用量（会话顶栏 chip 的浮层） ----------------------
+   与 6b.9 同一套方块积木，窄一档（268px）：一块宽的「合计 tokens」+
+   四个小格（输入/输出/请求/消息），下面三行精确明细（字符数、模型）。
+   这里只放**精确数字**，不出现 k/M 缩写。                             */
+.sess-usage-pop{position:fixed;z-index:130;display:flex;flex-direction:column;
+  width:268px;max-width:calc(100vw - 16px);max-height:min(520px,calc(100vh - 32px));
+  background:var(--panel2);border:1px solid var(--line2);border-radius:12px;
+  box-shadow:var(--shadow);animation:popIn 140ms var(--ease);overflow:hidden}
+.sess-usage-pop .up-body{padding:10px 11px 0}
+.sess-usage-pop .us-tiles{gap:6px;margin-bottom:11px}
+.sess-usage-pop .us-tile{padding:6px 9px}
+.sess-usage-pop .us-tile.wide{padding:8px 10px}
+.sess-usage-pop .us-v{font-size:13px}
+.sess-usage-pop .us-tile.wide .us-v{font-size:21px;letter-spacing:-.5px}
+.ssu-rows{display:flex;flex-direction:column;gap:1px;margin-bottom:9px}
+.ssu-row{display:flex;align-items:baseline;gap:10px;min-width:0;padding:3px 2px;
+  font-size:11px;color:var(--fg4)}
+.ssu-row .v{margin-left:auto;min-width:0;font-family:var(--mono);font-size:11px;
+  color:var(--fg2);font-variant-numeric:tabular-nums;text-align:right}
+.ssu-more{display:flex;align-items:center;gap:6px;margin:0 -11px;padding:8px 11px;
+  border-top:1px solid var(--line);font-size:11.5px;color:var(--fg3);
+  transition:background var(--dur) var(--ease),color var(--dur) var(--ease)}
+.ssu-more:hover{background:var(--raise);color:var(--fg)}
+.ssu-more .uico{width:12px;height:12px;margin-left:auto}

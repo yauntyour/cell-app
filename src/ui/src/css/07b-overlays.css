@@ -9,6 +9,7 @@
    只给 --panel2 的 alpha 会看到背后文字的硬边，"浮起来"的那层厚度就没了。
    所有浮在内容之上的小面板在这里统一补一层磨砂，各自只负责底色和阴影。 */
 .toast,.modalbox,.searchbox-lg,.hmenu,.tabmenu,.thkmenu,.cmp-menu,.wwin,.usage-pop,
+.sess-usage-pop,
 .slash-panel,#slashPanel{
   -webkit-backdrop-filter:var(--glass-float-blur);
   backdrop-filter:var(--glass-float-blur);

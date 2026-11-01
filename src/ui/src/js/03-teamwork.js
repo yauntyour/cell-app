@@ -988,12 +988,17 @@ function makeDraggable(node, handle) {
    缓存；侧栏收起 / 点外面 / Esc 都会把浮层收回去。
    会话行可点：同/跨工作区都交给 session.select（后端按 cwd 索引打开）。   */
 function refreshUsages(force) {
-  if (S.usagesLoading) return;
+  if (S.usagesLoading) { if (force) S.usagesPending = true; return; } // 别把强刷丢掉
   if (!force && S.usages && Date.now() - (S.usages.at || 0) < 20000) return;
   S.usagesLoading = true;
-  cmd('usages.summary', {}).then(out => {
+  const settle = () => {
     S.usagesLoading = false;
-    if (!out || out.ok === false) return;
+    if (!S.usagesPending) return;
+    S.usagesPending = false;
+    refreshUsages(true); // 加载期间来的强刷（回合刚结束）补跑一次
+  };
+  cmd('usages.summary', {}).then(out => {
+    if (!out || out.ok === false) { settle(); return; }
     S.usages = {
       at: Date.now(),
       totals: out.totals || {},
@@ -1003,7 +1008,9 @@ function refreshUsages(force) {
     };
     paintUsageChip();
     paintUsagePop();
-  }).catch(() => { S.usagesLoading = false; });
+    if (typeof paintChatUsageAll === 'function') paintChatUsageAll(); // 各会话页顶栏的数字
+    settle();
+  }).catch(settle);
 }
 // provider:model → model（浮层里只留短名，完整名字放 title）
 function usShortModel(n) {

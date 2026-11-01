@@ -249,6 +249,7 @@ function hideTabMenu() { if (S.tabMenuNode) { S.tabMenuNode.remove(); S.tabMenuN
 async function activateWs(ws) {
   if (ws === S.active) return;
   S.active = ws;
+  if (typeof closeChatUsagePop === 'function') closeChatUsagePop(); // 浮层锚在上一页的顶栏上
   if (S.tabs.has(ws)) cmd('workspace.activate', { ws: ws });
   if (!navNavigating) Nav.push(ws);
   const t = tab(ws);

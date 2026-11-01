@@ -89,6 +89,7 @@ function ensurePane(ws) {
   const ctitle = el('span', 'cht-title trunc', ''); ctitle.title = ws;
   head.appendChild(ctitle);
   head.appendChild(el('span', 'grow'));
+  ensureChatUsageBtn(head, ws);
   // 会话顶栏快捷动作（与 /export、/save、/compact 同源）：都只作用于本工作区，
   // 危险动作（清空上下文）留在最右边单独一档
   for (const [icon, tip, act] of [
@@ -290,6 +291,189 @@ function renderChatHead(ws) {
   }
   const tt = $('.cht-title', head);
   if (tt) { tt.textContent = title; tt.title = title; }
+  paintChatUsage(ws);
+}
+
+/* ---------- 会话顶栏的「本会话用量」（每个 session 页各一份） ----------
+   数据与侧栏的全局「用量」浮层同源（usages.summary，见 03-teamwork.js），
+   但这里只认当前会话那一条记录。数字一律精确到个位并做千分位分组 ——
+   不复用 fmtTok 的 k/M 缩写：这个入口就是用来看准数的。              */
+function fmtInt(n) {
+  const v = Math.round(Number(n) || 0);
+  return String(v).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+function chatUsageRecord(ws) {
+  const t = S.tabs.get(ws);
+  if (!t || !t.session || !S.usages) return null;
+  return (S.usages.sessions || []).find(s => s.id === t.session) || null;
+}
+// total 缺失时按 in+out 兜底：个别供应商只回其中一项
+function chatUsageTotal(rec) {
+  const tot = Number(rec.total_tokens) || 0;
+  return tot || (Number(rec.input_tokens) || 0) + (Number(rec.output_tokens) || 0);
+}
+function ensureChatUsageBtn(head, ws) {
+  let b = head.querySelector('.ch-usage');
+  if (b) return b;
+  b = el('button', 'ch-usage');
+  b.type = 'button';
+  b.setAttribute('aria-haspopup', 'dialog');
+  b.setAttribute('aria-expanded', 'false');
+  b.appendChild(iconEl('bars', 'sm'));
+  b.appendChild(el('span', 'chu-val', '—'));
+  b.onclick = ev => { ev.stopPropagation(); toggleChatUsage(ws, b); };
+  const grow = head.querySelector('.grow');
+  if (grow) grow.insertAdjacentElement('afterend', b);
+  else head.insertBefore(b, head.firstChild);
+  return b;
+}
+function paintChatUsage(ws) {
+  const head = $('#chathead-' + cssId(ws));
+  if (!head) return;
+  const b = head.querySelector('.ch-usage');
+  if (!b) return;
+  const rec = chatUsageRecord(ws);
+  const val = $('.chu-val', b);
+  const on = !!(chatUsagePop && chatUsagePop.ws === ws);
+  b.classList.toggle('has-val', !!rec);
+  b.classList.toggle('on', on);
+  b.setAttribute('aria-expanded', on ? 'true' : 'false');
+  if (rec) {
+    const tot = chatUsageTotal(rec);
+    if (val) val.textContent = fmtInt(tot);
+    b.title = '本会话用量 · 输入 ' + fmtInt(rec.input_tokens) + ' · 输出 '
+      + fmtInt(rec.output_tokens) + ' · 合计 ' + fmtInt(tot) + ' tokens（点击查看明细）';
+  } else {
+    if (val) val.textContent = '—';
+    b.title = S.usages ? '本会话还没有用量记录（点击查看）' : '正在统计用量…';
+  }
+  if (on) renderChatUsageBody();
+}
+function paintChatUsageAll() {
+  for (const ws of S.tabOrder) paintChatUsage(ws);
+}
+
+/* 浮层：贴在 chip 下方、右对齐到 chip 右缘；放不下就内收 */
+let chatUsagePop = null;
+function closeChatUsagePop() {
+  if (!chatUsagePop) return;
+  chatUsagePop.el.remove();
+  document.removeEventListener('pointerdown', chatUsagePop.out, true);
+  document.removeEventListener('keydown', chatUsagePop.key, true);
+  window.removeEventListener('resize', chatUsagePop.resize);
+  const a = chatUsagePop.anchor;
+  const ws = chatUsagePop.ws;
+  chatUsagePop = null;
+  if (a) a.setAttribute('aria-expanded', 'false');
+  paintChatUsage(ws);
+}
+function chatUsagePlace(pop, anchor) {
+  const r = anchor.getBoundingClientRect();
+  const w = pop.offsetWidth, h = pop.offsetHeight;
+  pop.style.left = Math.max(8, Math.min(r.right - w, innerWidth - w - 8)) + 'px';
+  let top = r.bottom + 6;
+  if (top + h > innerHeight - 8) top = Math.max(8, innerHeight - h - 8);
+  pop.style.top = top + 'px';
+}
+function toggleChatUsage(ws, anchor) {
+  if (chatUsagePop) {
+    const same = chatUsagePop.ws === ws;
+    closeChatUsagePop();
+    if (same) return;
+  }
+  openChatUsagePop(ws, anchor);
+}
+function openChatUsagePop(ws, anchor) {
+  const pop = el('div', 'sess-usage-pop');
+  pop.setAttribute('role', 'dialog');
+  pop.setAttribute('aria-label', '本会话用量');
+  const head = el('div', 'up-head');
+  head.appendChild(el('span', 'up-title', '本会话用量'));
+  head.appendChild(el('span', 'up-sub', ''));
+  head.appendChild(el('span', 'grow'));
+  const bRefresh = el('button', 'icon-btn sm');
+  bRefresh.type = 'button';
+  bRefresh.title = '重新统计';
+  bRefresh.setAttribute('aria-label', '重新统计');
+  bRefresh.appendChild(iconEl('refresh', 'sm'));
+  bRefresh.onclick = () => refreshUsages(true);
+  head.appendChild(bRefresh);
+  const bClose = el('button', 'icon-btn sm');
+  bClose.type = 'button';
+  bClose.title = '收起 (Esc)';
+  bClose.setAttribute('aria-label', '收起');
+  bClose.appendChild(iconEl('x', 'sm'));
+  bClose.onclick = () => closeChatUsagePop();
+  head.appendChild(bClose);
+  pop.appendChild(head);
+  pop.appendChild(el('div', 'up-body'));
+  document.body.appendChild(pop);
+
+  const out = ev => { if (!pop.contains(ev.target) && !anchor.contains(ev.target)) closeChatUsagePop(); };
+  const key = ev => {
+    if (ev.key !== 'Escape') return;
+    ev.preventDefault();
+    ev.stopPropagation();   // 别让全局 Esc 顺手把右侧面板也关掉
+    closeChatUsagePop();
+  };
+  const resize = () => { if (chatUsagePop) chatUsagePlace(pop, anchor); };
+  document.addEventListener('pointerdown', out, true);
+  document.addEventListener('keydown', key, true);
+  window.addEventListener('resize', resize);
+  chatUsagePop = { el: pop, anchor: anchor, ws: ws, out: out, key: key, resize: resize };
+  paintChatUsage(ws);
+  refreshUsages(false);
+  renderChatUsageBody();
+  chatUsagePlace(pop, anchor);
+}
+function renderChatUsageBody() {
+  if (!chatUsagePop) return;
+  const ws = chatUsagePop.ws;
+  const body = chatUsagePop.el.querySelector('.up-body');
+  if (!body) return;
+  const sub = chatUsagePop.el.querySelector('.up-sub');
+  const d = S.usages;
+  const rec = chatUsageRecord(ws);
+  if (sub) sub.textContent = d ? '更新于 ' + relTime(Math.floor(d.at / 1000)) : '正在统计…';
+  body.replaceChildren();
+  if (!rec) {
+    body.appendChild(el('div', 'up-empty', d
+      ? '本会话还没有用量记录。跑一轮对话后，这里会记下这个会话的 token 消耗。'
+      : '正在统计用量…'));
+    chatUsagePlace(chatUsagePop.el, chatUsagePop.anchor);
+    return;
+  }
+  const tot = chatUsageTotal(rec);
+  const tiles = el('div', 'us-tiles');
+  tiles.appendChild(usTile(fmtInt(tot), '合计 tokens', true));
+  tiles.appendChild(usTile(fmtInt(rec.input_tokens), '输入 tokens'));
+  tiles.appendChild(usTile(fmtInt(rec.output_tokens), '输出 tokens'));
+  tiles.appendChild(usTile(String(rec.requests || 0), '请求'));
+  tiles.appendChild(usTile(String(rec.messages || 0), '累计消息'));
+  body.appendChild(tiles);
+
+  const rows = el('div', 'ssu-rows');
+  const addRow = (k, v, title) => {
+    const row = el('div', 'ssu-row');
+    row.appendChild(el('span', null, k));
+    const vv = el('span', 'v trunc', v);
+    if (title) vv.title = title;
+    row.appendChild(vv);
+    rows.appendChild(row);
+  };
+  addRow('输入字符', fmtInt(rec.input_chars));
+  addRow('输出字符', fmtInt(rec.output_chars));
+  const model = usShortModel(rec.model);
+  addRow('模型', model, rec.model);
+  body.appendChild(rows);
+
+  const more = el('button', 'ssu-more');
+  more.type = 'button';
+  more.appendChild(el('span', null, '查看全局用量'));
+  more.appendChild(iconEl('arrowRight', 'sm'));
+  more.onclick = () => { closeChatUsagePop(); openUsagePop(true); };
+  body.appendChild(more);
+  chatUsagePlace(chatUsagePop.el, chatUsagePop.anchor); // 内容高度变了，重新贴边
 }
 
 // 清空当前会话上下文（/clear 的按钮入口；会先中断正在进行的回合）
