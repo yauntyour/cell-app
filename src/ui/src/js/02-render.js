@@ -294,6 +294,7 @@ const Nav = {
   },
   home() {
     if (S.settingsOpen) closeSettings();
+    if (S.skillsOpen) closeSkillsPage();
     closeModal();
     hideTabMenu();
     hideCtx();
@@ -521,7 +522,8 @@ function renderDock() {
   else renderDockNotices(body, t);
 }
 
-/* 「开始」面板：快捷入口卡（对齐 DSH 右侧「开始」） */
+/* 「开始」面板：快捷入口卡（对齐 DSH 右侧「开始」）。会话搜索只在左侧栏，
+   这里不再重复一张同功能卡片。 */
 function quickCard(cls, icon, title, desc, kbd, onclick, disabled) {
   const b = el('button', 'quick-card ' + cls);
   if (disabled) { b.disabled = true; b.title = '先打开一个工作区'; }
@@ -552,7 +554,6 @@ function renderStartPanel(body, t) {
   cards.appendChild(quickCard('files', 'folderOpen', '工作区文件', '浏览工作区的文件', 'Ctrl+P', () => { if (window.openQuickOpen) openQuickOpen(); else openDock('files'); }, noWs));
   cards.appendChild(quickCard('git', 'gitBranch', 'Git Worktree', '分支、改动与并行工作树', 'Ctrl+G', () => openDock('git'), noWs));
   cards.appendChild(quickCard('term', 'squareTerminal', '新建终端', '在工作区运行命令', 'Ctrl+反引号', () => openDock('terminal'), noWs));
-  cards.appendChild(quickCard('search', 'search', '会话搜索', '检索全部会话内容', 'Ctrl+Shift+F', () => openSearch(), false));
   wrap.appendChild(cards);
   body.replaceChildren(wrap);
 }

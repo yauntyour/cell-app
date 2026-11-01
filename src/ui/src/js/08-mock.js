@@ -368,6 +368,14 @@ const Mock = {
   },
 
   /* ---- 命令实现 ---------------------------------------------------- */
+  skillDefs() {
+    return [
+      { name: 'pdf-report', description: '把 Markdown 渲染成 PDF 报告' },
+      { name: 'code-review', description: '按团队规范审查改动' },
+      { name: 'webapp-testing', description: '用 Playwright 验收页面' },
+      { name: 'legacy-notes', description: '旧的会议纪要模板' },
+    ];
+  },
   api(name, args) {
     args = args || {};
     const ws = args.ws || S.active || this.A;
@@ -498,12 +506,19 @@ const Mock = {
         });
       case 'skills.list':
         return Promise.resolve({
-          ok: true, root: 'C:/demo/.cell/skills', skills: [
-            { name: 'pdf-report', description: '把 Markdown 渲染成 PDF 报告' },
-            { name: 'code-review', description: '按团队规范审查改动' },
-            { name: 'webapp-testing', description: '用 Playwright 验收页面' },
-          ],
+          ok: true, root: 'C:/demo/.cell/skills',
+          skills: this.skillDefs().map(d => ({ name: d.name, description: d.description, file: d.name + '.md' })),
         });
+      case 'skills.read': {
+        const name = String(args.name || '');
+        const def = this.skillDefs().find(s => s.name === name);
+        return Promise.resolve({
+          ok: true, name, file: name + '.md',
+          description: def ? def.description : '演示技能',
+          body: '# ' + name + '\n\n这是演示模式下的技能正文：真实后端由 `skills.read` 返回技能文件里\nfront matter 之后的内容。\n\n## 用法\n\n- 右上角「载入会话」把正文注入当前会话（等价于 `/skill ' + name + '`）\n- 命令行里 `@` 之后的补全会列出这些技能名\n\n```bash\n/skill ' + name + '\n```\n',
+        });
+      }
+      case 'skills.reveal': return Promise.resolve({ ok: true });
       case 'skill.load': return Promise.resolve({ ok: true, name: args.name, chars: 1820, msgs: 6 });
       case 'settings.set':
         Object.assign(this.settings, args.patch || {});

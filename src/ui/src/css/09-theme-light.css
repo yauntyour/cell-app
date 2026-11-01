@@ -211,7 +211,6 @@
 :root[data-theme="light"] .quick-card.files{--qc:#b45309}
 :root[data-theme="light"] .quick-card.git{--qc:#c2410c}
 :root[data-theme="light"] .quick-card.term{--qc:#0e7490}
-:root[data-theme="light"] .quick-card.search{--qc:#6b6c75}
 
 /* ---------- 9.6 终端保持深色 ---------------------------------------
    08c-term.js 的 ANSI 16 色是按深色底调的（#e5c07b 这类亮色在白底上几乎
@@ -231,3 +230,10 @@
    那一道发丝线。 */
 :root[data-theme="light"] #settings .set-side{background:rgba(255,255,255,.55)}
 :root[data-theme="light"] #settings .set-head{background:rgba(255,255,255,.90)}
+
+/* ---------- 9.8 Skills 管理页 ---------------------------------------
+   9.7 的同一个问题：11-skills.css 把侧栏与粘性页头写成深色材质（白 3.5%
+   的水洗 + rgba(14,14,19,.86) 的页头），浅色下照抄就是黑侧栏 + 黑标题带。
+   其余部件（搜索框 / 选中行 / pill）走的是令牌，自己会跟上。 */
+:root[data-theme="light"] #skillsPage .sk-side{background:rgba(255,255,255,.55)}
+:root[data-theme="light"] #skillsPage .sk-head{background:rgba(255,255,255,.90)}

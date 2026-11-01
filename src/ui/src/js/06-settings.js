@@ -119,6 +119,7 @@ function cellLogoSvg(cls) {
 
 /* ---- 打开 / 关闭 / 渲染 ------------------------------------------- */
 function openSettings(section) {
+  if (S.skillsOpen) closeSkillsPage(); // 两个整页浮层不叠在一起
   if (section && SET_SECTIONS.some(s => s.id === section)) setSection = section;
   const host = $('#settings');
   const already = !!(S.settingsOpen && host && host.classList.contains('show'));

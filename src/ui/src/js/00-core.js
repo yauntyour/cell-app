@@ -372,7 +372,7 @@ const S = {
   skills: [], skillsRoot: '',   // /skills、/skill 共用（启动时拉一次，/skills 强制刷新）
   usages: null, usagesLoading: false, usagesOpen: false, // 用量缓存（usages.summary）+ 左侧栏收纳浮层是否展开
   connected: true, everConnected: false,
-  dock: 'teamwork', dockOpen: false, settingsOpen: false,
+  dock: 'teamwork', dockOpen: false, settingsOpen: false, skillsOpen: false,
   recentCwds: [],
   closedTabs: [], tabMenuNode: null,
   groupsClosed: new Set(),   // 侧栏里被折叠的工作区分组（见 02-render.js）

@@ -9,9 +9,7 @@ function wireEvents() {
   $('#btnSettings').onclick = () => toggleSettings();
   $('#btnSearch').onclick = () => openSearch();
   $('#btnTopSearch').onclick = () => openSearch();
-  $('#btnFiles').onclick = () => openDock('files');
-  $('#btnGit').onclick = () => openDock('git');
-  $('#btnTerminal').onclick = () => openDock('terminal');
+  $('#btnSkills').onclick = () => openSkillsPage();
   $('#btnWsFilter').onclick = () => toggleSidebarFilter();
   $('#btnSidebarToggle').onclick = () => toggleSidebar();
   if ($('#btnSidebarTop')) $('#btnSidebarTop').onclick = () => toggleSidebar();
@@ -121,6 +119,7 @@ function onGlobalKey(ev) {
     const slash = $('#slashPanel');
     if (slash && slash.classList.contains('show')) { slash.classList.remove('show'); return; }
     if (S.settingsOpen) { closeSettings(); return; }
+    if (S.skillsOpen) { closeSkillsPage(); return; }
     if (S.dockOpen) { closeDock(); return; }
   }
   if (!mod) return;
@@ -128,6 +127,7 @@ function onGlobalKey(ev) {
   if (k === 'n') { ev.preventDefault(); $('#btnNewSession').click(); return; }
   if (ev.key === ',') { ev.preventDefault(); toggleSettings(); return; }
   if (ev.shiftKey && k === 'f') { ev.preventDefault(); openSearch(); return; }
+  if (ev.shiftKey && k === 'k') { ev.preventDefault(); toggleSkillsPage(); return; }
   if (k === 'p') { ev.preventDefault(); if (window.openQuickOpen) openQuickOpen(); else openDock('files'); return; }
   if (k === 'g') { ev.preventDefault(); openDock('git'); return; }
   if (ev.key === 'Backquote' || ev.code === 'Backquote' || ev.key === '\u0060') { ev.preventDefault(); openDock('terminal'); return; }
@@ -183,6 +183,7 @@ async function boot() {
     if (qd === 'usages') openUsagePop(true);
     else if (qd && { start: 1, files: 2, git: 3, terminal: 4, teamwork: 5, notices: 6, archives: 7 }[qd]) openDock(qd);
     if (q.get('settings') === '1') openSettings(q.get('section') || undefined);
+    if (q.get('skills') === '1') openSkillsPage();
   } catch (e) {}
   if (MOCK) {
     enterDemo('file:// 或 ?mock=1');

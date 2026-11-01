@@ -537,7 +537,6 @@ select{appearance:none;background-image:url("data:image/svg+xml;charset=utf-8,%3
 .quick-card.files{--qc:#e5b567}
 .quick-card.git{--qc:#f0883e}
 .quick-card.term{--qc:#58a6ff}
-.quick-card.search{--qc:#a8abb2}
 /* 3.6 思考级别快捷菜单（状态行） ------------------------------------ */
 .thkmenu{position:fixed;z-index:130;min-width:190px;padding:5px;
   background:var(--panel2);border:1px solid var(--line2);border-radius:11px;box-shadow:var(--shadow);
@@ -3577,7 +3576,6 @@ mark{background:var(--accent-soft);color:var(--accent);border-radius:3px;padding
 :root[data-theme="light"] .quick-card.files{--qc:#b45309}
 :root[data-theme="light"] .quick-card.git{--qc:#c2410c}
 :root[data-theme="light"] .quick-card.term{--qc:#0e7490}
-:root[data-theme="light"] .quick-card.search{--qc:#6b6c75}
 
 /* ---------- 9.6 终端保持深色 ---------------------------------------
    08c-term.js 的 ANSI 16 色是按深色底调的（#e5c07b 这类亮色在白底上几乎
@@ -3597,6 +3595,13 @@ mark{background:var(--accent-soft);color:var(--accent);border-radius:3px;padding
    那一道发丝线。 */
 :root[data-theme="light"] #settings .set-side{background:rgba(255,255,255,.55)}
 :root[data-theme="light"] #settings .set-head{background:rgba(255,255,255,.90)}
+
+/* ---------- 9.8 Skills 管理页 ---------------------------------------
+   9.7 的同一个问题：11-skills.css 把侧栏与粘性页头写成深色材质（白 3.5%
+   的水洗 + rgba(14,14,19,.86) 的页头），浅色下照抄就是黑侧栏 + 黑标题带。
+   其余部件（搜索框 / 选中行 / pill）走的是令牌，自己会跟上。 */
+:root[data-theme="light"] #skillsPage .sk-side{background:rgba(255,255,255,.55)}
+:root[data-theme="light"] #skillsPage .sk-head{background:rgba(255,255,255,.90)}
 
 /* ==== css/10-splash.css =============================================== */
 
@@ -3664,6 +3669,100 @@ html[data-anim="0"] .sp-path{animation:none;stroke-dashoffset:0}
 
 /* 浅色主题下冷光别太亮 */
 html[data-theme="light"] #splash::before{opacity:.5}
+
+/* ==== css/11-skills.css =============================================== */
+
+/* =====================================================================
+   §11 Skills 管理页（整页浮层 #skillsPage）
+
+   与设置页同一套整页浮层语言（04-layout.css 的 #settings），只是把左栏
+   换成可搜索的技能清单、右栏放详情与正文。定位规则在这里独立成一份：
+   #skillsPage 是另一个浮层容器，不复用 #settings 的选择器，避免一个页面
+   的调整牵动另一个。
+   ===================================================================== */
+
+#skillsPage{position:fixed;inset:var(--titlebar-h) 0 0 0;z-index:70;background:var(--glass-veil);
+  -webkit-backdrop-filter:blur(32px) saturate(1.15);backdrop-filter:blur(32px) saturate(1.15);
+  display:none;flex-direction:column;color:var(--fg)}
+#skillsPage.show{display:flex;animation:fadeUp 220ms var(--ease)}
+#skillsPage .sk-shell{display:flex;height:100%;min-height:0;font-size:14px;letter-spacing:.01em}
+#skillsPage .sk-shell *{box-sizing:border-box}
+
+/* ---- 左栏：技能清单（264px） --------------------------------------- */
+#skillsPage .sk-side{width:264px;flex:none;display:flex;flex-direction:column;gap:8px;
+  background:rgba(255,255,255,.035);border-right:1px solid var(--glass-hair);
+  padding:14px 10px 10px;min-height:0}
+#skillsPage .sk-side-head{display:flex;align-items:center;gap:10px;padding:4px 8px 6px}
+#skillsPage .sk-logo{width:32px;height:32px;flex:none;border-radius:9px;background:var(--raise);
+  border:1px solid var(--line2);display:flex;align-items:center;justify-content:center;color:var(--fg)}
+#skillsPage .sk-logo .uico{width:17px;height:17px}
+#skillsPage .sk-side-title{display:flex;flex-direction:column;gap:1px;min-width:0}
+#skillsPage .sk-side-name{font-size:14px;font-weight:650;letter-spacing:.02em}
+#skillsPage .sk-side-sub{font-family:var(--mono);font-size:10.5px;color:var(--fg3);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+#skillsPage .sk-searchwrap{padding:0 2px}
+#skillsPage .sk-search{width:100%;height:30px;padding:0 10px;border-radius:var(--radius-s);
+  background:var(--bg2);border:1px solid var(--line);color:var(--fg);font-size:12.5px;
+  outline:none;transition:border-color var(--dur) var(--ease)}
+#skillsPage .sk-search::placeholder{color:var(--fg4)}
+#skillsPage .sk-search:focus{border-color:var(--accent)}
+
+#skillsPage .sk-list{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;
+  gap:1px;padding:2px}
+#skillsPage .sk-row{display:flex;flex-direction:column;gap:3px;width:100%;padding:7px 9px;
+  border-radius:var(--radius-s);text-align:left;color:var(--fg2);
+  transition:background var(--dur) var(--ease),color var(--dur) var(--ease)}
+#skillsPage .sk-row:hover{background:var(--raise);color:var(--fg)}
+#skillsPage .sk-row.on{background:var(--accent-soft);color:var(--accent)}
+#skillsPage .sk-row-name{font-size:13px;font-weight:600;line-height:1.3;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#skillsPage .sk-row-desc{font-size:11px;line-height:1.35;color:var(--fg3);
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+#skillsPage .sk-row.on .sk-row-desc{color:var(--accent)}
+#skillsPage .sk-hint{padding:10px 10px;font-size:12px;line-height:1.6;color:var(--fg3)}
+#skillsPage .sk-hint.bad{color:var(--warn)}
+
+#skillsPage .sk-side-foot{border-top:1px solid var(--line);padding:8px 2px 0}
+#skillsPage .sk-open{display:flex;align-items:center;gap:8px;width:100%;height:30px;padding:0 9px;
+  border-radius:var(--radius-s);color:var(--fg3);font-size:12px;text-align:left;
+  transition:background var(--dur) var(--ease),color var(--dur) var(--ease)}
+#skillsPage .sk-open:hover{background:var(--raise);color:var(--fg)}
+#skillsPage .sk-open .uico{width:15px;height:15px;flex:none}
+#skillsPage .sk-foot-hint{font-size:10.5px;color:var(--fg4);padding:6px 9px 0}
+
+/* ---- 右栏：详情 ---------------------------------------------------- */
+#skillsPage .sk-main{flex:1;min-width:0;min-height:0;overflow-y:auto;overscroll-behavior:contain}
+#skillsPage .sk-head{position:sticky;top:0;z-index:3;display:flex;align-items:center;gap:14px;
+  padding:16px 30px 13px;background:rgba(14,14,19,.86);border-bottom:1px solid var(--glass-hair);
+  -webkit-backdrop-filter:blur(24px) saturate(1.3);backdrop-filter:blur(24px) saturate(1.3)}
+#skillsPage .sk-head-main{min-width:0;display:flex;flex-direction:column;gap:2px}
+#skillsPage .sk-head-title{margin:0;font-size:17px;font-weight:650;letter-spacing:-.01em;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#skillsPage .sk-head-desc{margin:0;font-size:11.5px;line-height:1.55;color:var(--fg3);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:560px}
+#skillsPage .sk-head-actions{margin-left:auto;display:flex;align-items:center;gap:8px;flex:none}
+
+#skillsPage .sk-content{max-width:760px;margin:0 auto;padding:20px 30px 64px;
+  display:flex;flex-direction:column;gap:14px}
+#skillsPage .sk-meta{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+#skillsPage .sk-path{font-family:var(--mono);font-size:11px;color:var(--fg4);overflow-wrap:anywhere}
+#skillsPage .sk-body{font-size:13.5px;line-height:1.75;color:var(--fg2);padding:0}
+#skillsPage .sk-body > :first-child{margin-top:0}
+
+/* ---- 空状态 -------------------------------------------------------- */
+#skillsPage .sk-empty{max-width:520px;margin:6vh auto 0;display:flex;flex-direction:column;
+  align-items:flex-start;gap:10px}
+#skillsPage .sk-empty-title{font-size:15px;font-weight:650;color:var(--fg)}
+#skillsPage .sk-empty-txt{margin:0;font-size:12.5px;line-height:1.7;color:var(--fg3)}
+
+@media (max-width:980px){
+  #skillsPage .sk-side{width:220px}
+  #skillsPage .sk-head{flex-wrap:wrap;gap:10px}
+  #skillsPage .sk-head-actions{margin-left:0;width:100%}
+  #skillsPage .sk-content{padding:16px 18px 48px}
+  #skillsPage .sk-head{padding:14px 18px 12px}
+}
 
 </style>
 <script>
@@ -3764,17 +3863,9 @@ try {
           <span class="ni-ico"><svg class="uico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20.5 20.5 16.2 16.2"/></svg></span>
           <span class="ni-label">会话搜索</span><span class="sb-kbd">Ctrl+Shift+F</span>
         </button>
-        <button class="sb-nav-item" id="btnFiles" title="浏览工作区文件 (Ctrl+P)">
-          <span class="ni-ico"><svg class="uico" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg></span>
-          <span class="ni-label">工作区文件</span><span class="sb-kbd">Ctrl+P</span>
-        </button>
-        <button class="sb-nav-item" id="btnGit" title="Git 状态 / Worktree 管理 (Ctrl+G)">
-          <span class="ni-ico"><svg class="uico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3v12"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg></span>
-          <span class="ni-label">Git Worktree</span><span class="sb-kbd">Ctrl+G</span>
-        </button>
-        <button class="sb-nav-item" id="btnTerminal" title="在工作区运行命令 (Ctrl+反引号)">
-          <span class="ni-ico"><svg class="uico" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="m7 9 3 3-3 3M13 15h4"/></svg></span>
-          <span class="ni-label">终端</span><span class="sb-kbd">Ctrl+反引号</span>
+        <button class="sb-nav-item" id="btnSkills" title="管理技能 (Ctrl+Shift+K)">
+          <span class="ni-ico"><svg class="uico" viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8L12 3Z"/><path d="M19 15l.9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9L19 15Z"/></svg></span>
+          <span class="ni-label">Skills</span><span class="sb-kbd">Ctrl+Shift+K</span>
         </button>
       </nav>
 
@@ -3898,6 +3989,7 @@ try {
 
 <!-- ==================== 覆盖层容器（内容由 06/07 脚本构建） ==================== -->
 <div id="settings"></div>
+<div id="skillsPage"></div>
 <div class="modal" id="approvalModal"></div>
 <div class="modal" id="genericModal"></div>
 <div class="modal" id="searchModal"></div>
@@ -4289,7 +4381,7 @@ const S = {
   skills: [], skillsRoot: '',   // /skills、/skill 共用（启动时拉一次，/skills 强制刷新）
   usages: null, usagesLoading: false, usagesOpen: false, // 用量缓存（usages.summary）+ 左侧栏收纳浮层是否展开
   connected: true, everConnected: false,
-  dock: 'teamwork', dockOpen: false, settingsOpen: false,
+  dock: 'teamwork', dockOpen: false, settingsOpen: false, skillsOpen: false,
   recentCwds: [],
   closedTabs: [], tabMenuNode: null,
   groupsClosed: new Set(),   // 侧栏里被折叠的工作区分组（见 02-render.js）
@@ -5578,6 +5670,7 @@ const Nav = {
   },
   home() {
     if (S.settingsOpen) closeSettings();
+    if (S.skillsOpen) closeSkillsPage();
     closeModal();
     hideTabMenu();
     hideCtx();
@@ -5805,7 +5898,8 @@ function renderDock() {
   else renderDockNotices(body, t);
 }
 
-/* 「开始」面板：快捷入口卡（对齐 DSH 右侧「开始」） */
+/* 「开始」面板：快捷入口卡（对齐 DSH 右侧「开始」）。会话搜索只在左侧栏，
+   这里不再重复一张同功能卡片。 */
 function quickCard(cls, icon, title, desc, kbd, onclick, disabled) {
   const b = el('button', 'quick-card ' + cls);
   if (disabled) { b.disabled = true; b.title = '先打开一个工作区'; }
@@ -5836,7 +5930,6 @@ function renderStartPanel(body, t) {
   cards.appendChild(quickCard('files', 'folderOpen', '工作区文件', '浏览工作区的文件', 'Ctrl+P', () => { if (window.openQuickOpen) openQuickOpen(); else openDock('files'); }, noWs));
   cards.appendChild(quickCard('git', 'gitBranch', 'Git Worktree', '分支、改动与并行工作树', 'Ctrl+G', () => openDock('git'), noWs));
   cards.appendChild(quickCard('term', 'squareTerminal', '新建终端', '在工作区运行命令', 'Ctrl+反引号', () => openDock('terminal'), noWs));
-  cards.appendChild(quickCard('search', 'search', '会话搜索', '检索全部会话内容', 'Ctrl+Shift+F', () => openSearch(), false));
   wrap.appendChild(cards);
   body.replaceChildren(wrap);
 }
@@ -12831,6 +12924,7 @@ function cellLogoSvg(cls) {
 
 /* ---- 打开 / 关闭 / 渲染 ------------------------------------------- */
 function openSettings(section) {
+  if (S.skillsOpen) closeSkillsPage(); // 两个整页浮层不叠在一起
   if (section && SET_SECTIONS.some(s => s.id === section)) setSection = section;
   const host = $('#settings');
   const already = !!(S.settingsOpen && host && host.classList.contains('show'));
@@ -14734,6 +14828,14 @@ const Mock = {
   },
 
   /* ---- 命令实现 ---------------------------------------------------- */
+  skillDefs() {
+    return [
+      { name: 'pdf-report', description: '把 Markdown 渲染成 PDF 报告' },
+      { name: 'code-review', description: '按团队规范审查改动' },
+      { name: 'webapp-testing', description: '用 Playwright 验收页面' },
+      { name: 'legacy-notes', description: '旧的会议纪要模板' },
+    ];
+  },
   api(name, args) {
     args = args || {};
     const ws = args.ws || S.active || this.A;
@@ -14864,12 +14966,19 @@ const Mock = {
         });
       case 'skills.list':
         return Promise.resolve({
-          ok: true, root: 'C:/demo/.cell/skills', skills: [
-            { name: 'pdf-report', description: '把 Markdown 渲染成 PDF 报告' },
-            { name: 'code-review', description: '按团队规范审查改动' },
-            { name: 'webapp-testing', description: '用 Playwright 验收页面' },
-          ],
+          ok: true, root: 'C:/demo/.cell/skills',
+          skills: this.skillDefs().map(d => ({ name: d.name, description: d.description, file: d.name + '.md' })),
         });
+      case 'skills.read': {
+        const name = String(args.name || '');
+        const def = this.skillDefs().find(s => s.name === name);
+        return Promise.resolve({
+          ok: true, name, file: name + '.md',
+          description: def ? def.description : '演示技能',
+          body: '# ' + name + '\n\n这是演示模式下的技能正文：真实后端由 `skills.read` 返回技能文件里\nfront matter 之后的内容。\n\n## 用法\n\n- 右上角「载入会话」把正文注入当前会话（等价于 `/skill ' + name + '`）\n- 命令行里 `@` 之后的补全会列出这些技能名\n\n```bash\n/skill ' + name + '\n```\n',
+        });
+      }
+      case 'skills.reveal': return Promise.resolve({ ok: true });
       case 'skill.load': return Promise.resolve({ ok: true, name: args.name, chars: 1820, msgs: 6 });
       case 'settings.set':
         Object.assign(this.settings, args.patch || {});
@@ -19123,9 +19232,7 @@ function wireEvents() {
   $('#btnSettings').onclick = () => toggleSettings();
   $('#btnSearch').onclick = () => openSearch();
   $('#btnTopSearch').onclick = () => openSearch();
-  $('#btnFiles').onclick = () => openDock('files');
-  $('#btnGit').onclick = () => openDock('git');
-  $('#btnTerminal').onclick = () => openDock('terminal');
+  $('#btnSkills').onclick = () => openSkillsPage();
   $('#btnWsFilter').onclick = () => toggleSidebarFilter();
   $('#btnSidebarToggle').onclick = () => toggleSidebar();
   if ($('#btnSidebarTop')) $('#btnSidebarTop').onclick = () => toggleSidebar();
@@ -19235,6 +19342,7 @@ function onGlobalKey(ev) {
     const slash = $('#slashPanel');
     if (slash && slash.classList.contains('show')) { slash.classList.remove('show'); return; }
     if (S.settingsOpen) { closeSettings(); return; }
+    if (S.skillsOpen) { closeSkillsPage(); return; }
     if (S.dockOpen) { closeDock(); return; }
   }
   if (!mod) return;
@@ -19242,6 +19350,7 @@ function onGlobalKey(ev) {
   if (k === 'n') { ev.preventDefault(); $('#btnNewSession').click(); return; }
   if (ev.key === ',') { ev.preventDefault(); toggleSettings(); return; }
   if (ev.shiftKey && k === 'f') { ev.preventDefault(); openSearch(); return; }
+  if (ev.shiftKey && k === 'k') { ev.preventDefault(); toggleSkillsPage(); return; }
   if (k === 'p') { ev.preventDefault(); if (window.openQuickOpen) openQuickOpen(); else openDock('files'); return; }
   if (k === 'g') { ev.preventDefault(); openDock('git'); return; }
   if (ev.key === 'Backquote' || ev.code === 'Backquote' || ev.key === '\u0060') { ev.preventDefault(); openDock('terminal'); return; }
@@ -19297,6 +19406,7 @@ async function boot() {
     if (qd === 'usages') openUsagePop(true);
     else if (qd && { start: 1, files: 2, git: 3, terminal: 4, teamwork: 5, notices: 6, archives: 7 }[qd]) openDock(qd);
     if (q.get('settings') === '1') openSettings(q.get('section') || undefined);
+    if (q.get('skills') === '1') openSkillsPage();
   } catch (e) {}
   if (MOCK) {
     enterDemo('file:// 或 ?mock=1');
@@ -19595,6 +19705,277 @@ function wireShell() {
   }, 260);
 
 
+}
+
+/* ==== js/11-skills.js ================================================ */
+
+/* =====================================================================
+   11 · Skills 管理页（整页浮层 #skillsPage）
+
+   左栏是技能清单（可搜索），右栏是详情与正文预览。
+
+   技能是「按需显式载入」的：清单里的每一条都能被 /skill <name> 注入当前
+   会话，没有启用/禁用这种后台开关 —— 面板也不发明一套自己的状态。
+
+   后端契约（见 cell-app-core.hpp）：
+     skills.list   → {skills:[{name,description,file}], root}
+     skills.read   → {name, description, file, body}   正文（已剥 front matter）
+     skills.reveal → 在文件管理器里定位（没给 name 就打开始目录）
+     skill.load    → 把正文注入当前会话（与 CLI 的 /skill 同一条路）
+   ===================================================================== */
+'use strict';
+
+const SK = {
+  list: [],                 // [{name, description, file}]
+  root: '',                 // .cell/skills
+  sel: '', q: '',           // 选中的技能名 / 搜索词
+  body: '', bodyName: '',   // 正文缓存（bodyName 与 sel 对齐才算读到）
+  err: '', loading: false,
+};
+
+/* ---------- 数据 ---------------------------------------------------- */
+function skFind(name) {
+  return (SK.list || []).find(s => s.name === name) || null;
+}
+function skFiltered() {
+  const q = (SK.q || '').trim().toLowerCase();
+  const list = SK.list || [];
+  if (!q) return list;
+  return list.filter(s => (s.name + ' ' + (s.description || '')).toLowerCase().indexOf(q) >= 0);
+}
+function skJoin(a, b) {
+  if (!a) return b || '';
+  if (!b) return a;
+  const sep = a.indexOf('\\') >= 0 ? '\\' : '/';
+  return a.replace(/[\\/]+$/, '') + sep + b;
+}
+
+async function refreshSkills() {
+  SK.loading = true;
+  SK.err = '';
+  paintSkillList();
+  try {
+    const out = await api('skills.list', {});
+    if (!out || out.ok === false) throw new Error((out && out.error) || '读取技能清单失败');
+    SK.list = Array.isArray(out.skills) ? out.skills : [];
+    SK.root = out.root || '';
+    // /skill 的补全复用这份缓存
+    S.skills = SK.list.map(s => ({ name: s.name, description: s.description }));
+    S.skillsRoot = SK.root;
+  } catch (e) {
+    SK.err = e.message || String(e);
+    SK.list = [];
+  }
+  SK.loading = false;
+  const first = skFiltered()[0];
+  const keep = SK.sel && skFind(SK.sel) ? SK.sel : (first ? first.name : '');
+  await selectSkill(keep, true);
+}
+
+async function selectSkill(name, force) {
+  name = name || '';
+  if (!force && name === SK.sel && SK.bodyName) return;
+  SK.sel = name;
+  SK.body = '';
+  SK.bodyName = '';
+  SK.err = '';
+  paintSkillList();
+  paintSkillDetail();
+  if (!name) return;
+  try {
+    const out = await api('skills.read', { name });
+    if (!out || out.ok === false) throw new Error((out && out.error) || '读取技能失败');
+    if (SK.sel !== name) return; // 读的途中用户切走了
+    SK.body = out.body || '';
+    SK.bodyName = name;
+  } catch (e) {
+    if (SK.sel !== name) return;
+    SK.err = e.message || String(e);
+  }
+  paintSkillDetail();
+}
+
+async function revealSkill(name) {
+  try {
+    const out = await api('skills.reveal', name ? { name } : {});
+    if (!out || out.ok === false) throw new Error((out && out.error) || '无法打开文件夹');
+  } catch (e) {
+    toast(e.message || String(e), 'bad');
+  }
+}
+
+function loadSkillIntoChat(name) {
+  const t = typeof curTab === 'function' ? curTab() : null;
+  if (!t) { toast('先打开一个工作区', 'info'); return; }
+  cmd('skill.load', { ws: t.ws, name }).then(out => {
+    if (out && out.ok !== false) toast('已载入 ' + name + ' · ' + (out.chars || 0) + ' 字符', 'ok', 2400);
+  });
+}
+
+/* ---------- 打开 / 关闭 --------------------------------------------- */
+function openSkillsPage() {
+  const host = $('#skillsPage');
+  if (!host) return;
+  if (S.skillsOpen && host.classList.contains('show')) return;
+  if (S.settingsOpen) closeSettings(); // 两个整页浮层不叠在一起
+  S.skillsOpen = true;
+  host.classList.add('show');
+  skBuild();
+  paintSkillList();
+  paintSkillDetail();
+  refreshSkills();
+}
+function closeSkillsPage() {
+  S.skillsOpen = false;
+  const host = $('#skillsPage');
+  if (!host) return;
+  host.classList.remove('show');
+  host.replaceChildren(); // 下次打开重新拉一遍清单
+}
+function toggleSkillsPage() { S.skillsOpen ? closeSkillsPage() : openSkillsPage(); }
+
+/* ---------- 小部件 -------------------------------------------------- */
+function skButton(label, icon, fn, cls) {
+  const b = el('button', 'btn ' + (cls || ''));
+  b.type = 'button';
+  if (icon) { const i = iconEl(icon, 'sm'); if (i) b.appendChild(i); }
+  b.appendChild(el('span', 'btn-label', label));
+  b.onclick = fn;
+  return b;
+}
+function skIconBtn(icon, title, fn) {
+  const b = el('button', 'icon-btn');
+  b.type = 'button';
+  b.title = title || '';
+  b.setAttribute('aria-label', title || icon);
+  const i = iconEl(icon);
+  if (i) b.appendChild(i);
+  b.onclick = fn;
+  return b;
+}
+
+/* ---------- 骨架（只建一次） ---------------------------------------- */
+function skBuild() {
+  const host = $('#skillsPage');
+  if (!host || host.querySelector('.sk-shell')) return;
+  const shell = el('div', 'sk-shell');
+
+  const side = el('aside', 'sk-side');
+  const sh = el('div', 'sk-side-head');
+  const logo = el('span', 'sk-logo');
+  const li = iconEl('sparkles');
+  if (li) logo.appendChild(li);
+  sh.appendChild(logo);
+  const title = el('div', 'sk-side-title');
+  title.appendChild(el('span', 'sk-side-name', 'Skills'));
+  title.appendChild(el('span', 'sk-side-sub', 'cell · 技能'));
+  sh.appendChild(title);
+  side.appendChild(sh);
+
+  const search = el('div', 'sk-searchwrap');
+  const inp = el('input', 'sk-search');
+  inp.type = 'search';
+  inp.placeholder = '搜索技能';
+  inp.value = SK.q;
+  inp.oninput = () => { SK.q = inp.value; paintSkillList(); };
+  search.appendChild(inp);
+  side.appendChild(search);
+
+  side.appendChild(el('div', 'sk-list'));
+
+  const foot = el('div', 'sk-side-foot');
+  const open = el('button', 'sk-open');
+  open.type = 'button';
+  const fi = iconEl('folderOpen', 'sm');
+  if (fi) open.appendChild(fi);
+  open.appendChild(el('span', 'sk-open-txt', '打开技能目录'));
+  open.onclick = () => revealSkill('');
+  foot.appendChild(open);
+  foot.appendChild(el('div', 'sk-foot-hint', 'Ctrl+Shift+K 打开 · Esc 关闭'));
+  side.appendChild(foot);
+
+  shell.appendChild(side);
+  shell.appendChild(el('main', 'sk-main'));
+  host.replaceChildren(shell);
+}
+
+/* ---------- 左栏：清单 ---------------------------------------------- */
+function skRow(s) {
+  const b = el('button', 'sk-row' + (s.name === SK.sel ? ' on' : ''));
+  b.type = 'button';
+  b.title = s.description || s.name;
+  b.appendChild(el('span', 'sk-row-name', s.name));
+  if (s.description) b.appendChild(el('span', 'sk-row-desc', s.description));
+  b.onclick = () => selectSkill(s.name);
+  return b;
+}
+function paintSkillList() {
+  const box = $('#skillsPage .sk-list');
+  if (!box) return;
+  if (SK.loading && !SK.list.length) { box.replaceChildren(el('div', 'sk-hint', '读取中…')); return; }
+  if (SK.err) { box.replaceChildren(el('div', 'sk-hint bad', SK.err)); return; }
+  const items = skFiltered();
+  if (!items.length) {
+    box.replaceChildren(el('div', 'sk-hint', SK.q ? '没有匹配的技能' : '还没有技能'));
+    return;
+  }
+  const frag = document.createDocumentFragment();
+  items.forEach(s => frag.appendChild(skRow(s)));
+  box.replaceChildren(frag);
+}
+
+/* ---------- 右栏：详情 ---------------------------------------------- */
+function skEmpty() {
+  const box = el('div', 'sk-empty');
+  box.appendChild(el('div', 'sk-empty-title', SK.q ? '没有匹配的技能' : '还没有技能'));
+  box.appendChild(el('p', 'sk-empty-txt',
+    '技能是目录里的 Markdown：带 front matter（name / description）的 .md 文件，或者一个含 SKILL.md 的目录。放进技能目录就会出现在这里，用 /skill <名称> 按需载入。'));
+  if (SK.root) box.appendChild(el('code', 'sk-path', SK.root));
+  box.appendChild(skButton('打开技能目录', 'folderOpen', () => revealSkill('')));
+  return box;
+}
+function paintSkillDetail() {
+  const main = $('#skillsPage .sk-main');
+  if (!main) return;
+  const sk = SK.sel ? skFind(SK.sel) : null;
+  const t = typeof curTab === 'function' ? curTab() : null;
+
+  const head = el('header', 'sk-head');
+  const col = el('div', 'sk-head-main');
+  col.appendChild(el('h1', 'sk-head-title', sk ? sk.name : 'Skills'));
+  col.appendChild(el('p', 'sk-head-desc',
+    sk ? (sk.description || '这个技能没有写描述') : (SK.root ? '技能目录 ' + SK.root : '技能是一段可复用的指令，按需载入当前会话')));
+  head.appendChild(col);
+
+  const acts = el('div', 'sk-head-actions');
+  if (sk) {
+    const load = skButton('载入会话', 'sparkles', () => loadSkillIntoChat(sk.name), 'accent');
+    load.disabled = !t;
+    load.title = t ? '把技能正文注入当前会话（等价于 /skill ' + sk.name + '）' : '先打开一个工作区';
+    acts.appendChild(load);
+    acts.appendChild(skIconBtn('folderOpen', '在文件管理器中定位', () => revealSkill(sk.name)));
+  }
+  acts.appendChild(skIconBtn('refresh', '重新读取技能', () => refreshSkills()));
+  // 与设置页同一个出口：整页浮层盖住了侧栏，没有这个 X 就只剩 Esc 能离开
+  acts.appendChild(skIconBtn('x', '关闭 Skills (Esc)', closeSkillsPage));
+  head.appendChild(acts);
+
+  const content = el('div', 'sk-content');
+  if (!sk) {
+    content.appendChild(skEmpty());
+  } else {
+    const meta = el('div', 'sk-meta');
+    meta.appendChild(el('code', 'sk-path', skJoin(SK.root, sk.file)));
+    content.appendChild(meta);
+
+    const body = el('article', 'prose sk-body');
+    if (SK.err) body.appendChild(el('div', 'sk-hint bad', SK.err));
+    else if (SK.bodyName !== sk.name) body.appendChild(el('div', 'sk-hint', '读取中…'));
+    else body.innerHTML = renderMarkdown(SK.body);
+    content.appendChild(body);
+  }
+
+  main.replaceChildren(head, content);
 }
 
 </script>

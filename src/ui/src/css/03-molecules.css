@@ -187,7 +187,6 @@
 .quick-card.files{--qc:#e5b567}
 .quick-card.git{--qc:#f0883e}
 .quick-card.term{--qc:#58a6ff}
-.quick-card.search{--qc:#a8abb2}
 /* 3.6 思考级别快捷菜单（状态行） ------------------------------------ */
 .thkmenu{position:fixed;z-index:130;min-width:190px;padding:5px;
   background:var(--panel2);border:1px solid var(--line2);border-radius:11px;box-shadow:var(--shadow);

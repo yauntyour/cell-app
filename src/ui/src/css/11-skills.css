@@ -1,0 +1,91 @@
+/* =====================================================================
+   §11 Skills 管理页（整页浮层 #skillsPage）
+
+   与设置页同一套整页浮层语言（04-layout.css 的 #settings），只是把左栏
+   换成可搜索的技能清单、右栏放详情与正文。定位规则在这里独立成一份：
+   #skillsPage 是另一个浮层容器，不复用 #settings 的选择器，避免一个页面
+   的调整牵动另一个。
+   ===================================================================== */
+
+#skillsPage{position:fixed;inset:var(--titlebar-h) 0 0 0;z-index:70;background:var(--glass-veil);
+  -webkit-backdrop-filter:blur(32px) saturate(1.15);backdrop-filter:blur(32px) saturate(1.15);
+  display:none;flex-direction:column;color:var(--fg)}
+#skillsPage.show{display:flex;animation:fadeUp 220ms var(--ease)}
+#skillsPage .sk-shell{display:flex;height:100%;min-height:0;font-size:14px;letter-spacing:.01em}
+#skillsPage .sk-shell *{box-sizing:border-box}
+
+/* ---- 左栏：技能清单（264px） --------------------------------------- */
+#skillsPage .sk-side{width:264px;flex:none;display:flex;flex-direction:column;gap:8px;
+  background:rgba(255,255,255,.035);border-right:1px solid var(--glass-hair);
+  padding:14px 10px 10px;min-height:0}
+#skillsPage .sk-side-head{display:flex;align-items:center;gap:10px;padding:4px 8px 6px}
+#skillsPage .sk-logo{width:32px;height:32px;flex:none;border-radius:9px;background:var(--raise);
+  border:1px solid var(--line2);display:flex;align-items:center;justify-content:center;color:var(--fg)}
+#skillsPage .sk-logo .uico{width:17px;height:17px}
+#skillsPage .sk-side-title{display:flex;flex-direction:column;gap:1px;min-width:0}
+#skillsPage .sk-side-name{font-size:14px;font-weight:650;letter-spacing:.02em}
+#skillsPage .sk-side-sub{font-family:var(--mono);font-size:10.5px;color:var(--fg3);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+#skillsPage .sk-searchwrap{padding:0 2px}
+#skillsPage .sk-search{width:100%;height:30px;padding:0 10px;border-radius:var(--radius-s);
+  background:var(--bg2);border:1px solid var(--line);color:var(--fg);font-size:12.5px;
+  outline:none;transition:border-color var(--dur) var(--ease)}
+#skillsPage .sk-search::placeholder{color:var(--fg4)}
+#skillsPage .sk-search:focus{border-color:var(--accent)}
+
+#skillsPage .sk-list{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;
+  gap:1px;padding:2px}
+#skillsPage .sk-row{display:flex;flex-direction:column;gap:3px;width:100%;padding:7px 9px;
+  border-radius:var(--radius-s);text-align:left;color:var(--fg2);
+  transition:background var(--dur) var(--ease),color var(--dur) var(--ease)}
+#skillsPage .sk-row:hover{background:var(--raise);color:var(--fg)}
+#skillsPage .sk-row.on{background:var(--accent-soft);color:var(--accent)}
+#skillsPage .sk-row-name{font-size:13px;font-weight:600;line-height:1.3;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#skillsPage .sk-row-desc{font-size:11px;line-height:1.35;color:var(--fg3);
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+#skillsPage .sk-row.on .sk-row-desc{color:var(--accent)}
+#skillsPage .sk-hint{padding:10px 10px;font-size:12px;line-height:1.6;color:var(--fg3)}
+#skillsPage .sk-hint.bad{color:var(--warn)}
+
+#skillsPage .sk-side-foot{border-top:1px solid var(--line);padding:8px 2px 0}
+#skillsPage .sk-open{display:flex;align-items:center;gap:8px;width:100%;height:30px;padding:0 9px;
+  border-radius:var(--radius-s);color:var(--fg3);font-size:12px;text-align:left;
+  transition:background var(--dur) var(--ease),color var(--dur) var(--ease)}
+#skillsPage .sk-open:hover{background:var(--raise);color:var(--fg)}
+#skillsPage .sk-open .uico{width:15px;height:15px;flex:none}
+#skillsPage .sk-foot-hint{font-size:10.5px;color:var(--fg4);padding:6px 9px 0}
+
+/* ---- 右栏：详情 ---------------------------------------------------- */
+#skillsPage .sk-main{flex:1;min-width:0;min-height:0;overflow-y:auto;overscroll-behavior:contain}
+#skillsPage .sk-head{position:sticky;top:0;z-index:3;display:flex;align-items:center;gap:14px;
+  padding:16px 30px 13px;background:rgba(14,14,19,.86);border-bottom:1px solid var(--glass-hair);
+  -webkit-backdrop-filter:blur(24px) saturate(1.3);backdrop-filter:blur(24px) saturate(1.3)}
+#skillsPage .sk-head-main{min-width:0;display:flex;flex-direction:column;gap:2px}
+#skillsPage .sk-head-title{margin:0;font-size:17px;font-weight:650;letter-spacing:-.01em;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#skillsPage .sk-head-desc{margin:0;font-size:11.5px;line-height:1.55;color:var(--fg3);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:560px}
+#skillsPage .sk-head-actions{margin-left:auto;display:flex;align-items:center;gap:8px;flex:none}
+
+#skillsPage .sk-content{max-width:760px;margin:0 auto;padding:20px 30px 64px;
+  display:flex;flex-direction:column;gap:14px}
+#skillsPage .sk-meta{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+#skillsPage .sk-path{font-family:var(--mono);font-size:11px;color:var(--fg4);overflow-wrap:anywhere}
+#skillsPage .sk-body{font-size:13.5px;line-height:1.75;color:var(--fg2);padding:0}
+#skillsPage .sk-body > :first-child{margin-top:0}
+
+/* ---- 空状态 -------------------------------------------------------- */
+#skillsPage .sk-empty{max-width:520px;margin:6vh auto 0;display:flex;flex-direction:column;
+  align-items:flex-start;gap:10px}
+#skillsPage .sk-empty-title{font-size:15px;font-weight:650;color:var(--fg)}
+#skillsPage .sk-empty-txt{margin:0;font-size:12.5px;line-height:1.7;color:var(--fg3)}
+
+@media (max-width:980px){
+  #skillsPage .sk-side{width:220px}
+  #skillsPage .sk-head{flex-wrap:wrap;gap:10px}
+  #skillsPage .sk-head-actions{margin-left:0;width:100%}
+  #skillsPage .sk-content{padding:16px 18px 48px}
+  #skillsPage .sk-head{padding:14px 18px 12px}
+}
