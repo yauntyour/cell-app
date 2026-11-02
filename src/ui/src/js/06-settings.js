@@ -614,7 +614,7 @@ function buildAgent(st) {
   s.appendChild(card([setCardHead('推理与工具'), thinkField, el('div', 'set-divider'), toolsCard]));
 
   // 系统提示词
-  const sp = setTextarea('系统提示词（留空使用内置默认）', st.system_prompt || '', 6);
+  const sp = setTextarea('系统提示词（留空则不注入任何提示）', st.system_prompt || '', 6);
   const counter = el('span', 'set-hint mono', (sp.value.length) + ' 字');
   sp.oninput = () => { counter.textContent = sp.value.length + ' 字'; };
   const saveSp = setBtn('保存系统提示词', 'primary', () => setPatch({ system_prompt: sp.value }), 'check');
