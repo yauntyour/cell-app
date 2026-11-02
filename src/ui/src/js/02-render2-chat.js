@@ -1201,7 +1201,9 @@ function makeNotice(m) {
      · round     本轮结束 → 供应商回报的 tok_in / tok_out / cache / sec / ttft
    流式期间的 tok/s 与 ITL 需要 token 数，而流中只有字符数：用上一轮实测的
    「字符/词元」比换算，每轮结束自动校准（RT_DEFAULT_CPT 只是首次的兜底）。
-   缓存命中率同理沿用上一轮 —— 当前这轮的命中率要等本轮结束供应商才会报回来。 */
+   缓存命中率同理沿用上一轮 —— 当前这轮的命中率要等本轮结束供应商才会报回来。
+   注意 round.cache 是引擎算好的「命中率」（cached / prompt tokens，0..1），
+   不是命中 token 数：这里直接取值，别再除一次 tok_in（那样恒为 0%）。 */
 const RT_DEFAULT_CPT = 1.6;   // 字符/词元：中英混排的首个兜底值
 function rtOf(t) {
   if (!t) return null;
@@ -1230,13 +1232,14 @@ function rtRound(ws, e) {
   const t = ensureTab(ws);
   const rt = rtOf(t);
   if (!rt) return;
-  const out = Number(e && e.tok_out), tin = Number(e && e.tok_in), cache = Number(e && e.cache);
+  const out = Number(e && e.tok_out), cache = Number(e && e.cache);
   // 校准「字符/词元」：样本越少权重越低，避免把上一轮的结论整个冲掉
   if (out > 0 && rt.chars > 0) {
     const w = Math.min(0.6, rt.chars / 400);
     rt.cpt = rt.cpt * (1 - w) + (rt.chars / out) * w;
   }
-  if (tin > 0 && cache >= 0) rt.cacheHit = Math.min(1, cache / tin);
+  // cache 已经是比例（-1 = 供应商没报）：夹到 [0,1] 后直接当命中率用
+  if (Number.isFinite(cache) && cache >= 0) rt.cacheHit = Math.min(1, cache);
   rtReset(t);
   rt.mark = Date.now();
 }
@@ -1515,7 +1518,8 @@ function makeRound(m) {
     bar.appendChild(el('span', 'rb-sep', '·'));
     bar.appendChild(el('span', 'rb-i', '↑' + fmtTok(m.tok_in) + ' ↓' + fmtTok(m.tok_out)));
   }
-  if (m.cache) { bar.appendChild(el('span', 'rb-sep', '·')); bar.appendChild(el('span', 'rb-i', '缓存 ' + fmtTok(m.cache))); }
+  // cache 是命中率（0..1），不是 token 数：按百分比显示，-1/缺失则不显示
+  if (m.cache >= 0) { bar.appendChild(el('span', 'rb-sep', '·')); bar.appendChild(el('span', 'rb-i', '缓存 ' + rtPct(m.cache))); }
   if (m.sec) { bar.appendChild(el('span', 'rb-sep', '·')); bar.appendChild(el('span', 'rb-i', fmtDur(m.sec))); }
   // 引擎的 ttft 是秒（demo 数据也是秒）：这里统一成毫秒显示
   if (m.ttft > 0) { bar.appendChild(el('span', 'rb-sep', '·')); bar.appendChild(el('span', 'rb-i', 'TTFT ' + rtMs(m.ttft * 1000))); }
@@ -1619,7 +1623,7 @@ function turnFoot(meta) {
     u.appendChild(el('span', 'u-label', '用量'));
     u.appendChild(el('span', 'u-tok', fmtTok(total) + ' tok'));
     u.title = '输入 ' + fmtTok(meta.usage.in) + ' tok · 输出 ' + fmtTok(meta.usage.out)
-      + ' tok · 缓存 ' + fmtTok(meta.usage.cache || 0) + ' tok';
+      + ' tok · 缓存命中 ' + rtPct(Number(meta.usage.cache));
     foot.appendChild(u);
   }
   if (meta && meta.endedAt) foot.appendChild(el('span', 'utime', hhmm(meta.endedAt)));
