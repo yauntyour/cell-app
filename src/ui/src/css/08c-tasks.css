@@ -1,0 +1,37 @@
+/* ---- 8c 后台任务浮层（侧栏 #navTasks chip 的收纳浮层） ----------------
+   外壳沿用「用量」浮层的 .usage-pop / .up-head / .up-body，这里只加任务行：
+   一行 = 状态点 + id + 命令（省略号）+ 耗时 + 输出/终止按钮，展开后是输出
+   尾巴。状态点只区分「在跑」（强调色呼吸）与「结束」（绿/红），没有彩色块，
+   和黑白灰主题一致。                                                    */
+
+.task-pop{width:420px}
+.task-pop .up-body{padding:8px 8px 10px}
+.task-item{border-radius:var(--radius-s)}
+.task-item + .task-item{margin-top:2px}
+
+.task-row{display:flex;align-items:center;gap:7px;padding:6px 7px;border-radius:var(--radius-s)}
+.task-row:hover{background:var(--elev-1)}
+.tk-dot{width:7px;height:7px;flex:none;border-radius:50%;background:var(--fg-faint)}
+.task-row.run .tk-dot{background:var(--run);animation:tkPulse 1.8s ease-in-out infinite}
+.task-row:not(.run):not(.bad) .tk-dot{background:var(--ok)}
+.task-row.bad .tk-dot{background:var(--bad)}
+@keyframes tkPulse{0%,100%{opacity:1}50%{opacity:.35}}
+
+.tk-id{flex:none;font-family:var(--mono);font-size:10.5px;color:var(--fg4);min-width:20px}
+.tk-cmd{flex:1;min-width:0;font-family:var(--mono);font-size:11.5px;color:var(--fg);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tk-dur{flex:none;font-family:var(--mono);font-size:10.5px;color:var(--fg4);
+  font-variant-numeric:tabular-nums}
+.tk-exit{flex:none;font-family:var(--mono);font-size:10px;color:var(--fg4)}
+.tk-exit.bad{color:var(--bad)}
+.task-row .tk-btn{opacity:.55;flex:none;width:22px;height:22px}
+.task-row:hover .tk-btn{opacity:1}
+.task-row .tk-btn.open{opacity:1;transform:rotate(180deg)}
+.task-row .tk-kill:hover{color:var(--bad)}
+
+.task-out{margin:0 7px 4px;border:1px solid var(--line);border-radius:var(--radius-s);
+  background:var(--code-bg);overflow:hidden}
+.task-pre{margin:0;padding:8px 10px;max-height:200px;overflow:auto;
+  font-family:var(--mono);font-size:11px;line-height:1.55;color:var(--fg3);
+  white-space:pre-wrap;overflow-wrap:anywhere}
+.tk-hint{margin-top:6px;font-size:11px;line-height:1.7;color:var(--fg4);max-width:300px}

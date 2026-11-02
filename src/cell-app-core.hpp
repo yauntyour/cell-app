@@ -676,6 +676,42 @@ namespace app
             }
         }
 
+        // ---- background tasks (exec with background=true) ------------------
+        // The registry itself lives in the engine (cell::bg), so the CLI's
+        // /tasks and this panel show the same processes — one thread per task,
+        // none of them a thread-pool slot. The engine pushes here whenever a
+        // task starts or finishes; each push is one "tasks" event carrying the
+        // whole list (it is small and the panel always wants all of it).
+        std::shared_ptr<std::atomic<bool>> task_watch_alive = std::make_shared<std::atomic<bool>>(false);
+        void start_task_watcher()
+        {
+            // The watcher is called from the task's own thread, which may outlive
+            // the command that started it: the shared flag is what keeps a late
+            // call from touching a torn-down app_core (cleared in
+            // begin_shutdown, before bg::shutdown joins the threads).
+            task_watch_alive->store(true, std::memory_order_release);
+            auto alive = task_watch_alive;
+            cell::bg::set_watcher([this, alive]
+                                  {
+                if (!alive->load(std::memory_order_acquire) || shutting_down.load())
+                    return;
+                nlohmann::json ev = tasks_snapshot();
+                ev["t"] = "tasks";
+                bus.post(ev); });
+        }
+        void stop_task_watcher()
+        {
+            task_watch_alive->store(false, std::memory_order_release);
+            cell::bg::set_watcher({});
+        }
+        nlohmann::json tasks_snapshot()
+        {
+            nlohmann::json payload;
+            payload["tasks"] = cell::bg::list_json(2048);
+            payload["running"] = (long long)cell::bg::live_count();
+            return payload;
+        }
+
         // ---- update check (desktop shell: once per process, at startup) ---
         // Off the UI thread on purpose: the release page is remote, and a slow
         // or blocked link must never delay the window. The answer reaches the
@@ -727,6 +763,7 @@ namespace app
         {
             if (shutdown_started.exchange(true))
                 return;
+            stop_task_watcher(); // no more "tasks" events once the page is going away
             stop_notice_watcher();
             shutting_down.store(true);
             std::lock_guard<std::mutex> life(ctx_life_mx); // ctxs stay valid below
@@ -762,6 +799,10 @@ namespace app
             for (auto *c : all)
                 if (c->worker.joinable())
                     c->worker.join();
+            // background exec tasks own detached threads and their own process
+            // trees: cancel them and let spawn_cmd reap the trees before the
+            // globals they touch are torn down
+            cell::bg::shutdown();
             // the update probe holds its own curl handle: it must be gone
             // before the exit path calls curl_global_shutdown()
             if (update_thread.joinable())
@@ -2376,6 +2417,33 @@ namespace app
                         return ok_with(build_state_for(c, true));
                     }
                     return ok_with(build_state(true));
+                }
+                // ---- background tasks --------------------------------------
+                // exec(background=true) mounts a process on its own thread. These
+                // three commands are the panel's whole data path; the CLI reads
+                // the same registry through /tasks.
+                if (name == "tasks.list")
+                {
+                    return ok_with(tasks_snapshot());
+                }
+                if (name == "tasks.kill")
+                {
+                    std::string id = args.value("id", "");
+                    if (id.empty())
+                        return ok_error("id is required");
+                    // kill FIRST: the snapshot below must already show the task as
+                    // finished, or the panel would repaint a stale "running" row
+                    std::string msg = cell::bg::kill(id);
+                    nlohmann::json r = tasks_snapshot();
+                    r["message"] = msg;
+                    return ok_with(std::move(r));
+                }
+                if (name == "tasks.output")
+                {
+                    std::string id = args.value("id", "");
+                    if (id.empty())
+                        return ok_error("id is required");
+                    return ok_with(nlohmann::json{{"text", cell::bg::tail_of(id)}});
                 }
                 // ---- shell preferences -------------------------------------
                 // tray parking / update prompt: written to .cell/cell-app.json

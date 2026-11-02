@@ -371,6 +371,7 @@ const S = {
   providers: [], settings: {}, workspaces: [], sessions: [], sessionsTotal: 0, models: [],
   skills: [], skillsRoot: '',   // /skills、/skill 共用（启动时拉一次，/skills 强制刷新）
   usages: null, usagesLoading: false, usagesOpen: false, usagesPending: false, // 用量缓存（usages.summary）+ 左侧栏收纳浮层是否展开 + 加载中又来的强刷
+  tasks: [], tasksAt: 0, tasksOpen: false, tasksShown: null, // 后台任务（tasks.list / tasks 事件）+ 收到列表的时刻 + 浮层是否展开 + 展开输出的任务 id
   connected: true, everConnected: false,
   dock: 'teamwork', dockOpen: false, settingsOpen: false, skillsOpen: false,
   recentCwds: [],
@@ -586,6 +587,8 @@ function handleEvent(e) {
     case 'tool_begin': onToolBegin(e); break;
     case 'tool_end': onToolEnd(e); break;
     case 'notice': onNotice(e); break;
+    // 后台任务（exec background=true）：后端在任务开始/结束时推全量列表
+    case 'tasks': onTasksEvent(e); break;
     case 'update': S.update = e; renderUpdateChip(); break;
     case 'approval': onApproval(e); break;
     case 'approval_resolved': onApprovalResolved(e); break;

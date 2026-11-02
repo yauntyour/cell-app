@@ -911,6 +911,9 @@ namespace app
         // live notice delivery: idle sessions see cross-session notices the
         // moment they land (peek-only, ~0.7s cadence; see app_core)
         core.start_notice_watcher();
+        // background exec tasks (exec background=true) push their list to the
+        // page whenever one starts or finishes
+        core.start_task_watcher();
         if (cell::stats::prune())
             log.info("stats", "boot pruned orphaned session usage records");
 

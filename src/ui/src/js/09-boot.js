@@ -18,6 +18,7 @@ function wireEvents() {
   $('#navRefresh').onclick = () => Nav.refresh();
   $('#navHome').onclick = () => Nav.home();
   $('#navUsage').onclick = () => toggleUsagePop();
+  $('#navTasks').onclick = () => toggleTasksPop();
   $('#navUpdate').onclick = () => openReleasePage((S.update || {}).url);
   $('#navDock').onclick = () => toggleDock();
   $('#btnTopDock').onclick = () => toggleDock();
@@ -161,6 +162,7 @@ function enterDemo(reason) {
   if (S.active) { renderChat(S.active); renderChatHead(S.active); }
   renderDock();
   refreshUsages(false); // 侧栏「用量」chip 先显示一个数（演示数据）
+  refreshTasks(true);   // 侧栏「后台任务」chip（演示数据）
   setTimeout(() => { refreshSessions(); renderSidebar(); renderDock(); }, 60);
 }
 
@@ -181,6 +183,7 @@ async function boot() {
     const qd = q.get('dock');
     // 用量统计已从右栏挪到左侧栏收纳浮层：?dock=usages 保留给截图/调试
     if (qd === 'usages') openUsagePop(true);
+    else if (qd === 'tasks') openTasksPop(true);   // 后台任务浮层（截图/调试）
     else if (qd && { start: 1, files: 2, git: 3, terminal: 4, teamwork: 5, notices: 6, archives: 7 }[qd]) openDock(qd);
     if (q.get('settings') === '1') openSettings(q.get('section') || undefined);
     if (q.get('skills') === '1') openSkillsPage();
@@ -200,6 +203,7 @@ async function boot() {
     Transport.init();
     fetchSkills(); // /skill 的参数补全：后台拉一次，失败就退回空列表（不挡启动）
     refreshUsages(false); // 侧栏「用量」chip 的后台取数（失败就保持「—」）
+    refreshTasks(true);   // 侧栏「后台任务」chip：先显示当前在跑的数量
   } catch (e) {
     enterDemo('无法连接后端：' + (e && e.message ? e.message : e));
   }

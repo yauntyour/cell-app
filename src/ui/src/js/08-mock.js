@@ -35,6 +35,15 @@ const Mock = {
     system_prompt: 'You are a helpful assistant.', teamwork_max_children: 5, max_threads: 8,
   },
   models: ['gpt-4o', 'gpt-4o-mini', 'o3-mini', 'deepseek-chat', 'deepseek-reasoner'],
+  // 后台任务（exec background=true）的演示数据：一个在跑、一个已结束
+  mockTasks: [
+    { id: 't1', tid: '3f9a1c', cmd: 'npm run dev', wd: 'D:\\Projects\\demo-site', session: 'mock0001a',
+      running: true, exit: -1, elapsed: 137,
+      tail: '> demo-site@0.1.0 dev\n> vite\n\n  VITE v5.4.2  ready in 412 ms\n\n  ➜  Local:   http://localhost:5173/\n  ➜  Network: use --host to expose\n' },
+    { id: 't2', tid: '77c02e', cmd: 'python -m http.server 8000', wd: 'D:\\Developments\\CXX\\cell-app', session: 'mock0001a',
+      running: false, exit: 0, elapsed: 46,
+      tail: 'Serving HTTP on 0.0.0.0 port 8000 (http://0.0.0.0:8000/) ...\n127.0.0.1 - - [02/Nov/2026 17:52:31] "GET / HTTP/1.1" 200 -\n' },
+  ],
   // 真实核心的 model_label() 是「供应商:模型」：演示模式照抄这个形状，
   // 输入栏圆钮只显示冒号后面的模型名（供应商在底部状态行里）
   model: 'openai:deepseek-v4-flash',
@@ -368,6 +377,10 @@ const Mock = {
   },
 
   /* ---- 命令实现 ---------------------------------------------------- */
+  // 后台任务快照：形状与引擎 cell::bg::list_json 一致（tail 只是预览用）
+  tasks() {
+    return this.mockTasks.map(t => Object.assign({}, t));
+  },
   skillDefs() {
     return [
       { name: 'pdf-report', description: '把 Markdown 渲染成 PDF 报告' },
@@ -504,6 +517,17 @@ const Mock = {
           ],
           total_sessions: 5,
         });
+      case 'tasks.list':
+        return Promise.resolve({ ok: true, tasks: this.tasks(), running: this.tasks().filter(t => t.running).length });
+      case 'tasks.kill': {
+        const t = this.mockTasks.find(x => x.id === args.id);
+        if (t && t.running) { t.running = false; t.exit = 130; t.tail += '\n[tool cancelled by the user, process tree killed]\n'; }
+        return Promise.resolve({ ok: true, message: t ? ('task ' + t.id + ' killed (exit=' + t.exit + ')') : 'no such task', tasks: this.tasks() });
+      }
+      case 'tasks.output': {
+        const t = this.mockTasks.find(x => x.id === args.id);
+        return Promise.resolve({ ok: true, text: t ? t.tail : 'no such task: ' + args.id });
+      }
       case 'skills.list':
         return Promise.resolve({
           ok: true, root: 'C:/demo/.cell/skills',

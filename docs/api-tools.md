@@ -220,8 +220,36 @@ core.bus）：前端 `handleEvent` 把 `term.*` 交给 `window.CellTerm.onEvent`
 - output/stderr 各上限 256 KiB（truncated:true 表示任一被截断）
 - 进程启动失败才返回 ok:false；命令非零退出仍是 ok:true，由 exit_code 表达
 
-## 安全约定
+### tasks.list {ws?} → {ok, running, tasks:[...]}
 
+~~~
+tasks: [{id, tid, cmd, wd, session, running, exit, elapsed, tail}]
+~~~
+
+- 数据源是引擎的 `cell::bg` 注册表：`exec` 工具带 `background:true` 时，命令被挂到
+  **一条独立线程**上（不是工具线程池的槽位），这里列出的就是那些进程
+- `id` 形如 `t1`/`t2`（进程内单调、不复用）；`tid` 是挂载线程的 id（十六进制，仅供展示）；
+  `exit` 运行中为 -1，结束后是真实退出码；`elapsed` 是**下发这一刻**已跑的秒数
+  （前端自己加上之后流逝的时间）；`tail` 是最近 2 KB 的输出
+- 任务开始/结束时后端会向事件流推一条 `{"t":"tasks", ...}`（同样带全量列表），
+  前端据此刷新，不必轮询
+- 同时最多 32 个后台任务；后台任务没有超时，随应用退出被统一终止
+
+### tasks.output {ws?, id} → {ok, text}
+
+某个后台任务的输出尾巴（stdout+stderr 按到达顺序交织，最多 8 KB）。
+
+### tasks.kill {ws?, id} → {ok, message, running, tasks}
+
+~~~
+-> {ok:true, message:"task t2 killed (exit=130)", running:0, tasks:[...]}
+~~~
+
+- 先终止再取快照（返回的 tasks 已经反映结果），`exit=130` 表示被取消
+- 杀的是整棵进程树（Windows job object / POSIX 进程组），孙子进程一并回收
+- 任务已经结束时 message 为 "already finished"，仍然返回 ok:true
+
+## 安全约定
 - fs.*：路径先 canonical（跟随 symlink/junction）再做 cwd 前缀校验；".." 或绝对路径越界返回
   "path escapes the workspace: ..."
 - git.*：分支名严格白名单；所有交给 shell 的参数都会加引号；git.diff 的 path 必须留在仓库内

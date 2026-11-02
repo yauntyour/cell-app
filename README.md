@@ -240,6 +240,9 @@ fs.read {cwd?, path}                fs.find {cwd?, q, limit?}
 term.open {cwd?, cols?, rows?, shell?}   term.input {id, data}
 term.resize {id, cols, rows}            term.close {id}
 term.list                               term.exec {cwd?, cmd, timeout_s?}
+
+tasks.list {ws?}                        tasks.kill {ws?, id}
+tasks.output {ws?, id}
 ```
 
 Full request/response shapes and examples for these are in
@@ -401,6 +404,15 @@ share the same command bus as everything else (`src/cell-app-tools.hpp`):
   replays its recent output. `term.exec` runs a one-shot command in the
   workspace directory with a timeout (default 120 s, `exit_code: 124` on
   timeout), captures stdout and stderr (256 KB cap) and returns duration.
+- **Background tasks** — the agent's `exec` tool takes `background: true`, which
+  mounts the process on **its own thread** instead of blocking the turn (a
+  thread-pool job would occupy one of the 16 slots for as long as a dev server
+  runs). The task keeps the child's whole process tree under the same job
+  object / process group, tees its output into a 64 KB live tail and is visible
+  from both frontends: `/tasks`, `/task show ID`, `/task kill ID` in the CLI,
+  and the terminal chip in the sidebar (`tasks.list` / `tasks.output` /
+  `tasks.kill`, pushed live as `tasks` events) in the shell. Up to 32 run at
+  once; a background task has no timeout, and it dies with the app.
 
 These commands are local-only like the rest of the API: loopback + Host/Origin
 checks, no CORS, so they cannot be reached from another website.
