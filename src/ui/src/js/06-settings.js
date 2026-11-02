@@ -144,7 +144,6 @@ function openSettings(section) {
 }
 function closeSettings() {
   S.settingsOpen = false;
-  flRepaint = null; // 页面关掉后事件不再触发重画
   const host = $('#settings');
   if (host) {
     // 关闭即丢弃 DOM：下次打开总是从当前分节重新渲染（并在打开时滚到该节）
