@@ -50,6 +50,7 @@ const COMMANDS = [
   { name: '/archive', usage: '/archive', desc: '查看当前会话的历史存档（右侧面板）', run: () => { openDock('archives'); refreshArchives(S.active, true); } },
   { name: '/workspace', usage: '/workspace [path]', desc: '切换或打开工作区', ctx: 'workspaces' },
   { name: '/theme', usage: '/theme [dark|light|名称]', desc: '切换外观（内置深色/浅色 + 第三方主题）', ctx: 'theme' },
+  { name: '/link', usage: '/link [peers|pair|join CODE|inbox]', desc: '互联（FlowLink）：发现同网段的 cell、配对、收发会话与消息', run: () => openSettings('flowlink') },
   { name: '/git', usage: '/git', desc: '打开 Git / Worktree 面板', run: () => openDock('git') },
   { name: '/worktree', usage: '/worktree', desc: '管理并行工作树（Git Worktree）', run: () => openDock('git') },
   { name: '/files', usage: '/files [path]', desc: '打开工作区文件面板；Ctrl+P 快速打开', run: () => openDock('files') },
@@ -595,6 +596,11 @@ function handleEvent(e) {
     case 'teamwork_changed': case 'workspace_state':
       if (e.ws) refreshTeamwork(e.ws); else refreshTeamwork(S.active);
       break;
+    // FlowLink：设备上线/下线、收到邮件、配对完成。设置页打开时重画该分节，
+    // 其他情况只把未读数记到状态里（侧栏/角标用）
+    case 'flowlink':
+      if (typeof onFlowlinkEvent === 'function') onFlowlinkEvent(e.ev || {});
+      break;
     default: break;
   }
 }
@@ -658,6 +664,8 @@ function applyHello(st, rebuild, opts) {
   // 更新检查的结论与桌面壳偏好也是全局的（零工作区启动时唯一可能出现的提示）
   if (st.update) S.update = st.update;
   if (st.prefs) S.prefs = st.prefs;
+  // FlowLink 的运行状态（设备列表、配对窗口、邮箱未读数）随每次 state 到达
+  if (st.flowlink) S.flowlink = st.flowlink;
   if (st.update || st.prefs) renderUpdateChip();
 
   let noticesReset = false;

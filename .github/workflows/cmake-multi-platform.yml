@@ -117,6 +117,16 @@ jobs:
             Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
           }
 
+      # FlowLink needs no window and no provider: two cells inside one process
+      # find each other over UDP, pair with a 512-bit code and exchange
+      # encrypted mail + rpc. This is the cross-platform gate for the whole
+      # peer stack (libsodium, boost.asio and the sealed key files).
+      - name: FlowLink self-test
+        shell: pwsh
+        run: |
+          & build/cell-app.exe --smoke-flowlink
+          if ($LASTEXITCODE -ne 0) { throw "flowlink self-test failed ($LASTEXITCODE)" }
+
       # the point of the static build: the import table must not name anything
       # outside the Windows system DLLs (a stray libcurl/libsodium/zlib DLL
       # would break the "just the exe" promise)
@@ -206,6 +216,10 @@ jobs:
           WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS: "1"
         run: timeout 180 xvfb-run -a -s "-screen 0 1400x900x24" ./dist/cell-app-linux-x86_64 --smoke
 
+      # the same peer stack on the shipped ELF, with no X server involved
+      - name: FlowLink self-test
+        run: timeout 180 ./dist/cell-app-linux-x86_64 --smoke-flowlink
+
       - uses: actions/upload-artifact@v4
         with:
           name: cell-app-linux-x86_64
@@ -279,6 +293,9 @@ jobs:
             echo "::error::Homebrew libraries leaked into the link: $leaked"
             exit 1
           fi
+
+      - name: FlowLink self-test
+        run: timeout 180 ./build/cell-app --smoke-flowlink
 
       - name: Package
         run: |

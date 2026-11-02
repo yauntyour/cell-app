@@ -2213,6 +2213,51 @@ body.locked{overflow:hidden}
   #settings .set-main{scroll-behavior:auto!important}
 }
 
+/* ---- 互联（FlowLink） ---------------------------------------------- */
+#settings .fl-body{display:flex;flex-direction:column;gap:14px}
+#settings .set-form-3{display:grid;grid-template-columns:1.4fr 1fr 1fr;gap:14px}
+#settings .fl-row-right{display:flex;justify-content:flex-end;gap:8px;margin-top:2px}
+#settings .fl-ident{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--fg3)}
+#settings .fl-ident code{font-family:var(--mono);font-size:11px;color:var(--fg2);
+  background:var(--bg3);border:1px solid var(--line);border-radius:6px;padding:2px 6px}
+
+/* 配对码：87 个字符，按组显示，允许任意位置换行 */
+#settings .fl-codebox{display:flex;flex-direction:column;gap:8px}
+#settings .fl-code{display:block;font-family:var(--mono);font-size:12.5px;line-height:1.9;
+  letter-spacing:.06em;color:var(--fg);background:var(--bg3);border:1px solid var(--line2);
+  border-radius:var(--radius-s);padding:10px 12px;white-space:pre-wrap;word-break:break-all;
+  user-select:all}
+#settings .fl-join{display:flex;flex-direction:column;gap:10px}
+
+/* 设备列表 */
+#settings .fl-peers{display:flex;flex-direction:column;gap:2px}
+#settings .fl-peer{display:flex;align-items:center;gap:10px;padding:8px 6px;border-radius:var(--radius-s)}
+#settings .fl-peer:hover{background:var(--raise)}
+#settings .fl-dot{width:7px;height:7px;flex:none;border-radius:50%;background:var(--fg3);opacity:.5}
+#settings .fl-dot.on{background:var(--ok);opacity:1;box-shadow:0 0 0 3px color-mix(in srgb,var(--ok) 18%,transparent)}
+#settings .fl-peer-txt{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+#settings .fl-peer-name{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--fg)}
+#settings .fl-peer-id{font-family:var(--mono);font-size:10.5px;color:var(--fg3);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* 邮箱 */
+#settings .fl-mails{display:flex;flex-direction:column;gap:2px}
+#settings .fl-mail{display:flex;flex-direction:column;gap:4px;padding:8px 6px;
+  border-radius:var(--radius-s);border-bottom:1px solid var(--line)}
+#settings .fl-mail:last-child{border-bottom:0}
+#settings .fl-mail.unread .fl-mail-subj{font-weight:650}
+#settings .fl-mail.unread .fl-mail-subj::before{content:"";display:inline-block;width:6px;height:6px;
+  border-radius:50%;background:var(--accent);margin-right:7px;vertical-align:middle}
+#settings .fl-mail-head{display:flex;align-items:baseline;gap:10px;cursor:pointer}
+#settings .fl-mail-subj{flex:1;min-width:0;font-size:13px;color:var(--fg);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#settings .fl-mail-from{font-size:11px;color:var(--fg3);white-space:nowrap}
+#settings .fl-mail-detail{margin-top:4px}
+#settings .fl-pre{max-height:320px;overflow:auto;margin:6px 0 0;padding:10px 12px;
+  font-family:var(--mono);font-size:11.5px;line-height:1.7;color:var(--fg2);
+  background:var(--bg2);border:1px solid var(--line);border-radius:var(--radius-s);
+  white-space:pre-wrap;word-break:break-word}
+
 /* ==== css/06b-sidepanels.css ========================================== */
 
 /* =====================================================================
@@ -4133,6 +4178,7 @@ const COMMANDS = [
   { name: '/archive', usage: '/archive', desc: '查看当前会话的历史存档（右侧面板）', run: () => { openDock('archives'); refreshArchives(S.active, true); } },
   { name: '/workspace', usage: '/workspace [path]', desc: '切换或打开工作区', ctx: 'workspaces' },
   { name: '/theme', usage: '/theme [dark|light|名称]', desc: '切换外观（内置深色/浅色 + 第三方主题）', ctx: 'theme' },
+  { name: '/link', usage: '/link [peers|pair|join CODE|inbox]', desc: '互联（FlowLink）：发现同网段的 cell、配对、收发会话与消息', run: () => openSettings('flowlink') },
   { name: '/git', usage: '/git', desc: '打开 Git / Worktree 面板', run: () => openDock('git') },
   { name: '/worktree', usage: '/worktree', desc: '管理并行工作树（Git Worktree）', run: () => openDock('git') },
   { name: '/files', usage: '/files [path]', desc: '打开工作区文件面板；Ctrl+P 快速打开', run: () => openDock('files') },
@@ -4678,6 +4724,11 @@ function handleEvent(e) {
     case 'teamwork_changed': case 'workspace_state':
       if (e.ws) refreshTeamwork(e.ws); else refreshTeamwork(S.active);
       break;
+    // FlowLink：设备上线/下线、收到邮件、配对完成。设置页打开时重画该分节，
+    // 其他情况只把未读数记到状态里（侧栏/角标用）
+    case 'flowlink':
+      if (typeof onFlowlinkEvent === 'function') onFlowlinkEvent(e.ev || {});
+      break;
     default: break;
   }
 }
@@ -4741,6 +4792,8 @@ function applyHello(st, rebuild, opts) {
   // 更新检查的结论与桌面壳偏好也是全局的（零工作区启动时唯一可能出现的提示）
   if (st.update) S.update = st.update;
   if (st.prefs) S.prefs = st.prefs;
+  // FlowLink 的运行状态（设备列表、配对窗口、邮箱未读数）随每次 state 到达
+  if (st.flowlink) S.flowlink = st.flowlink;
   if (st.update || st.prefs) renderUpdateChip();
 
   let noticesReset = false;
@@ -13092,6 +13145,7 @@ const SET_SECTIONS = [
   { id: 'sandbox', label: '沙箱', icon: 'shield' },
   { id: 'context', label: '上下文', icon: 'database' },
   { id: 'perf', label: '性能', icon: 'gauge' },
+  { id: 'flowlink', label: '互联', icon: 'link' },
   { id: 'about', label: '关于', icon: 'info' },
 ];
 let setSection = 'appearance';
@@ -13222,6 +13276,7 @@ function openSettings(section) {
 }
 function closeSettings() {
   S.settingsOpen = false;
+  flRepaint = null; // 页面关掉后事件不再触发重画
   const host = $('#settings');
   if (host) {
     // 关闭即丢弃 DOM：下次打开总是从当前分节重新渲染（并在打开时滚到该节）
@@ -13478,6 +13533,7 @@ function buildSection(id) {
   if (id === 'sandbox') return buildSandbox(st);
   if (id === 'context') return buildContext(st);
   if (id === 'perf') return buildPerf(st);
+  if (id === 'flowlink') return buildInterconnect();
   if (id === 'appearance') return buildAppearance(st);
   return buildAbout(st);
 }
@@ -14168,6 +14224,255 @@ function buildAbout(st) {
   note.appendChild(el('span', null, '（随 exe 走，换浏览器 profile 也不会丢）。'));
   s.appendChild(note);
   return s;
+}
+
+
+/* ---------- 互联（FlowLink） ---------------------------------------
+   局域网里其他 cell 的发现、配对与消息：开关、配对码、设备列表、邮箱。
+   服务默认关闭，关闭时不监听任何端口（后端不挂载 flowlink::service）。   */
+
+function flState() {
+  return Object.assign({ enabled: false, client_id: '', name: '', port: 0, discovery_port: 0,
+    announce: true, accept_remote: false, peers: [], inbox: { unread: 0, total: 0 }, pairing: {} }, S.flowlink || {});
+}
+function flPrefs() {
+  return Object.assign({ enabled: false, name: '', port: 47822, discovery: 47821,
+    announce: true, accept: false, workspace: '' }, (S.prefs || {}).flowlink || {});
+}
+// 设置页里互联分节的重画函数（页面关掉就置空，事件只在打开时重画）
+let flRepaint = null;
+function onFlowlinkEvent(ev) {
+  if (!ev || !ev.type) return;
+  if (ev.type === 'mail')
+    toast('收到 ' + (ev.from_name || '另一台 cell') + ' 的消息：' + (ev.subject || ''), 'ok');
+  else if (ev.type === 'paired')
+    toast('已与 ' + (ev.name || ev.client_id || '对端') + ' 配对', 'ok');
+  else if (ev.type === 'pairing_expired')
+    toast('配对码已过期', 'info');
+  if (flRepaint) flRepaint();
+}
+// 命令返回的就是最新状态：并进 S.flowlink，省一次 state 往返
+// （设置项本身以 state.prefs.flowlink 为准，由随后的 resync 刷新）
+function flMerge(out) {
+  if (out && out.ok && out.enabled !== undefined) S.flowlink = Object.assign(flState(), out);
+  return out;
+}
+
+function flRow(children, cls) {
+  const d = el('div', cls || 'fl-row-right');
+  (children || []).forEach(c => c && d.appendChild(c));
+  return d;
+}
+
+function flPeerRow(p, onForget) {
+  const row = el('div', 'fl-peer' + (p.online ? ' on' : ''));
+  const dot = el('span', 'fl-dot' + (p.online ? ' on' : ''));
+  dot.title = p.online ? '在线' : '离线';
+  row.appendChild(dot);
+  const info = el('div', 'fl-peer-txt');
+  const title = el('div', 'fl-peer-name');
+  title.appendChild(el('span', null, p.name || (p.client_id || '').slice(0, 8)));
+  if (p.paired) title.appendChild(el('span', 'pill', '已配对'));
+  else title.appendChild(el('span', 'pill warn', '未配对'));
+  info.appendChild(title);
+  const sub = el('div', 'fl-peer-id');
+  sub.textContent = (p.client_id || '') + (p.addr ? '  ' + p.addr + (p.port ? ':' + p.port : '') : '');
+  info.appendChild(sub);
+  row.appendChild(info);
+  if (p.paired && onForget) {
+    const b = setIconBtn('trash', '解除配对（删除本机保存的链接密钥）', () => onForget(p));
+    row.appendChild(b);
+  }
+  return row;
+}
+
+function flMailBody(m) {
+  const box = el('div', 'fl-mail-body');
+  if (m.note) box.appendChild(el('div', 'set-hint', m.note));
+  const payload = m.payload || {};
+  if (m.kind === 'session' && Array.isArray(payload.messages)) {
+    box.appendChild(el('div', 'set-hint', '共享的会话（' + payload.messages.length + ' 条消息）'));
+    const pre = el('pre', 'fl-pre');
+    pre.textContent = payload.messages.map(x => '### ' + (x.role || '') + '\n\n' + (x.text || '')).join('\n\n');
+    box.appendChild(pre);
+  } else {
+    const pre = el('pre', 'fl-pre');
+    pre.textContent = payload.text || '(空)';
+    box.appendChild(pre);
+  }
+  return box;
+}
+
+function buildInterconnect() {
+  const s = sec('flowlink', '互联',
+    '让同一局域网里的其他 cell 发现这台设备、互相配对，然后收发消息、共享会话、把远程 cell 编入工作流。默认关闭：关闭时不监听任何端口。');
+  const body = el('div', 'fl-body');
+  s.appendChild(body);
+  const paint = () => { body.replaceChildren(); flFill(body, paint); };
+  flRepaint = paint;
+  paint();
+  return s;
+}
+
+function flFill(body, paint) {
+  const st = flState();
+  const pf = flPrefs();
+  const on = !!st.enabled;
+
+  /* ---- 1. 服务开关 ---- */
+  const nameIn = setInput('设备名（默认主机名）', pf.name || '');
+  const portIn = setInput('47822', String(pf.port || 47822), 'number');
+  const discIn = setInput('47821', String(pf.discovery || 47821), 'number');
+  const savePorts = setBtn('保存端口', 'ghost', () => {
+    const port = parseInt(portIn.value, 10), disc = parseInt(discIn.value, 10);
+    if (!(port > 0 && port < 65536) || !(disc > 0 && disc < 65536)) { toast('端口需在 1..65535', 'bad'); return; }
+    cmd('flowlink.prefs', { name: nameIn.value.trim(), port: port, discovery: disc }).then(o => { flMerge(o); toast('已保存（重新挂载服务）', 'ok'); paint(); });
+  }, 'check');
+  const formRow = el('div', 'set-form-3');
+  formRow.appendChild(field('设备名', nameIn));
+  formRow.appendChild(field('传输端口', portIn));
+  formRow.appendChild(field('发现端口', discIn));
+
+  const toggle = switchRow('启用 FlowLink 服务', on, v => {
+    const args = { name: nameIn.value.trim(), port: parseInt(portIn.value, 10) || 47822, discovery: parseInt(discIn.value, 10) || 47821 };
+    cmd(v ? 'flowlink.enable' : 'flowlink.disable', v ? args : {}).then(o => {
+      if (o && o.ok) flMerge(o);
+      paint();
+      resync();
+    });
+  }, '独立于 webview/HTTP 服务运行；关闭后不监听端口、不占用线程与内存。');
+
+  body.appendChild(card([
+    setCardHead('服务', on ? setPill('运行中', 'ok') : setPill('已关闭')),
+    toggle,
+    on ? el('div', 'set-divider') : null,
+    on ? formRow : null,
+    on ? flRow([savePorts]) : null,
+    on ? el('div', 'set-divider') : null,
+    on ? switchRow('允许被发现（UDP 广播 + 组播）', pf.announce, v =>
+      cmd('flowlink.prefs', { announce: v }).then(o => { flMerge(o); paint(); })) : null,
+    on ? switchRow('接受远程任务与文件读取', pf.accept, v =>
+      cmd('flowlink.prefs', { accept: v }).then(o => { flMerge(o); paint(); }),
+      '允许已配对的对端在这里运行 tw 作业、读取已打开工作区里的文件（只读，且限制在工作区内）。') : null,
+    on ? flRow([el('span', null, '本机标识'), el('code', null, st.client_id || '')], 'fl-ident') : null,
+    !on ? setNote('开启后，其他 cell 才能在「设备」列表里看到这台机器。', 'info') : null,
+  ]));
+
+  if (!on) { body.appendChild(card([setCardHead('配对'), el('div', 'set-hint', '服务开启后可用。')])); return; }
+
+  /* ---- 2. 配对 ---- */
+  const pairing = st.pairing || {};
+  const codeBox = el('div', 'fl-codebox');
+  if (pairing.open && pairing.code) {
+    const code = el('code', 'fl-code', pairing.code);
+    codeBox.appendChild(code);
+    const left = Math.max(0, (pairing.expires || 0) - Math.floor(Date.now() / 1000));
+    codeBox.appendChild(el('div', 'set-hint', '把这个配对码交给对方输入，' + Math.floor(left / 60) + ' 分 ' + (left % 60) + ' 秒后失效。只需一方输入。'));
+    const btns = el('div', 'fl-row-right');
+    btns.appendChild(setBtn('复制', 'ghost', () => {
+      const text = pairing.raw || pairing.code;
+      if (navigator.clipboard) navigator.clipboard.writeText(text).then(() => toast('已复制', 'ok'), () => toast('复制失败，请手动选择', 'bad'));
+      else toast('请手动选择复制', 'info');
+    }, 'copy'));
+    btns.appendChild(setBtn('取消', 'ghost', () => cmd('flowlink.pair.cancel').then(o => { flMerge(o); paint(); })));
+    codeBox.appendChild(btns);
+  } else {
+    const gen = setBtn('生成配对码', 'primary', () =>
+      cmd('flowlink.pair.begin', { ttl: 300 }).then(o => { if (o && o.ok) { S.flowlink = Object.assign(flState(), { pairing: { open: true, code: o.code, expires: o.expires, raw: o.raw } }); toast('配对码已生成', 'ok'); } paint(); }), 'link');
+    codeBox.appendChild(gen);
+    codeBox.appendChild(el('div', 'set-hint', '生成后由对方输入；也可以直接输入对方给你的配对码。'));
+  }
+
+  const joinIn = setInput('对方的 512 位配对码（空格可忽略）', '');
+  joinIn.style.fontFamily = 'var(--mono, monospace)';
+  const addrIn = setInput('对方地址 ip[:port]（留空 = 自动发现）', '');
+  const joinBtn = setBtn('配对', 'accent', () => {
+    const code = joinIn.value.trim();
+    if (!code) { toast('请输入配对码', 'bad'); return; }
+    joinBtn.disabled = true;
+    const t0 = Date.now();
+    cmd('flowlink.pair.join', { code: code, addr: addrIn.value.trim() }).then(o => {
+      joinBtn.disabled = false;
+      if (o && o.ok) { toast('已与 ' + (o.name || o.client_id) + ' 配对', 'ok'); joinIn.value = ''; addrIn.value = ''; }
+      paint();
+      resync();
+    });
+  }, 'key');
+  const joinRow = el('div', 'set-field');
+  joinRow.appendChild(el('label', 'set-label', '输入对方的配对码'));
+  joinRow.appendChild(joinIn);
+  const addrRow = el('div', 'set-field');
+  addrRow.appendChild(el('label', 'set-label', '对方地址（可留空）'));
+  addrRow.appendChild(addrIn);
+  const joinWrap = el('div', 'fl-join');
+  joinWrap.appendChild(joinRow);
+  joinWrap.appendChild(addrRow);
+  joinWrap.appendChild(flRow([joinBtn]));
+
+  body.appendChild(card([
+    setCardHead('配对'),
+    codeBox,
+    el('div', 'set-divider'),
+    joinWrap,
+    el('div', 'set-hint', '配对码只在配对时用一次：双方随后各存一份链接密钥（Argon2id 加密保存于 .cell/links/<client_id>/key），之后的通讯用它端到端加密。'),
+  ]));
+
+  /* ---- 3. 设备 ---- */
+  const peers = Array.isArray(st.peers) ? st.peers : [];
+  const list = el('div', 'fl-peers');
+  if (!peers.length) list.appendChild(el('div', 'set-hint', '还没有设备。生成配对码让另一台 cell 输入，或输入对方的配对码。'));
+  for (const p of peers) {
+    list.appendChild(flPeerRow(p, peer => {
+      if (!confirm('解除与 ' + (peer.name || peer.client_id) + ' 的配对？本机保存的链接密钥会被删除。')) return;
+      cmd('flowlink.forget', { client_id: peer.client_id }).then(() => { paint(); resync(); });
+    }));
+  }
+  const scan = setBtn('扫描局域网', 'ghost', () => cmd('flowlink.probe').then(() => { toast('已发出探测', 'ok'); setTimeout(() => { paint(); resync(); }, 900); }), 'search');
+  body.appendChild(card([
+    setCardHead('设备', setPill(String(peers.filter(p => p.paired).length) + ' 台已配对')),
+    list,
+    flRow([scan]),
+  ]));
+
+  /* ---- 4. 邮箱 ---- */
+  const inboxCard = card([setCardHead('邮箱', setPill(String((st.inbox || {}).unread || 0) + ' 未读'))]);
+  const mailList = el('div', 'fl-mails');
+  inboxCard.appendChild(mailList);
+  inboxCard.appendChild(el('div', 'set-hint', '会话与消息都通过链接密钥端到端加密传输，本机解密后存在 .cell/flowlink/inbox/。'));
+  body.appendChild(inboxCard);
+  cmd('flowlink.inbox').then(o => {
+    const items = (o && o.items) || [];
+    mailList.replaceChildren();
+    if (!items.length) { mailList.appendChild(el('div', 'set-hint', '没有消息。')); return; }
+    for (const m of items) {
+      const row = el('div', 'fl-mail' + (m.read ? '' : ' unread'));
+      const head = el('div', 'fl-mail-head');
+      head.appendChild(el('span', 'fl-mail-subj', m.subject || '(无主题)'));
+      head.appendChild(el('span', 'fl-mail-from', (m.from_name || '') + ' · ' + new Date((m.created || 0) * 1000).toLocaleString()));
+      row.appendChild(head);
+      row.appendChild(el('div', 'set-hint', m.kind === 'session' ? '共享会话' : '消息'));
+      const bodyBox = el('div', 'fl-mail-detail');
+      bodyBox.style.display = 'none';
+      row.appendChild(bodyBox);
+      let loaded = false;
+      head.onclick = () => {
+        const show = bodyBox.style.display === 'none';
+        bodyBox.style.display = show ? '' : 'none';
+        if (show && !loaded) {
+          loaded = true;
+          cmd('flowlink.mail.read', { id: m.id }).then(r => {
+            if (r && r.mail) bodyBox.appendChild(flMailBody(r.mail));
+          });
+        }
+      };
+      row.appendChild(flRow([
+        setIconBtn('trash', '删除这条消息', () => {
+          cmd('flowlink.mail.drop', { id: m.id }).then(() => { row.remove(); resync(); });
+        }),
+      ]));
+      mailList.appendChild(row);
+    }
+  });
 }
 
 /* ---- API Key 弹窗 -------------------------------------------------- */

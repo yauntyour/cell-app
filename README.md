@@ -270,6 +270,44 @@ curl -X POST http://127.0.0.1:8787/api/cmd/send \
      -H "Content-Type: application/json" -d '{"ws":"<key>","text":"explain CMakeLists.txt"}'
 ```
 
+## FlowLink (cell ↔ cell over the LAN)
+
+FlowLink lets the cells on one network find each other, pair once, and then
+talk over an end-to-end encrypted channel: send a conversation like an email,
+read a peer's workspace, or run a Teamwork job on another machine. It is
+implemented in the **core** (`cell.cpp/flowlink.hpp`), so the CLI and the
+desktop app use the same service, the same settings and the same commands.
+
+It is **opt-in and off by default**: while it is off nothing is constructed —
+no thread, no socket, no allocation.
+
+```bash
+# CLI: mount it, then pair (one side shows a code, the other types it)
+/link on
+/link pair            # prints a 512-bit code (single use, 5 minutes)
+/link join CODE       # on the other cell — no address needed, discovery finds it
+/link peers
+/link share <cell>    # send this session's conversation
+/link inbox           # read what the other side sent
+/link off
+```
+
+In the desktop app the same thing lives under **Settings → 互联**, and `/link`
+in the composer opens it. The agent gets the same capability through the `fl`
+tool and through `tw`'s `cell` field (`tw operation=cells` lists the peers).
+
+| | |
+|---|---|
+| discovery | UDP broadcast + multicast on 47821, JSON beacons every 5 s |
+| transport | TCP 47822, length-prefixed frames, XChaCha20-Poly1305 on every frame |
+| identity | `client_id` = 16 random bytes from libsodium (32 hex chars) |
+| pairing | 512-bit base62 code → Argon2id PSK + ephemeral X25519 handshake |
+| link key | 32 random bytes, sealed like the API-key vault, in `.cell/links/<client_id>/key` |
+| mailbox | `.cell/flowlink/inbox/` |
+| settings | `config.json` (`link_enabled`, `link_name`, `link_port`, `link_discovery`, `link_announce`, `link_accept`, `link_workspace`) |
+
+Full protocol, threat model and every command: [`docs/flowlink.md`](docs/flowlink.md).
+
 ## The UI
 
 The interface follows the same design language as DeepSeek Harness: a

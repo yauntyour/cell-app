@@ -723,6 +723,7 @@ namespace app
         printf("  --headless [PORT] start only the HTTP service, no window\n");
         printf("  --ui FILE         serve the UI page from this file (dev mode:\n");
         printf("                    edit + refresh, no rebuild; default: embedded)\n");
+        printf("  --root DIR        use DIR as the data root instead of <exe dir>/.cell\n");
         printf("  --update-check    compare this build with the newest GitHub release\n");
         printf("                    and print the verdict (no window; exit codes:\n");
         printf("                    0 = up to date, 1 = update available, 2 = no answer)\n");
@@ -730,7 +731,8 @@ namespace app
         printf("Smoke tests (isolated data root, exit automatically):\n");
         printf("  --smoke           UI bridge only\n");
         printf("  --smoke-engine    UI bridge + one engine turn\n");
-        printf("  --smoke-ws        UI bridge + two workspaces in parallel\n\n");
+        printf("  --smoke-ws        UI bridge + two workspaces in parallel\n");
+        printf("  --smoke-flowlink  two cells: discovery, pairing, mail, rpc\n\n");
         printf("Configuration, sessions and the credential vault are shared with\n");
         printf("the CLI (they live in <exe dir>\\.cell); run the CLI once to add\n");
         printf("a provider if none is configured yet.\n");
@@ -739,9 +741,194 @@ namespace app
     // SIGINT/SIGTERM flag for --headless
     static std::atomic<bool> g_signal_stop{false};
 
+    // =====================================================================
+    //  --smoke-flowlink: two cells in one process, talking over the loopback.
+    //  No provider, no window, no network beyond 127.0.0.1: it exercises the
+    //  parts that are easy to get wrong — the pairing code, the Argon2id PSK,
+    //  the handshake MAC, the encrypted frames, the key file on disk, both
+    //  directions of the RPC, and a reconnect from the stored link key.
+    // =====================================================================
+    static int flowlink_smoke()
+    {
+        using namespace cell::flowlink;
+        int passed = 0, failed = 0;
+        auto check = [&](bool cond, const std::string &what)
+        {
+            printf("  %-4s %s\n", cond ? "ok" : "FAIL", what.c_str());
+            cond ? ++passed : ++failed;
+        };
+        const auto base = std::filesystem::temp_directory_path() / "cell-flowlink-smoke";
+        std::error_code ec;
+        std::filesystem::remove_all(base, ec);
+        std::filesystem::create_directories(base / "a", ec);
+        std::filesystem::create_directories(base / "b", ec);
+        printf("flowlink smoke: root=%s\n", base.string().c_str());
+
+        service::options oa;
+        oa.root = base / "a";
+        oa.name = "cell-a";
+        oa.port = 0; // ephemeral: the test runs beside a real instance
+        // discovery on a port of its own, so the run never collides with a real
+        // instance (both cells share it — that is how they find each other)
+        oa.announce = true;
+        oa.discovery_port = 47851;
+        service::options ob = oa;
+        ob.root = base / "b";
+        ob.name = "cell-b";
+        service a(oa), b(ob);
+        std::string err;
+        if (!a.start(err))
+        {
+            printf("FAIL cell A did not start: %s\n", err.c_str());
+            return 1;
+        }
+        if (!b.start(err))
+        {
+            printf("FAIL cell B did not start: %s\n", err.c_str());
+            return 1;
+        }
+        const int port_a = a.status().value("port", 0);
+        const std::string addr_a = "127.0.0.1:" + std::to_string(port_a);
+        check(port_a > 0, "cell A listens on an ephemeral port");
+        check(a.client_id().size() == 32, "client_id is 32 hex characters (libsodium randombytes)");
+        check(a.client_id() != b.client_id(), "the two cells have distinct client ids");
+
+        // ---- a wrong pairing code must not pair --------------------------
+        {
+            auto code = a.pair_begin(120);
+            std::string wrong = code.value("raw", "");
+            if (!wrong.empty())
+                wrong[0] = (wrong[0] == 'A') ? 'B' : 'A';
+            std::string why;
+            auto r = b.pair_join(wrong, addr_a, why);
+            check(!why.empty() || r.empty(), "a wrong pairing code is refused (" + why + ")");
+        }
+        // ---- discovery: B finds A through the UDP beacon -----------------
+        // (a host without a usable broadcast/multicast path simply skips the
+        //  address-free pairing below and uses the known address instead)
+        bool found_a = false;
+        for (int i = 0; i < 20 && !found_a; i++)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+            for (const auto &f : b.discovered())
+                if (f.value("client_id", "") == a.client_id() && f.value("port", 0) == port_a)
+                    found_a = true;
+        }
+        check(found_a, "B discovers A on the network (client id + listening port)");
+        // ---- the right code pairs, once, and stores the link key ---------
+        {
+            auto code = a.pair_begin(120);
+            check(code.value("ok", false), "cell A opens a pairing window");
+            check(code.value("code", "").find(' ') != std::string::npos, "the code is shown in readable groups");
+            std::string why;
+            // no address when discovery worked: exactly the "type their code and
+            // nothing else" flow
+            auto r = b.pair_join(code.value("raw", ""), found_a ? std::string{} : addr_a, why);
+            check(why.empty() && r.value("ok", false), "pairing with the right code" + (why.empty() ? "" : ": " + why));
+            check(r.value("client_id", "") == a.client_id(), "B learned A's client id");
+        }
+        check(std::filesystem::exists(base / "a" / "links" / b.client_id() / "key"),
+              "A stored the link key in .cell/links/<client_id>/key");
+        check(std::filesystem::exists(base / "b" / "links" / a.client_id() / "key"),
+              "B stored the link key in .cell/links/<client_id>/key");
+        {
+            std::ifstream f(base / "b" / "links" / a.client_id() / "key");
+            const std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+            check(text.find("argon2id") != std::string::npos, "the link key file is sealed like the vault (argon2id)");
+        }
+        // ---- mailbox B -> A ---------------------------------------------
+        {
+            std::string why;
+            nlohmann::json item{{"from", b.client_id()}, {"from_name", "cell-b"},
+                                {"subject", "hello"}, {"note", ""}, {"kind", "text"},
+                                {"payload", {{"text", "ping from b"}}}};
+            b.send_mail(a.client_id(), item, why);
+            check(why.empty(), "B delivers mail to A" + (why.empty() ? "" : ": " + why));
+            auto inbox = a.inbox();
+            check(inbox.is_array() && inbox.size() == 1, "A's mailbox holds exactly one message");
+            if (inbox.is_array() && inbox.size() == 1)
+            {
+                auto m = a.read_mail(inbox[0].value("id", ""));
+                check(m.value("subject", "") == "hello", "the subject survives the round trip");
+                check(m.contains("payload") && m["payload"].value("text", "") == "ping from b",
+                      "the body survives the encrypted round trip");
+            }
+        }
+        // ---- rpc in the other direction, plus a reconnect ---------------
+        {
+            b.on("echo", [](const nlohmann::json &p, std::string &e) -> nlohmann::json
+                 { (void)e; return nlohmann::json{{"echo", p}}; });
+            std::string why;
+            auto r = a.call(b.client_id(), "echo", {{"n", 42}}, 15000, why);
+            check(why.empty() && r.value("echo", nlohmann::json::object()).value("n", 0) == 42,
+                  "A -> B rpc over the encrypted channel" + (why.empty() ? "" : ": " + why));
+        }
+        {
+            const std::string id = a.client_id();
+            a.stop();
+            std::string why;
+            if (!a.start(why))
+                check(false, "A restarts: " + why);
+            else
+            {
+                check(a.client_id() == id, "the client id persists across restarts");
+                auto r = a.call(b.client_id(), "echo", {{"n", 7}}, 20000, why);
+                check(why.empty() && r.value("echo", nlohmann::json::object()).value("n", 0) == 7,
+                      "A reconnects with the stored link key, no code needed" + (why.empty() ? "" : ": " + why));
+            }
+        }
+        // ---- an unpaired peer is refused --------------------------------
+        {
+            std::string why;
+            b.call("00000000000000000000000000000000", "echo", nlohmann::json::object(), 3000, why);
+            check(!why.empty(), "an unpaired client id is refused (" + why + ")");
+        }
+        // ---- the core command surface -----------------------------------
+        // /link lives in the core (cell::link), so its operations answer even
+        // with no service mounted — that is what the CLI's REPL gets.
+        {
+            auto st = cell::link::op("status", nlohmann::json::object());
+            check(!st.value("enabled", false), "/link status reports the service as off (it is opt-in)");
+            bool ok = true;
+            const std::string text = cell::link::run({"/link", "peers"}, "", ok);
+            check(!ok, "/link peers without a service explains how to enable it (" + text + ")");
+        }
+        // ---- mount through the core, exactly as `/link on` does ----------
+        {
+            cell::link::mount_options mo;
+            mo.root = base / "cli";
+            mo.name = "cell-cli";
+            mo.port = 0;
+            mo.discovery = 47852;
+            mo.announce = false;
+            mo.accept_remote = false;
+            std::string e2;
+            check(cell::link::enable(mo, e2), "cell::link mounts the service" + (e2.empty() ? "" : ": " + e2));
+            check(cell::link::op("status", nlohmann::json::object()).value("enabled", false),
+                  "/link status reports it running");
+            auto pr = cell::link::op("pair", {{"ttl", 60}});
+            check(pr.value("ok", false) && !pr.value("code", "").empty(), "/link pair returns a code");
+            auto pe = cell::link::op("peers", nlohmann::json::object());
+            check(pe.value("ok", false) && pe["peers"].is_array(), "/link peers answers");
+            auto in = cell::link::op("inbox", nlohmann::json::object());
+            check(in.value("ok", false) && in["items"].is_array(), "/link inbox answers");
+            bool ok2 = true;
+            const std::string txt = cell::link::run({"/link", "pair", "60"}, "", ok2);
+            check(ok2 && txt.find("pairing code") != std::string::npos, "/link run renders the pairing code");
+            cell::link::op("off", nlohmann::json::object());
+            check(!cell::link::status().value("enabled", false), "/link off unmounts the service");
+        }
+        a.stop();
+        b.stop();
+        std::filesystem::remove_all(base, ec);
+        printf("flowlink smoke: %d passed, %d failed\n", passed, failed);
+        return failed == 0 ? 0 : 1;
+    }
+
     int gui_main(int argc, char const *argv[])
     {
         std::string ui_arg; // --ui FILE: serve the page from disk (dev mode)
+        std::string root_arg; // --root DIR: use another .cell data root
         int smoke = 0;
         int serve_port = 0; // 0 = no HTTP service
         bool headless = false;
@@ -770,6 +957,8 @@ namespace app
             };
             if (a == "--ui" && i + 1 < argc)
                 ui_arg = argv[++i];
+            else if (a == "--root" && i + 1 < argc)
+                root_arg = argv[++i];
             else if (a == "--serve")
             {
                 serve_port = port_arg("--serve");
@@ -789,6 +978,11 @@ namespace app
                 smoke = 2;
             else if (a == "--smoke-ws")
                 smoke = 3;
+            else if (a == "--smoke-flowlink")
+            {
+                // self-contained: it brings its own data root and needs no window
+                return app::flowlink_smoke();
+            }
             else if (a == "--update-check")
                 update_check = true;
             else if (a == "--help" || a == "-h")
@@ -850,6 +1044,10 @@ namespace app
         // otherwise it opens its file under the real root)
         if (smoke)
             cell::root = std::filesystem::temp_directory_path() / "cell-desktop-smoke";
+        // --root DIR: run against another data root (portable installs, and the
+        // two-instance FlowLink tests). Same rule: before the logger opens.
+        if (!root_arg.empty())
+            cell::root = std::filesystem::absolute(root_arg);
 
         auto &log = cell::sys::logger::instance();
         cell::sys::install_handlers();
@@ -941,6 +1139,49 @@ namespace app
         };
 
         int rc = 0;
+        // FlowLink is opt-in and off by default: nothing is created here unless
+        // the user switched it on. It starts at the same point as the HTTP
+        // service, and for the same reason — WebView2's one-time winsock
+        // init/cleanup would otherwise tear down sockets opened before it.
+        // The core owns the service; this shell only says how to mount it. The
+        // hooks are what the core's /link command calls, so `/link on` works
+        // here exactly as it does in the CLI.
+        cell::link::mount_hook() = [&core](std::string &err) -> bool
+        {
+            if (!core.fl_start(err))
+                return false;
+            {
+                std::lock_guard<std::mutex> lk(core.cmd_mx);
+                core.cfg.link_enabled = true;
+                cell::config::save(core.cfg, false);
+            }
+            core.fl_tools_dirty();
+            return true;
+        };
+        cell::link::unmount_hook() = [&core]
+        {
+            core.fl_stop();
+            {
+                std::lock_guard<std::mutex> lk(core.cmd_mx);
+                core.cfg.link_enabled = false;
+                cell::config::save(core.cfg, false);
+            }
+            core.fl_tools_dirty();
+        };
+        auto start_flowlink = [&]()
+        {
+            if (!core.cfg.link_enabled)
+                return;
+            std::string err;
+            if (!core.fl_start(err))
+            {
+                log.error("flowlink", "could not start: " + err);
+                return;
+            }
+            log.info("flowlink", std::format("flowlink listening on {} (discovery {}, id {})",
+                                             core.cfg.link_port, core.cfg.link_discovery,
+                                             core.fl_status().value("client_id", "")));
+        };
         {
             // RAII exit guard: persists the session + config and cleans up
             // libcurl no matter how the shell leaves this scope
@@ -977,6 +1218,7 @@ namespace app
                             { g_signal_stop.store(true); });
                 std::signal(SIGTERM, [](int)
                             { g_signal_stop.store(true); });
+                start_flowlink();
                 log.info("app", "headless mode: Ctrl+C to stop");
                 while (!g_signal_stop.load())
                     std::this_thread::sleep_for(std::chrono::milliseconds(200));
@@ -1034,6 +1276,9 @@ namespace app
                                           "backend and boots in demo mode (set --serve PORT)");
 
                 }
+                // the window exists, so WebView2 has finished its winsock
+                // init/cleanup cycle: FlowLink may open its sockets now
+                start_flowlink();
 
                 // smoke tests: the page announces itself by issuing its boot
                 // `state` command over HTTP; the first one flips this switch
