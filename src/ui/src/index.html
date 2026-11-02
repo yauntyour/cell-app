@@ -112,7 +112,24 @@ try {
           <span class="ni-ico"><svg class="uico" viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8L12 3Z"/><path d="M19 15l.9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9L19 15Z"/></svg></span>
           <span class="ni-label">Skills</span><span class="sb-kbd">Ctrl+Shift+K</span>
         </button>
+        <!-- FlowLink：配对、远程工作区、传输列表都在这一页（设置页只留「已连接」） -->
+        <button class="sb-nav-item" id="btnFlowLink" title="FlowLink 管理 (Ctrl+Shift+L)">
+          <span class="ni-ico"><svg class="uico" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.5.5l2-2a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7.5-.5l-2 2a5 5 0 0 0 7 7l1-1"/></svg></span>
+          <span class="ni-label">FlowLink</span><span class="sb-kbd">Ctrl+Shift+L</span>
+        </button>
       </nav>
+
+      <!-- FlowLink 工作区：远程工作区（执行在对端 cell 上）。无内容时整段隐藏。 -->
+      <div class="sb-section" id="flowWsSection" hidden>
+        <div class="sb-section-head">
+          <span class="sb-section-title">FlowLink 工作区</span>
+          <span class="grow"></span>
+          <button class="icon-btn sm" id="btnFlowWsManage" title="管理 FlowLink 工作区">
+            <svg class="uico" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.5.5l2-2a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7.5-.5l-2 2a5 5 0 0 0 7 7l1-1"/></svg>
+          </button>
+        </div>
+        <div id="flowWsList" class="sb-list"></div>
+      </div>
 
       <div class="sb-section">
         <div class="sb-section-head">
@@ -239,6 +256,7 @@ try {
 <!-- ==================== 覆盖层容器（内容由 06/07 脚本构建） ==================== -->
 <div id="settings"></div>
 <div id="skillsPage"></div>
+<div id="flowlinkPage"></div>
 <div class="modal" id="approvalModal"></div>
 <div class="modal" id="genericModal"></div>
 <div class="modal" id="searchModal"></div>

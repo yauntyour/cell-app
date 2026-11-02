@@ -273,10 +273,12 @@ curl -X POST http://127.0.0.1:8787/api/cmd/send \
 ## FlowLink (cell ↔ cell over the LAN)
 
 FlowLink lets the cells on one network find each other, pair once, and then
-talk over an end-to-end encrypted channel: send a conversation like an email,
-read a peer's workspace, or run a Teamwork job on another machine. It is
-implemented in the **core** (`cell.cpp/flowlink.hpp`), so the CLI and the
-desktop app use the same service, the same settings and the same commands.
+talk over an end-to-end encrypted channel: hand a conversation over as a
+transfer, read a peer's workspace, run a Teamwork job on another machine, or
+open one of its workspaces as if it were local (the tab is here, the turn runs
+there). It is implemented in the **core** (`cell.cpp/cell.cpp`, one file), so the CLI
+and the desktop app use the same service, the same settings and the same
+commands.
 
 It is **opt-in and off by default**: while it is off nothing is constructed —
 no thread, no socket, no allocation.
@@ -288,13 +290,17 @@ no thread, no socket, no allocation.
 /link join CODE       # on the other cell — no address needed, discovery finds it
 /link peers
 /link share <cell>    # send this session's conversation
-/link inbox           # read what the other side sent
+/link transfers       # list what the other side sent
 /link off
 ```
 
-In the desktop app the same thing lives under **Settings → 互联**, and `/link`
-in the composer opens it. The agent gets the same capability through the `fl`
-tool and through `tw`'s `cell` field (`tw operation=cells` lists the peers).
+In the desktop app the whole feature lives on the **FlowLink** page (sidebar,
+right under Skills — `Ctrl+Shift+L`): *Scan Links* (discovery + pairing),
+*已配对* (paired devices and their open workspaces), *传输列表* (transfers) and
+*设置*. **Settings → 互联** keeps only the service switch and the connected
+devices (where a link can be disconnected). The agent gets the same capability
+through the `fl` tool and through `tw`'s `cell` field (`tw operation=cells`
+lists the peers).
 
 | | |
 |---|---|
@@ -302,9 +308,11 @@ tool and through `tw`'s `cell` field (`tw operation=cells` lists the peers).
 | transport | TCP 47822, length-prefixed frames, XChaCha20-Poly1305 on every frame |
 | identity | `client_id` = 16 random bytes from libsodium (32 hex chars) |
 | pairing | 512-bit base62 code → Argon2id PSK + ephemeral X25519 handshake |
-| link key | 32 random bytes, sealed like the API-key vault, in `.cell/links/<client_id>/key` |
-| mailbox | `.cell/flowlink/inbox/` |
-| settings | `config.json` (`link_enabled`, `link_name`, `link_port`, `link_discovery`, `link_announce`, `link_accept`, `link_workspace`) |
+| link key | 32 random bytes, sealed like the API-key vault, in `.cell/links/<client_id>/.key` |
+| transfers | one JSONL file per transfer in `.cell/links/<client_id>/`, indexed by `.cell/links/transmission.json` (time, bytes, sender, subject) |
+| identity | `.cell/links/identity.json` (`client_id` + display name) |
+| settings | `.cell/links/links.json` — service switch, name, ports, `announce`, `accept`, the paired links and the pinned FlowLink workspaces |
+| disconnect | deleting `<client_id>/.key` (the record and every received file stay; re-pair to use it again) |
 
 Full protocol, threat model and every command: [`docs/flowlink.md`](docs/flowlink.md).
 

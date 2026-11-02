@@ -827,31 +827,40 @@ namespace app
             check(why.empty() && r.value("ok", false), "pairing with the right code" + (why.empty() ? "" : ": " + why));
             check(r.value("client_id", "") == a.client_id(), "B learned A's client id");
         }
-        check(std::filesystem::exists(base / "a" / "links" / b.client_id() / "key"),
-              "A stored the link key in .cell/links/<client_id>/key");
-        check(std::filesystem::exists(base / "b" / "links" / a.client_id() / "key"),
-              "B stored the link key in .cell/links/<client_id>/key");
+        check(std::filesystem::exists(base / "a" / "links" / b.client_id() / ".key"),
+              "A stored the link key in .cell/links/<client_id>/.key");
+        check(std::filesystem::exists(base / "b" / "links" / a.client_id() / ".key"),
+              "B stored the link key in .cell/links/<client_id>/.key");
+        check(std::filesystem::exists(base / "a" / "links" / "links.json"),
+              "the link registry lives in .cell/links/links.json");
         {
-            std::ifstream f(base / "b" / "links" / a.client_id() / "key");
+            std::ifstream f(base / "b" / "links" / a.client_id() / ".key");
             const std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
             check(text.find("argon2id") != std::string::npos, "the link key file is sealed like the vault (argon2id)");
         }
-        // ---- mailbox B -> A ---------------------------------------------
+        // ---- transfer B -> A --------------------------------------------
         {
             std::string why;
             nlohmann::json item{{"from", b.client_id()}, {"from_name", "cell-b"},
                                 {"subject", "hello"}, {"note", ""}, {"kind", "text"},
-                                {"payload", {{"text", "ping from b"}}}};
-            b.send_mail(a.client_id(), item, why);
-            check(why.empty(), "B delivers mail to A" + (why.empty() ? "" : ": " + why));
-            auto inbox = a.inbox();
-            check(inbox.is_array() && inbox.size() == 1, "A's mailbox holds exactly one message");
-            if (inbox.is_array() && inbox.size() == 1)
+                                {"session", ""},
+                                {"messages", nlohmann::json::array({{{"role", "user"}, {"text", "ping from b"}}})}};
+            b.send_transfer(a.client_id(), item, why);
+            check(why.empty(), "B sends a transfer to A" + (why.empty() ? "" : ": " + why));
+            auto list = a.transmissions();
+            check(list.is_array() && list.size() == 1, "A's transfer list holds exactly one entry");
+            if (list.is_array() && list.size() == 1)
             {
-                auto m = a.read_mail(inbox[0].value("id", ""));
+                auto m = a.read_transmission(list[0].value("id", ""));
                 check(m.value("subject", "") == "hello", "the subject survives the round trip");
-                check(m.contains("payload") && m["payload"].value("text", "") == "ping from b",
-                      "the body survives the encrypted round trip");
+                check(m.contains("messages") && m["messages"].is_array() &&
+                          m["messages"][0].value("text", "") == "ping from b",
+                      "the body survives the encrypted round trip (JSONL)");
+                const std::string file = m.value("file", "");
+                check(std::filesystem::exists(base / "a" / "links" / b.client_id() / file),
+                      "the transfer is stored as a JSONL file next to the sender's .key");
+                check(std::filesystem::exists(base / "a" / "links" / "transmission.json"),
+                      "links/transmission.json indexes the transfer");
             }
         }
         // ---- rpc in the other direction, plus a reconnect ---------------
@@ -1146,31 +1155,26 @@ namespace app
         // The core owns the service; this shell only says how to mount it. The
         // hooks are what the core's /link command calls, so `/link on` works
         // here exactly as it does in the CLI.
+        // FlowLink's own settings live in .cell/links/links.json now; move the
+        // keys older builds kept in config.json before anything reads them.
+        cell::link::migrate_legacy_settings();
         cell::link::mount_hook() = [&core](std::string &err) -> bool
         {
             if (!core.fl_start(err))
                 return false;
-            {
-                std::lock_guard<std::mutex> lk(core.cmd_mx);
-                core.cfg.link_enabled = true;
-                cell::config::save(core.cfg, false);
-            }
+            cell::link::set_enabled(true);
             core.fl_tools_dirty();
             return true;
         };
         cell::link::unmount_hook() = [&core]
         {
             core.fl_stop();
-            {
-                std::lock_guard<std::mutex> lk(core.cmd_mx);
-                core.cfg.link_enabled = false;
-                cell::config::save(core.cfg, false);
-            }
+            cell::link::set_enabled(false);
             core.fl_tools_dirty();
         };
         auto start_flowlink = [&]()
         {
-            if (!core.cfg.link_enabled)
+            if (!cell::link::settings().value("enabled", false))
                 return;
             std::string err;
             if (!core.fl_start(err))
@@ -1178,9 +1182,10 @@ namespace app
                 log.error("flowlink", "could not start: " + err);
                 return;
             }
+            const nlohmann::json st = core.fl_status();
             log.info("flowlink", std::format("flowlink listening on {} (discovery {}, id {})",
-                                             core.cfg.link_port, core.cfg.link_discovery,
-                                             core.fl_status().value("client_id", "")));
+                                             st.value("port", 0), st.value("discovery_port", 0),
+                                             st.value("client_id", "")));
         };
         {
             // RAII exit guard: persists the session + config and cleans up

@@ -120,6 +120,7 @@ function renderSidebar() {
     e.innerHTML = iconHtml('message', 'lg') + (q ? '没有匹配的会话' : '还没有会话，点上方「＋ 新会话」开始');
     list.appendChild(e);
   }
+  if (typeof renderFlowWsSidebar === 'function') renderFlowWsSidebar();
   if (S.sessionsTotal && S.sessionsTotal > S.sessions.length) {
     const more = el('div', 'dim tiny', '仅显示最近 ' + S.sessions.length + ' / ' + S.sessionsTotal + ' 条会话');
     more.style.padding = '4px 10px 10px';
@@ -156,7 +157,8 @@ function renderTabbar() {
     tb.title = t.cwd || ws;
     if (t.busy) { const p = el('span', 'pulse busy'); tb.appendChild(p); }
     else tb.appendChild(iconEl('folder', 'sm'));
-    const nm = el('span', 'tname trunc', baseName(t.cwd) || shortId(ws));
+    const nm = el('span', 'tname trunc', t.remote ? (t.remote.name || baseName(t.cwd)) : (baseName(t.cwd) || shortId(ws)));
+    if (t.remote) nm.title = 'FlowLink · ' + t.remote.cwd + '（在对端 cell 上执行）';
     tb.appendChild(nm);
     const badge = t.approval ? 'warn' : '';
     if (t.unread > 0 || t.approval) {
@@ -250,7 +252,9 @@ async function activateWs(ws) {
   if (ws === S.active) return;
   S.active = ws;
   if (typeof closeChatUsagePop === 'function') closeChatUsagePop(); // 浮层锚在上一页的顶栏上
-  if (S.tabs.has(ws)) cmd('workspace.activate', { ws: ws });
+  // FlowLink 工作区只存在于前端（执行在对端），后端没有它的 workspace
+  const only = S.tabs.get(ws);
+  if (S.tabs.has(ws) && !(only && only.remote)) cmd('workspace.activate', { ws: ws });
   if (!navNavigating) Nav.push(ws);
   const t = tab(ws);
   t.unread = 0;
@@ -331,6 +335,15 @@ function hideCtx() { const m = $('#ctxmenu'); m.style.display = 'none'; }
 
 async function closeWorkspace(ws) {
   const t = S.tabs.get(ws);
+  // FlowLink 工作区：后端没有这个 workspace，关掉页签即可（对端的工作区不动）
+  if (t && t.remote) {
+    if (t.busy && t.remote.rid)
+      cmd('flowlink.ws.stop', { cell: t.remote.cell, cwd: t.remote.cwd, rid: t.remote.rid });
+    removeTab(ws);
+    if (S.tabOrder.length) activateWs(S.active);
+    else renderPanes();
+    return;
+  }
   const closedCwd = cwdOf(ws);
   if (t && t.busy) {
     if (!(await confirmDlg('该工作区正在运行一个回合，关闭会中断它。确认关闭？', { title: '关闭工作区', ok: '关闭' }))) return;
@@ -512,6 +525,14 @@ function renderDock() {
   if (!S.dockOpen) return;
   const t = curTab();
   if (S.dock === 'start') { renderStartPanel(body, t); return; }
+  // FlowLink 工作区在执行在对端：本地文件 / Git / 终端面板对它没有意义
+  if (t && t.remote && (S.dock === 'files' || S.dock === 'git' || S.dock === 'terminal')) {
+    const box = el('div', 'empty');
+    box.appendChild(el('div', null, 'FlowLink 工作区（远程）'));
+    box.appendChild(el('div', 'tiny dim', t.remote.cwd + ' · 执行在对端 cell 上'));
+    body.replaceChildren(box);
+    return;
+  }
   if (window.Panels && Panels.has(S.dock)) {
     try { Panels.render(S.dock, body, t); } catch (e) { console.error(e); body.replaceChildren(el('div', 'empty', '面板渲染失败：' + e.message)); }
     return;

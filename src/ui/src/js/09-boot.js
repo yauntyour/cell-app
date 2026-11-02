@@ -10,6 +10,9 @@ function wireEvents() {
   $('#btnSearch').onclick = () => openSearch();
   $('#btnTopSearch').onclick = () => openSearch();
   $('#btnSkills').onclick = () => openSkillsPage();
+  // FlowLink 管理页：Skills 入口下面那一条（配对 / 远程工作区 / 传输列表）
+  if ($('#btnFlowLink')) $('#btnFlowLink').onclick = () => openFlowLinkPage();
+  if ($('#btnFlowWsManage')) $('#btnFlowWsManage').onclick = () => openFlowLinkPage();
   $('#btnWsFilter').onclick = () => toggleSidebarFilter();
   $('#btnSidebarToggle').onclick = () => toggleSidebar();
   if ($('#btnSidebarTop')) $('#btnSidebarTop').onclick = () => toggleSidebar();
@@ -121,6 +124,7 @@ function onGlobalKey(ev) {
     if (slash && slash.classList.contains('show')) { slash.classList.remove('show'); return; }
     if (S.settingsOpen) { closeSettings(); return; }
     if (S.skillsOpen) { closeSkillsPage(); return; }
+    if ($('#flowlinkPage') && $('#flowlinkPage').classList.contains('show')) { closeFlowLinkPage(); return; }
     if (S.dockOpen) { closeDock(); return; }
   }
   if (!mod) return;
@@ -129,6 +133,7 @@ function onGlobalKey(ev) {
   if (ev.key === ',') { ev.preventDefault(); toggleSettings(); return; }
   if (ev.shiftKey && k === 'f') { ev.preventDefault(); openSearch(); return; }
   if (ev.shiftKey && k === 'k') { ev.preventDefault(); toggleSkillsPage(); return; }
+  if (ev.shiftKey && k === 'l') { ev.preventDefault(); toggleFlowLinkPage(); return; }
   if (k === 'p') { ev.preventDefault(); if (window.openQuickOpen) openQuickOpen(); else openDock('files'); return; }
   if (k === 'g') { ev.preventDefault(); openDock('git'); return; }
   if (ev.key === 'Backquote' || ev.code === 'Backquote' || ev.key === '\u0060') { ev.preventDefault(); openDock('terminal'); return; }

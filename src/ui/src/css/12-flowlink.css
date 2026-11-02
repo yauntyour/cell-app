@@ -1,0 +1,157 @@
+/* =====================================================================
+   §12 FlowLink 管理页（整页浮层 #flowlinkPage）
+
+   与 §11 Skills 页同一套整页浮层语言：左栏 232px 分节导航 + 右栏内容。
+   选择器全部挂在 #flowlinkPage 下，避免牵动设置页 / Skills 页。
+   ===================================================================== */
+
+#flowlinkPage{position:fixed;inset:var(--titlebar-h) 0 0 0;z-index:70;background:var(--glass-veil);
+  -webkit-backdrop-filter:blur(32px) saturate(1.15);backdrop-filter:blur(32px) saturate(1.15);
+  display:none;flex-direction:column;color:var(--fg)}
+#flowlinkPage.show{display:flex;animation:fadeUp 220ms var(--ease)}
+#flowlinkPage .fl-shell{display:flex;height:100%;min-height:0;font-size:14px;letter-spacing:.01em}
+#flowlinkPage .fl-shell *{box-sizing:border-box}
+
+/* ---- 左栏 ---------------------------------------------------------- */
+#flowlinkPage .fl-side{width:236px;flex:none;display:flex;flex-direction:column;gap:10px;
+  background:rgba(255,255,255,.035);border-right:1px solid var(--glass-hair);
+  padding:14px 10px 10px;min-height:0}
+#flowlinkPage .fl-side-head{display:flex;align-items:center;gap:10px;padding:4px 8px 2px}
+#flowlinkPage .fl-logo{width:32px;height:32px;flex:none;border-radius:9px;background:var(--raise);
+  border:1px solid var(--line2);display:flex;align-items:center;justify-content:center;color:var(--fg)}
+#flowlinkPage .fl-logo .uico{width:17px;height:17px}
+#flowlinkPage .fl-side-title{display:flex;flex-direction:column;gap:1px;min-width:0}
+#flowlinkPage .fl-side-name{font-size:14px;font-weight:650;letter-spacing:.02em}
+#flowlinkPage .fl-side-sub{font-family:var(--mono);font-size:10.5px;color:var(--fg3);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+#flowlinkPage .fl-nav{display:flex;flex-direction:column;gap:2px;flex:1;min-height:0;overflow-y:auto}
+#flowlinkPage .fl-nav-item{display:flex;align-items:center;gap:9px;width:100%;padding:8px 9px;
+  border-radius:var(--radius-s);text-align:left;color:var(--fg2);
+  transition:background var(--dur) var(--ease),color var(--dur) var(--ease)}
+#flowlinkPage .fl-nav-item:hover{background:var(--raise);color:var(--fg)}
+#flowlinkPage .fl-nav-item.on{background:var(--accent-soft);color:var(--accent)}
+#flowlinkPage .fl-nav-item .uico{width:15px;height:15px;flex:none}
+#flowlinkPage .fl-nav-txt{display:flex;flex-direction:column;gap:1px;min-width:0}
+#flowlinkPage .fl-nav-label{font-size:12.5px;font-weight:600;line-height:1.25}
+#flowlinkPage .fl-nav-sub{font-size:10.5px;color:var(--fg4);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#flowlinkPage .fl-nav-item.on .fl-nav-sub{color:var(--accent)}
+
+#flowlinkPage .fl-side-foot{border-top:1px solid var(--line);padding:8px 4px 0;display:flex;
+  flex-direction:column;gap:5px}
+#flowlinkPage .fl-id{display:flex;align-items:baseline;gap:6px;min-width:0}
+#flowlinkPage .fl-id-k{font-size:10.5px;color:var(--fg4);flex:none}
+#flowlinkPage .fl-id-v{font-size:11.5px;color:var(--fg3);min-width:0}
+#flowlinkPage .fl-foot-hint{font-size:10.5px;color:var(--fg4)}
+
+/* ---- 右栏 ---------------------------------------------------------- */
+#flowlinkPage .fl-main{flex:1;min-width:0;min-height:0;overflow-y:auto;overscroll-behavior:contain}
+#flowlinkPage .fl-head{position:sticky;top:0;z-index:3;display:flex;align-items:center;gap:14px;
+  padding:16px 30px 13px;background:rgba(14,14,19,.86);border-bottom:1px solid var(--glass-hair);
+  -webkit-backdrop-filter:blur(24px) saturate(1.3);backdrop-filter:blur(24px) saturate(1.3)}
+#flowlinkPage .fl-head-main{min-width:0;display:flex;flex-direction:column;gap:2px}
+#flowlinkPage .fl-head-title{margin:0;font-size:17px;font-weight:650;letter-spacing:-.01em}
+#flowlinkPage .fl-head-desc{margin:0;font-size:11.5px;line-height:1.55;color:var(--fg3);max-width:640px}
+#flowlinkPage .fl-head-actions{margin-left:auto;display:flex;align-items:center;gap:8px;flex:none}
+
+#flowlinkPage .fl-content{max-width:820px;margin:0 auto;padding:18px 30px 64px;
+  display:flex;flex-direction:column;gap:14px}
+
+/* ---- 卡片 / 行 ----------------------------------------------------- */
+#flowlinkPage .fl-card{background:rgba(255,255,255,.028);border:1px solid var(--line);
+  border-radius:12px;padding:14px 16px;display:flex;flex-direction:column;gap:10px}
+#flowlinkPage .fl-card.on{border-color:var(--accent)}
+#flowlinkPage .fl-card-head{display:flex;align-items:center;gap:10px}
+#flowlinkPage .fl-card-title{font-size:13.5px;font-weight:650;letter-spacing:.01em}
+#flowlinkPage .fl-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+#flowlinkPage .fl-hint{font-size:11.5px;line-height:1.6;color:var(--fg3)}
+#flowlinkPage .fl-hint.bad{color:var(--warn)}
+#flowlinkPage .fl-note{margin:0;font-size:12.5px;line-height:1.7;color:var(--fg2);
+  padding:8px 10px;border-left:2px solid var(--accent);background:var(--accent-soft);border-radius:0 8px 8px 0}
+#flowlinkPage .fl-kv{display:flex;align-items:baseline;gap:10px;min-width:0}
+#flowlinkPage .fl-k{font-size:11.5px;color:var(--fg4);flex:none;min-width:64px}
+#flowlinkPage .fl-v{font-size:12.5px;color:var(--fg2);min-width:0}
+#flowlinkPage .mono{font-family:var(--mono)}
+
+/* ---- 表单 ---------------------------------------------------------- */
+#flowlinkPage .fl-field{display:flex;flex-direction:column;gap:4px;flex:1;min-width:180px}
+#flowlinkPage .fl-field-label{font-size:11.5px;color:var(--fg3)}
+#flowlinkPage .fl-field-hint{font-size:10.5px;color:var(--fg4);line-height:1.5}
+#flowlinkPage .fl-input{height:32px;padding:0 10px;border-radius:var(--radius-s);
+  background:var(--bg2);border:1px solid var(--line);color:var(--fg);font-size:12.5px;
+  outline:none;transition:border-color var(--dur) var(--ease);width:100%}
+#flowlinkPage .fl-input:focus{border-color:var(--accent)}
+
+#flowlinkPage .fl-switchrow{align-items:flex-start;gap:12px}
+#flowlinkPage .fl-switch{width:38px;height:22px;flex:none;border-radius:11px;background:var(--line2);
+  border:1px solid var(--line);position:relative;transition:background var(--dur) var(--ease);margin-top:2px}
+#flowlinkPage .fl-switch::after{content:'';position:absolute;top:2px;left:2px;width:16px;height:16px;
+  border-radius:50%;background:var(--fg3);transition:transform var(--dur) var(--ease),background var(--dur) var(--ease)}
+#flowlinkPage .fl-switch.on{background:var(--accent);border-color:var(--accent)}
+#flowlinkPage .fl-switch.on::after{transform:translateX(16px);background:#fff}
+#flowlinkPage .fl-switch-txt{display:flex;flex-direction:column;gap:2px;min-width:0}
+#flowlinkPage .fl-switch-title{font-size:12.5px;font-weight:600}
+
+/* ---- 设备 / 传输 行 ------------------------------------------------- */
+#flowlinkPage .fl-devs{display:flex;flex-direction:column;gap:4px}
+#flowlinkPage .fl-dev{display:flex;align-items:flex-start;gap:10px;padding:9px 10px;border-radius:10px;
+  border:1px solid transparent;cursor:pointer;transition:background var(--dur) var(--ease),border-color var(--dur) var(--ease)}
+#flowlinkPage .fl-dev:hover{background:var(--raise)}
+#flowlinkPage .fl-dev.on{background:var(--accent-soft);border-color:var(--accent)}
+#flowlinkPage .fl-dev-ico{width:28px;height:28px;flex:none;border-radius:8px;background:var(--raise);
+  border:1px solid var(--line);display:flex;align-items:center;justify-content:center;color:var(--fg2)}
+#flowlinkPage .fl-dev-ico .uico{width:15px;height:15px}
+#flowlinkPage .fl-dev-main{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1}
+#flowlinkPage .fl-dev-line1{display:flex;align-items:center;gap:7px;min-width:0}
+#flowlinkPage .fl-dev-name{font-size:13px;font-weight:600}
+#flowlinkPage .fl-dev-meta{font-size:11px;color:var(--fg3);line-height:1.5}
+#flowlinkPage .fl-dev-id{font-family:var(--mono);font-size:10.5px;color:var(--fg4);overflow-wrap:anywhere}
+
+#flowlinkPage .fl-pairbox{margin-top:6px;padding-top:12px;border-top:1px solid var(--line);
+  display:flex;flex-direction:column;gap:9px}
+#flowlinkPage .fl-pair-title{font-size:12.5px;font-weight:600;color:var(--fg2)}
+#flowlinkPage .fl-codebox{display:flex;flex-direction:column;gap:8px;padding:12px;border-radius:10px;
+  background:var(--bg2);border:1px solid var(--accent)}
+#flowlinkPage .fl-code{font-family:var(--mono);font-size:13px;line-height:1.7;color:var(--accent);
+  overflow-wrap:anywhere;letter-spacing:.04em}
+
+#flowlinkPage .fl-remote{margin-top:6px;padding-top:12px;border-top:1px solid var(--line);
+  display:flex;flex-direction:column;gap:8px}
+#flowlinkPage .fl-wsrow{display:flex;align-items:center;gap:10px;padding:7px 8px;border-radius:9px;
+  background:rgba(255,255,255,.02)}
+#flowlinkPage .fl-wsrow:hover{background:var(--raise)}
+#flowlinkPage .fl-wsrow-main{display:flex;flex-direction:column;gap:1px;min-width:0;flex:1}
+#flowlinkPage .fl-wsrow-name{font-size:12.5px;font-weight:600}
+#flowlinkPage .fl-wsrow-path{font-family:var(--mono);font-size:10.5px;color:var(--fg4)}
+#flowlinkPage .fl-wsrow-tags{display:flex;align-items:center;gap:6px;margin-top:2px}
+
+#flowlinkPage .fl-trow{display:flex;align-items:flex-start;gap:10px;padding:9px 10px;border-radius:10px;
+  cursor:pointer;transition:background var(--dur) var(--ease)}
+#flowlinkPage .fl-trow:hover{background:var(--raise)}
+#flowlinkPage .fl-trow.on{background:var(--accent-soft)}
+#flowlinkPage .fl-trow-main{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1}
+
+/* ---- 传输正文 ------------------------------------------------------ */
+#flowlinkPage .fl-transcript{display:flex;flex-direction:column;gap:12px;margin-top:4px}
+#flowlinkPage .fl-msg{display:flex;flex-direction:column;gap:4px;padding:10px 12px;border-radius:10px;
+  background:rgba(255,255,255,.025);border:1px solid var(--line)}
+#flowlinkPage .fl-msg.user{border-color:var(--line2);background:rgba(255,255,255,.04)}
+#flowlinkPage .fl-msg-role{font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--fg4)}
+#flowlinkPage .fl-msg-body{font-size:13px;line-height:1.72;color:var(--fg2)}
+#flowlinkPage .fl-msg-body > :first-child{margin-top:0}
+
+/* ---- 空状态 -------------------------------------------------------- */
+#flowlinkPage .fl-empty{max-width:520px;margin:6vh auto 0;display:flex;flex-direction:column;
+  align-items:flex-start;gap:10px}
+#flowlinkPage .fl-empty-title{font-size:15px;font-weight:650;color:var(--fg)}
+#flowlinkPage .fl-empty-txt{margin:0;font-size:12.5px;line-height:1.7;color:var(--fg3)}
+
+/* ---- 侧栏里的 FlowLink 工作区条目 ---------------------------------- */
+#sessionList .fl-sitem .stag.fl-tag{color:var(--accent);border-color:var(--accent)}
+
+@media (max-width:980px){
+  #flowlinkPage .fl-side{width:200px}
+  #flowlinkPage .fl-head{flex-wrap:wrap;gap:10px;padding:14px 18px 12px}
+  #flowlinkPage .fl-head-actions{margin-left:0;width:100%}
+  #flowlinkPage .fl-content{padding:16px 18px 48px}
+}

@@ -1174,6 +1174,14 @@ async function sendCurrent() {
   const t = curTab();
   if (!t) return;
   closeComposerMenu();
+  // FlowLink 工作区：页签、转录、输入都在本机，回合在对端 cell 上跑
+  if (t.remote) {
+    closeSlash();
+    if (t.busy) { cmd('flowlink.ws.stop', { cell: t.remote.cell, cwd: t.remote.cwd, rid: t.remote.rid }); return; }
+    await flSendRemote(t);
+    focusInput();
+    return;
+  }
   if (t.busy) { closeSlash(); stopAllActivity(t); return; }
   if (t.composer.mode === 'team') { closeSlash(); await submitWorkflow(t, 'run'); return; }
   let text = (t.composer.text || '').trim();

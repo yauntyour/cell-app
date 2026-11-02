@@ -4,10 +4,11 @@ Peer-to-peer networking between `cell` instances on the same network: device
 discovery, one-time pairing, and an end-to-end encrypted channel that carries
 mail, remote file reads and remote Teamwork jobs.
 
-The implementation lives in the **core** — `cell.cpp/flowlink.hpp` — not in a
-frontend. The CLI (`/link …`), the desktop app (Settings → 互联) and the agent
-tools (`fl`, `tw cell=…`) all drive the same `cell::flowlink::service`
-instance, mounted by `cell::link::enable()`.
+The implementation lives in the **core** — `cell.cpp/cell.cpp`, in the FlowLink
+region just before `namespace link` — not in a frontend. The CLI (`/link …`),
+the desktop app (the FlowLink page, `Ctrl+Shift+L`) and the agent tools (`fl`,
+`tw cell=…`) all drive the same `cell::flowlink::service` instance, mounted by
+`cell::link::enable()`.
 
 It is **off by default**. Nothing is constructed until it is enabled: no
 `io_context`, no thread, no socket, no allocation.
