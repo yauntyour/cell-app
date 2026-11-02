@@ -32,7 +32,7 @@ cell A                                         cell B
 * **Identity** — `client_id`, 16 random bytes from libsodium, 32 lowercase hex
   characters. It names the peer directory `.cell/links/<client_id>/` and is the
   value the `cell` field of the `tw` tool carries. It is generated once and
-  kept in `.cell/flowlink/identity.json`.
+  kept in `.cell/links/identity.json`.
 * **Discovery** — a beacon reveals only `client_id`, display name, transport
   port and whether a pairing window is open. No payload, no key material.
 * **Pairing** — a 512-bit code, typed once by one side, is the only credential.
@@ -46,25 +46,35 @@ cell A                                         cell B
 
 ## 2. Storage
 
+Everything FlowLink owns lives under `<exe dir>/.cell/links/` — the agent's
+global `config.json` holds **none** of it (see §8):
+
 ```
 <exe dir>/.cell/
 ├── .key                          master secret (shared with the credential vault)
-├── flowlink/
-│   ├── identity.json             {"client_id", "name", "created_at"}
-│   └── inbox/<mail-id>.json      received mail (plaintext, like sessions)
-└── links/<client_id>/
-    ├── key                       the link key, sealed with Argon2id + AES-256-GCM
-    ├── meta.json                 name, last address/port, paired_at, direction
-    └── (nothing else)
+└── links/                        ← all FlowLink state
+    ├── identity.json             {"client_id", "name", "created_at"}
+    ├── links.json                service settings + every paired link + workspace list
+    ├── transmission.json         index of every transfer/mail received
+    └── <client_id>/
+        ├── .key                  the link key, sealed with Argon2id + AES-256-GCM
+        └── <id>.jsonl            one stored conversation / transfer per received item
 ```
 
-`key` uses the same scheme as an API key in the vault: Argon2id over the master
+`.key` uses the same scheme as an API key in the vault: Argon2id over the master
 secret with a per-file salt, then AES-256-GCM (XChaCha20-Poly1305 where AES-GCM
 is unavailable). The file is owner-only (0600 on POSIX, read-only attribute on
 Windows).
 
+`links.json` is the single source of truth for FlowLink settings **and** the
+paired-device list: each peer's metadata (name, last address/port, `paired_at`,
+direction, OS/timezone/lang) is a record inside the `links` array — there is no
+separate `meta.json`. Received mail/transfers are stored as `<id>.jsonl` files
+under the peer dir and catalogued by `transmission.json` (the `/link inbox` /
+`flowlink.transfers` listings read that index).
+
 Deleting `links/<client_id>/` — or `/link forget <cell>` — revokes the pairing
-on this side.
+on this side; the received `.jsonl` files remain.
 
 ## 3. Discovery protocol (UDP)
 
@@ -105,9 +115,9 @@ Beacons carry a `ts`, so the copies that arrive once per interface are applied
 
 Receivers ignore their own `client_id`, validate every field, and keep a peer
 table entry for 30 s (`kPeerTtlSeconds`). Discovery is best effort: a peer that
-cannot be seen can still be reached by typing its address — `flowlink.probe
-{addr}` unicasts a probe to one `ip[:port]` (the FlowLink page's *按地址探测*),
-and `/link join CODE IP` pairs with it directly.
+cannot be seen can still be reached by typing its address —
+`flowlink.probe {addr}` unicasts a probe to one `ip[:port]` (the FlowLink page's
+*按地址探测*), and `/link join CODE IP` pairs with it directly.
 
 ### When nothing is discovered
 
@@ -206,7 +216,7 @@ peer with **its own** providers and keys; only the report travels back.
 
 ```
 /link                     status: id, ports, pairing window, peers, inbox
-/link on | off            mount / unmount the service (persisted in config.json)
+/link on | off            mount / unmount the service (persisted in links/links.json)
 /link peers               paired + discovered cells
 /link pair [TTL]          open a pairing window, print the code
 /link join CODE [IP[:PORT]]  pair with the cell that shows CODE
@@ -221,13 +231,24 @@ peer with **its own** providers and keys; only the report travels back.
 
 ### Desktop — command bus
 
-The same operations, JSON-shaped: `flowlink.status`, `flowlink.enable`,
-`flowlink.disable`, `flowlink.prefs`, `flowlink.peers`, `flowlink.probe`,
-`flowlink.pair.begin`, `flowlink.pair.join`, `flowlink.pair.cancel`,
-`flowlink.forget`, `flowlink.inbox`, `flowlink.mail.read`,
-`flowlink.mail.drop`, `flowlink.mail.mark`, `flowlink.share`,
-`flowlink.send`, `flowlink.remote.ls`, `flowlink.remote.read`, and
-`flowlink.exec {line}` which runs any `/link …` line and returns its text.
+The same operations, JSON-shaped:
+
+* **Service** — `flowlink.status` (includes the peer list, so there is no
+  separate `flowlink.peers`), `flowlink.settings` (alias `flowlink.prefs`),
+  `flowlink.enable`, `flowlink.disable`, `flowlink.scan`, `flowlink.probe`.
+* **Pairing** — `flowlink.pair.begin`, `flowlink.pair.join`,
+  `flowlink.pair.cancel`, `flowlink.forget`, `flowlink.disconnect`.
+* **Transfers** — `flowlink.transfers`, `flowlink.transfer.read`,
+  `flowlink.transfer.drop`, `flowlink.transfer.mark`. These are what
+  `/link inbox` and `/link read` drive; the older `flowlink.inbox` /
+  `flowlink.mail.*` names never existed on the bus.
+* **Messaging and remote work** — `flowlink.share`, `flowlink.send`,
+  `flowlink.remote.ls`, `flowlink.remote.read`.
+* **Workspaces** — `flowlink.ws.remote`, `flowlink.ws.add`,
+  `flowlink.ws.remove`, `flowlink.ws.open`, `flowlink.ws.send`,
+  `flowlink.ws.stop`.
+* **Escape hatch** — `flowlink.exec {line}` runs any `/link …` line and returns
+  its text.
 
 ### Agent tools
 
@@ -236,17 +257,30 @@ The same operations, JSON-shaped: `flowlink.status`, `flowlink.enable`,
 * `tw` — `operation=cells` lists the remote cells; `cell=<client_id>` on
   `new`/`run`/`workflow` ships the job to that cell and returns its report.
 
-## 8. Settings (`config.json`)
+## 8. Settings (`.cell/links/links.json`)
+
+FlowLink settings are **not** in the agent's `config.json` — they live in the
+top-level fields of `.cell/links/links.json`, alongside the `links` array (paired
+peers) and the `workspaces` array (pinned FlowLink workspaces). The agent core
+reads/writes them through `flowlink::store::settings()` / `patch_settings()`, and
+the desktop page through the `flowlink.prefs` command.
 
 | key | default | meaning |
 |---|---|---|
-| `link_enabled` | `false` | mount the service at startup |
-| `link_name` | `""` | display name (empty = host name) |
-| `link_port` | `47822` | TCP transport |
-| `link_discovery` | `47821` | UDP discovery |
-| `link_announce` | `true` | broadcast the beacon (off = reachable only by address) |
-| `link_accept` | `false` | accept `fs.*` / `tw.*` from paired peers |
-| `link_workspace` | `""` | directory remote work lands in (empty = active workspace / cwd) |
+| `enabled` | `false` | mount the service at startup |
+| `name` | `""` | display name (empty = host name) |
+| `port` | `47822` | TCP transport |
+| `discovery` | `47821` | UDP discovery |
+| `announce` | `true` | broadcast the beacon (off = reachable only by address) |
+| `accept` | `false` | accept `fs.*` / `tw.*` from paired peers |
+| `workspace` | `""` | directory remote work lands in (empty = active workspace / cwd) |
+
+The older `config.json` keys (`link_enabled`, `link_name`, `link_port`,
+`link_discovery`, `link_announce`, `link_accept`, `link_workspace`) are migrated
+away automatically: at boot, `cell::link::migrate_legacy_settings()` moves any of
+them still present in `config.json` into `links.json` exactly once — and only if a
+`links.json` does not already exist (the new file always wins). After that, edit
+`links/links.json` directly; `config.json` no longer has a say in FlowLink.
 
 ## 9. Threat model
 
@@ -270,10 +304,10 @@ Covered:
 Not covered (by design):
 
 * **A hostile peer you paired with** — pairing is a trust decision. A paired
-  peer may read the shared workspace and start jobs if `link_accept` is on.
+  peer may read the shared workspace and start jobs if `accept` is on.
 * **Traffic analysis** — sizes and timing are visible to the network.
 * **Discovery privacy** — an enabled, announcing cell is visible on the LAN by
-  name and `client_id`; turn `link_announce` off to stay silent.
+  name and `client_id`; turn `announce` off to stay silent.
 * **NAT / routed networks** — the protocol is LAN-scoped (broadcast/multicast
   discovery, direct TCP). Peers behind NAT need a manual address and a port
   forward.
@@ -285,9 +319,10 @@ Not covered (by design):
   `SO_REUSEADDR` (see above).
 * POSIX: key files are `chmod 0600`; the listener sets `SO_REUSEADDR` only to
   survive `TIME_WAIT` after a restart.
-* Discovery sends to `255.255.255.255`, the multicast group, and the `/24`
-  broadcast of every local IPv4 — a host with several NICs or a docker bridge
-  still reaches its peers.
+* Discovery sends to `255.255.255.255`, the multicast group (joined on every
+  interface), each interface's real directed broadcast (`addr | ~mask`, never a
+  `/24` guess) and its default gateway — a host with several NICs, a docker
+  bridge or a `/18` `/20` mask still reaches its peers (see §3).
 * `--smoke-flowlink` (run by CI on Windows, Linux and macOS) starts two cells in
   one process and checks discovery, a wrong code, pairing, the sealed key file,
   mail in both directions, RPC, a reconnect from the stored key, and the

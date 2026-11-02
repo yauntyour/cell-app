@@ -107,6 +107,13 @@ cmake -B build            # configure (Ninja or Makefiles)
 cmake --build build       # → build/cell-app[.exe]
 ```
 
+`cell.cpp/` is a **git submodule** (`github.com/yauntyour/cell.cpp`). The core and
+the shell are versioned separately, so a checkout needs both: clone with
+`--recurse-submodules`, or run `git submodule update --init --recursive` once.
+When the two are out of sync the failure looks like a missing method — e.g.
+`no matching function for call to 'service::probe(const std::string&)'` means the
+shell is newer than the core.
+
 On Windows, run CMake from the MSYS2 UCRT64 shell (or point it at the
 toolchain: `-DCMAKE_CXX_COMPILER=D:/x64/msys2/ucrt64/bin/g++.exe`). Before
 compiling, the build regenerates the embedded UI (`src/ui/src/` →
