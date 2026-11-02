@@ -77,12 +77,54 @@ One JSON object per datagram, ≤ 1 KiB, on port **47821**:
 
 | `t` | meaning |
 |---|---|
-| `announce` | "I exist" — sent every 5 s (±1.2 s jitter) to `255.255.255.255`, the multicast group `239.255.42.71`, and the `/24` broadcast of each local IPv4 |
+| `announce` | "I exist" — sent every 5 s (±1.2 s jitter) to every target in the table below |
 | `probe` | "who is there?" — receivers answer with a unicast `announce` |
+
+Where a beacon goes, rebuilt before **every** announce (adapters appear and
+vanish while the process runs — WSL starts after the app, a VPN connects, a dock
+is plugged in):
+
+| target | why |
+|---|---|
+| `255.255.255.255` | the subnet-independent limited broadcast |
+| `239.255.42.71` | multicast, joined on **every** interface; survives APs that filter broadcast between clients |
+| `<subnet broadcast>` of each IPv4 interface | the real directed broadcast, computed as `addr \| ~mask` from the interface's own prefix — never a `/24` guess |
+| the interface's default gateway | a unicast to a real host on the same segment; for WSL2 the gateway *is* the Windows host, the only path across its NAT |
+
+The mask matters. A host on `100.2.22.110/18` has broadcast `100.2.63.255`;
+guessing `/24` produces `100.2.22.255`, which is an ordinary host address, so the
+datagram is a unicast to nobody and discovery silently finds nothing. WSL2 hands
+its vEthernet a `/20`, which is the case this project hit first.
+
+A receiver that sees a **new** peer — or one whose address changed — answers with
+a unicast `announce` to the datagram's source address, at most once per 10 s per
+peer. That makes discovery work when only one direction can carry broadcast (NAT,
+client isolation, a firewall that allows replies but not inbound broadcast).
+Beacons carry a `ts`, so the copies that arrive once per interface are applied
+(and counted) only once.
 
 Receivers ignore their own `client_id`, validate every field, and keep a peer
 table entry for 30 s (`kPeerTtlSeconds`). Discovery is best effort: a peer that
-cannot be seen can still be paired by typing its address (`/link join CODE IP`).
+cannot be seen can still be reached by typing its address — `flowlink.probe
+{addr}` unicasts a probe to one `ip[:port]` (the FlowLink page's *按地址探测*),
+and `/link join CODE IP` pairs with it directly.
+
+### When nothing is discovered
+
+`flowlink.status` carries the diagnostics: `interfaces` (every IPv4 interface
+with its prefix, computed broadcast and gateway), `targets` (the exact endpoints
+a beacon goes to) and `rx` (`announce`/`probe` counters plus the last source).
+The FlowLink page shows the local addresses under **本机** and prints the target
+list whenever the device list is empty.
+
+* `rx.announce == 0` — nothing reaches us at all. Broadcast is not crossing
+  (different subnet, WSL2 NAT, a firewall) — probe the peer's address directly.
+* Two hosts on the same subnet that still cannot see each other are usually
+  separated by a `/24` assumption somewhere else, a Wi-Fi AP with client
+  isolation, or a host firewall dropping inbound UDP 47821 / TCP 47822.
+* WSL2: the Windows side announces into `vEthernet (WSL)`'s subnet and WSL
+  unicasts to its gateway (the Windows host), so both directions work without
+  mirrored networking. Ports that must be reachable: UDP 47821, TCP 47822.
 
 ## 4. Transport and framing (TCP)
 

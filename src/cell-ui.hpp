@@ -20994,6 +20994,7 @@ const FL = {
   code: '',               // 本机亮出的配对码
   joinCode: '',           // 用户输入的配对码
   joinAddr: '',
+  probeAddr: '',          // 「按地址探测」里填的 ip[:port]
   busy: false,
   err: '',
   scannedAt: 0,
@@ -21291,6 +21292,16 @@ function flPaintScan(main) {
   idRow2.appendChild(el('span', 'fl-k', 'client_id'));
   idRow2.appendChild(el('code', 'fl-v mono', flClientId() || '—'));
   self.appendChild(idRow2);
+  // 本机在每个网段上的地址：对方「按地址探测」时要填的就是这里的一个
+  const ifaces = Array.isArray(flStatusObj().interfaces) ? flStatusObj().interfaces : [];
+  const addrRow = el('div', 'fl-kv');
+  addrRow.appendChild(el('span', 'fl-k', '地址'));
+  addrRow.appendChild(el('span', 'fl-v mono',
+    ifaces.length ? ifaces.map(i => i.addr + '/' + i.prefix).join(' · ') : '—'));
+  if (ifaces.length)
+    addrRow.title = ifaces.map(i => (i.name || '?') + '  ' + i.addr + '/' + i.prefix +
+      (i.gateway ? '  网关 ' + i.gateway : '')).join('\n');
+  self.appendChild(addrRow);
 
   const p = flPairing();
   if (p.open && p.code) {
@@ -21326,6 +21337,19 @@ function flPaintScan(main) {
 
   if (!devs.length) {
     list.appendChild(el('div', 'fl-hint', '还没有发现设备。确认对方也开了 FlowLink、在同一个网段，然后点「重新扫描」。'));
+    // 发现靠 UDP 广播：一个都没收到，多半是广播根本出不去（不同网段、防火墙、
+    // WSL2 的 NAT），而不是对方没开。把广播目标摊开，用户才知道下一步该填哪个地址。
+    const rx = flStatusObj().rx || {};
+    if (!rx.announce) {
+      list.appendChild(el('div', 'fl-hint bad',
+        '本机还没有收到任何广播。若对方在 WSL 里、跨了 NAT，或被防火墙挡住，广播到不了 —— 用下面的「按地址探测」直接填对方的地址。'));
+    }
+    const targets = flStatusObj().targets || [];
+    if (targets.length) {
+      const line = el('div', 'fl-hint mono', '广播目标：' + targets.join(' · '));
+      line.title = 'UDP ' + (flStatusObj().discovery_port || 47821) + ' 上每个 beacon 会发往的地址';
+      list.appendChild(line);
+    }
   } else {
     const wrap = el('div', 'fl-devs');
     for (const d of devs) wrap.appendChild(flDeviceRow(d));
@@ -21357,8 +21381,41 @@ function flPaintScan(main) {
       list.appendChild(pair);
     }
   }
+
+  // 手动探测：广播到不了对方时的唯一出口（WSL2 NAT、跨网段、AP 客户端隔离）
+  const prow = el('div', 'fl-row');
+  const pin = flInput('对方的 ip[:port]，例如 172.28.240.1', FL.probeAddr);
+  pin.oninput = () => { FL.probeAddr = pin.value; };
+  pin.onkeydown = ev => { if (ev.key === 'Enter') flProbe(pin.value); };
+  prow.appendChild(pin);
+  const pgo = flBtn('按地址探测', 'search', () => flProbe(pin.value), 'ghost');
+  pgo.disabled = FL.busy;
+  prow.appendChild(pgo);
+  list.appendChild(flField('探测地址', prow,
+    '广播出不去时用这个：填对方「本机」里显示的地址（端口默认 ' +
+    (flStatusObj().discovery_port || 47821) + '，可写 ip:port）。'));
+
   body.appendChild(list);
   main.appendChild(body);
+}
+
+// 单播探测一台设备：发出后等对方回 announce，再拉一次状态
+async function flProbe(addr) {
+  const text = String(addr || '').trim();
+  if (!text) { toast('先填对方的地址', 'info'); return; }
+  FL.busy = true;
+  try {
+    const out = await cmd('flowlink.probe', { addr: text });
+    if (out && out.ok !== false) {
+      flMerge(out);
+      flPaint();
+      toast('已向 ' + text + ' 发出探测', 'ok', 1600);
+      // 回包是异步的：给对方一点时间，再刷新一次设备列表
+      setTimeout(() => { if (flStatusObj().enabled) refreshFlowlink(); }, 800);
+    }
+  } finally {
+    FL.busy = false;
+  }
 }
 
 async function flScan() {

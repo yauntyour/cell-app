@@ -3184,6 +3184,27 @@ namespace app
                     r["devices"] = fl_devices();
                     return r;
                 }
+                // Probe one typed address (ip[:port]). Broadcast is best effort and
+                // does not cross a NAT (WSL2), a VPN or an AP that isolates clients;
+                // a unicast probe to the peer's address is the way through.
+                if (name == "flowlink.probe")
+                {
+                    if (!fl_on())
+                        return ok_error("FlowLink is off — enable it first");
+                    auto svc = cell::link::service();
+                    if (!svc)
+                        return ok_error("FlowLink is off");
+                    const std::string addr = args.value("addr", std::string{});
+                    nlohmann::json r = svc->probe(addr);
+                    if (!r.value("ok", false))
+                        return ok_error(r.value("error", "probe failed"));
+                    nlohmann::json st = ok_with(fl_status());
+                    st["devices"] = fl_devices();
+                    // keep the probe's own {addr,port} out of the status fields —
+                    // "port" there is the transport port, not the one we probed
+                    st["probe"] = r;
+                    return st;
+                }
                 if (name == "flowlink.pair.begin" || name == "flowlink.pair.join" ||
                     name == "flowlink.pair.cancel" || name == "flowlink.forget" ||
                     name == "flowlink.disconnect" || name == "flowlink.share" || name == "flowlink.send")
