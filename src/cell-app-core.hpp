@@ -666,7 +666,7 @@ namespace app
             fl_relay_stop();
             cell::flowlink::disable();
         }
-        // Push the open-workspace list to every connected peer. Without this the
+        // Push the workspace list to every connected peer. Without this the
         // remote picker only ever sees what it asked for last, and a workspace
         // opened here after the peer looked stays invisible.
         void fl_publish_workspaces()
@@ -674,7 +674,7 @@ namespace app
             auto svc = cell::flowlink::service_instance();
             if (!svc || !svc->running())
                 return;
-            svc->publish_workspaces(workspaces_json());
+            svc->publish_workspaces(known_workspaces());
         }
         // the engine tool list changed (fl appears/disappears with the service)
         void fl_tools_dirty()
@@ -695,7 +695,7 @@ namespace app
             // the device list of this cell: harmless, and the pairing page
             // needs it before the user has granted anything else
             if (method == "ws.list"sv)
-                return {{"ok", true}, {"workspaces", workspaces_json()}};
+                return {{"ok", true}, {"workspaces", known_workspaces()}};
             if (!accept)
             {
                 err = "this cell does not accept remote work (FlowLink settings)";
@@ -1990,7 +1990,41 @@ namespace app
                                {"cwd", c->cwd},
                                {"session", c->h.now().id()},
                                {"busy", c->busy.load()},
-                               {"active", k == active_ws}});
+                               {"active", k == active_ws},
+                               {"open", true}});
+            return arr;
+        }
+        // 对端看到的工作区列表：本机当前挂载的，加上只剩会话记录的那些。
+        // 侧栏列的是「这台机器上有哪些工作区」，远程挑选页只有和它同源才不会
+        // 出现「本机看得到、对端看不到」；未挂载的条目 open=false，远端回合
+        // 发到它时由 fl_serve_agent 现场挂载，所以选它不是一个死链接。
+        nlohmann::json known_workspaces()
+        {
+            nlohmann::json arr = workspaces_json();
+            std::set<std::string> seen;
+            for (auto &w : arr)
+                seen.insert(w.value("cwd", ""));
+            std::error_code ec;
+            const std::filesystem::path base = cell::root / "sessions";
+            if (!std::filesystem::is_directory(base, ec))
+                return arr;
+            for (auto &g : std::filesystem::directory_iterator(base, ec))
+            {
+                if (ec)
+                    break;
+                if (!g.is_directory(ec))
+                    continue;
+                const std::string key = g.path().filename().string();
+                const std::string cwd = cell::cwd_for_key(key);
+                if (cwd.empty() || !seen.insert(cwd).second)
+                    continue;
+                arr.push_back({{"ws", key},
+                               {"cwd", cwd},
+                               {"session", ""},
+                               {"busy", false},
+                               {"active", false},
+                               {"open", false}});
+            }
             return arr;
         }
         // transcript preview: user/assistant text only, newest last.
@@ -3421,8 +3455,11 @@ namespace app
                     {
                         std::string err;
                         nlohmann::json r = svc->call(peer, "ws.list", nlohmann::json::object(), 15000, err);
-                        if (err.empty())
-                            cached = r.value("workspaces", nlohmann::json::array());
+                        // 空列表和对端不可达是两件事：把错误交回页面，否则挑选页
+                        // 只会说「对端没有打开工作区」，让人查错方向
+                        if (!err.empty())
+                            return ok_error(err);
+                        cached = r.value("workspaces", nlohmann::json::array());
                     }
                     nlohmann::json out = ok();
                     out["workspaces"] = cached;

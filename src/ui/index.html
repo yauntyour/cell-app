@@ -21200,8 +21200,9 @@ function paintSkillDetail() {
                   选中一台输入配对码即可配对；也可以反过来亮出自己的码。
                   本机卡片摊开实际发现 / 接收端口，设备为空时展开「发现诊断」
                   看每轮 beacon 的目标和 rx 计数。
-     已配对        信任的设备；选中后列出对端**已打开的工作区**，挑一个
-                  加进本机的「FlowLink 工作区」列表。
+     已配对        信任的设备；选中后列出对端**有的工作区**（本机侧栏里能
+                  看到的那一批，open=false 的是没在挂载的），挑一个加进
+                  本机的「FlowLink 工作区」列表。
      传输列表      对端分享过来的会话 / 已存档会话（JSONL 落盘，索引在
                   .cell/links/transmission.json）。
      设置          服务开关、名称、端口、是否接受远程作业。
@@ -21936,14 +21937,19 @@ function flPaintLinks(main) {
 function flRemoteBlock(d) {
   const box = el('div', 'fl-remote');
   if (FL.remoteFor !== d.client_id) {
-    box.appendChild(el('div', 'fl-hint', '正在读取 ' + (d.name || d.client_id.slice(0, 8)) + ' 上已打开的工作区…'));
+    box.appendChild(el('div', 'fl-hint', '正在读取 ' + (d.name || d.client_id.slice(0, 8)) + ' 上的工作区…'));
     flLoadRemote(d.client_id);
     return box;
   }
-  const title = el('div', 'fl-pair-title', '该设备上已打开的工作区');
+  const title = el('div', 'fl-pair-title', '该设备上的工作区');
   box.appendChild(title);
+  // 读失败和「对端一个工作区都没有」是两件事：错误原样显示，别让人按空列表排查
+  if (FL.err) {
+    box.appendChild(el('div', 'fl-hint', FL.err));
+    return box;
+  }
   if (!FL.remote.length) {
-    box.appendChild(el('div', 'fl-hint', '对端没有打开任何工作区（或它关闭了「接受远程作业」）。'));
+    box.appendChild(el('div', 'fl-hint', '对端没有打开任何工作区。'));
     return box;
   }
   for (const w of FL.remote) {
@@ -21953,6 +21959,7 @@ function flRemoteBlock(d) {
     col.appendChild(el('span', 'fl-wsrow-path trunc', w.cwd));
     const tags = el('div', 'fl-wsrow-tags');
     if (w.busy) tags.appendChild(flPill('运行中', 'warn'));
+    if (w.open === false) tags.appendChild(flPill('未打开', ''));
     if (w.session) tags.appendChild(el('span', 'fl-hint', '会话 ' + String(w.session).slice(0, 8)));
     col.appendChild(tags);
     row.appendChild(col);
@@ -21979,6 +21986,7 @@ async function flLoadRemote(cell) {
   if (!cell) return;
   FL.remoteFor = cell;
   FL.remote = [];
+  FL.err = '';
   flPaint();
   try {
     const out = await api('flowlink.ws.remote', { cell: cell });

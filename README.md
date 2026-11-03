@@ -307,7 +307,7 @@ no thread, no socket, no allocation.
 
 In the desktop app the whole feature lives on the **FlowLink** page (sidebar,
 right under Skills — `Ctrl+Shift+L`): *Scan Links* (discovery + pairing),
-*已配对* (paired devices and their open workspaces), *传输列表* (transfers) and
+*已配对* (paired devices and their workspaces), *传输列表* (transfers) and
 *设置*. **Settings → 互联** keeps only the service switch and the connected
 devices (where a link can be disconnected). The agent gets the same capability
 through the `fl` tool and through `tw`'s `cell` field (`tw operation=cells`
