@@ -4546,8 +4546,10 @@ namespace app
                             safe += ch;
                     if (safe.empty() || safe == "." || safe == "..")
                         safe = "upload.bin";
-                    std::string raw = cell::encrypt::b64_decode(b64);
-                    if (raw.empty())
+                    // the app's own decoder: cell.cpp keeps its base64 helper
+                    // file-local now, so the vault namespace no longer exports one
+                    std::string raw;
+                    if (!term::b64_decode(b64, raw) || raw.empty())
                         return ok_error("bad base64 payload");
                     if (raw.size() > 48u * 1024 * 1024)
                         return ok_error("upload too large (48 MiB max)");
