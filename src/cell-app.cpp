@@ -772,15 +772,33 @@ namespace app
         // discovery on a port of its own, so the run never collides with a real
         // instance (both cells share it — that is how they find each other)
         oa.announce = true;
-        oa.discovery_port = 47851;
+        oa.mdns_port = 47851;
         // CELL_FLOWLINK_SMOKE_VERBOSE=1 traces the handshake/session decisions of
         // a failing smoke run without changing the pass/fail output.
         if (const char *verbose = std::getenv("CELL_FLOWLINK_SMOKE_VERBOSE"); verbose && *verbose)
             oa.on_log = [](const std::string &level, const std::string &msg)
             { fprintf(stderr, "[flowlink %s] %s\n", level.c_str(), msg.c_str()); };
+        // both sides record the events they receive: the remote console streams
+        // its output as peer_event cli.out, the workspace picker as ws.state
+        std::mutex ev_mx;
+        std::vector<nlohmann::json> events;
+        auto collect = [&](const nlohmann::json &e)
+        {
+            std::lock_guard<std::mutex> lk(ev_mx);
+            events.push_back(e);
+        };
+        oa.on_event = collect;
         service::options ob = oa;
         ob.root = base / "b";
         ob.name = "cell-b";
+        ob.on_event = collect;
+        // B offers a remote console; A drives it further down
+        ob.accept_remote = true;
+        ob.on_cli = [](const std::string &line, const cell::flowlink::output_fn &sink, std::string &)
+        {
+            sink("ran: " + line + "\n");
+            return true;
+        };
         service a(oa), b(ob);
         std::string err;
         if (!a.start(err))
@@ -798,22 +816,24 @@ namespace app
         check(port_a > 0, "cell A listens on an ephemeral port");
         check(a.client_id().size() == 32, "client_id is 32 hex characters (libsodium randombytes)");
         check(a.client_id() != b.client_id(), "the two cells have distinct client ids");
-        // Two cells on one host share the UDP port space: at most one of them can
-        // hold the rendezvous port, but BOTH must get a private beacon port and
-        // keep probing. This is exactly the Windows-host + WSL-cell situation.
+        // Both cells announce and browse. Two instances on one host share the
+        // DNS-SD port (SO_REUSEADDR) and keep their own transport ports; what
+        // must hold is that both are actually running discovery and can name
+        // their own addresses for the A/AAAA records.
         const auto st_a = a.status();
         const auto st_b = b.status();
-        check(st_a.value("rx_port", 0) > 0 && st_b.value("rx_port", 0) > 0,
-              "both cells got their own random discovery receive port");
-        check(st_a.value("rx_port", 0) != st_b.value("rx_port", 0),
-              "the two discovery receive ports are different");
-        check(st_a["interfaces"].is_array() && !st_a["interfaces"].empty(),
-              "the status reports IPv4 interfaces (Scan Links 本机地址)");
-        check(st_a.value("discovery_state", "") == "active" ||
-                  st_a.value("discovery_state", "") == "probe-only",
+        const auto md_a = st_a["mdns"];
+        const auto md_b = st_b["mdns"];
+        check(md_a.value("on", false) && md_b.value("on", false),
+              "both cells run mDNS discovery");
+        check(md_a.value("bound4", 0) > 0 && md_b.value("bound4", 0) > 0,
+              "both cells bound the DNS-SD port");
+        check(md_a["addresses"].is_array() && !md_a["addresses"].empty(),
+              "the status reports local addresses (the A/AAAA records)");
+        check(md_a.value("state", "") == "active" || md_a.value("state", "") == "degraded",
               "the status reports a discovery state");
         check(st_b.value("discovery_port", 0) == 47851,
-              "a cell that cannot bind the discovery port keeps probing it");
+              "the configured DNS-SD port is reported");
 
         // ---- a wrong pairing code must not pair --------------------------
         {
@@ -825,18 +845,19 @@ namespace app
             auto r = b.pair_join(wrong, addr_a, why);
             check(!why.empty() || r.empty(), "a wrong pairing code is refused (" + why + ")");
         }
-        // ---- discovery: B finds A through the UDP beacon -----------------
-        // (a host without a usable broadcast/multicast path simply skips the
-        //  address-free pairing below and uses the known address instead)
+        // ---- discovery: B finds A through DNS-SD -------------------------
+        // (a host without a usable multicast path simply skips the address-free
+        //  pairing below and uses the known address instead)
         bool found_a = false;
-        for (int i = 0; i < 20 && !found_a; i++)
+        for (int i = 0; i < 25 && !found_a; i++)
         {
             std::this_thread::sleep_for(std::chrono::milliseconds(200));
+            b.scan();
             for (const auto &f : b.discovered())
                 if (f.value("client_id", "") == a.client_id() && f.value("port", 0) == port_a)
                     found_a = true;
         }
-        check(found_a, "B discovers A on the network (client id + listening port)");
+        check(found_a, "B discovers A through mDNS (client id + SRV port)");
         // ---- the right code pairs, once, and stores the link key ---------
         {
             auto code = a.pair_begin(120);
@@ -925,15 +946,15 @@ namespace app
         // /link lives in the core (cell::link), so its operations answer even
         // with no service mounted — that is what the CLI's REPL gets.
         {
-            auto st = cell::link::op("status", nlohmann::json::object());
+            auto st = cell::flowlink::op("status", nlohmann::json::object());
             check(!st.value("enabled", false), "/link status reports the service as off (it is opt-in)");
             bool ok = true;
-            const std::string text = cell::link::run({"/link", "peers"}, "", ok);
+            const std::string text = cell::flowlink::run({"/link", "peers"}, "", ok);
             check(!ok, "/link peers without a service explains how to enable it (" + text + ")");
         }
         // ---- mount through the core, exactly as `/link on` does ----------
         {
-            cell::link::mount_options mo;
+            cell::flowlink::mount_options mo;
             mo.root = base / "cli";
             mo.name = "cell-cli";
             mo.port = 0;
@@ -941,20 +962,56 @@ namespace app
             mo.announce = false;
             mo.accept_remote = false;
             std::string e2;
-            check(cell::link::enable(mo, e2), "cell::link mounts the service" + (e2.empty() ? "" : ": " + e2));
-            check(cell::link::op("status", nlohmann::json::object()).value("enabled", false),
+            check(cell::flowlink::enable(mo, e2), "cell::link mounts the service" + (e2.empty() ? "" : ": " + e2));
+            check(cell::flowlink::op("status", nlohmann::json::object()).value("enabled", false),
                   "/link status reports it running");
-            auto pr = cell::link::op("pair", {{"ttl", 60}});
+            auto pr = cell::flowlink::op("pair", {{"ttl", 60}});
             check(pr.value("ok", false) && !pr.value("code", "").empty(), "/link pair returns a code");
-            auto pe = cell::link::op("peers", nlohmann::json::object());
+            auto pe = cell::flowlink::op("peers", nlohmann::json::object());
             check(pe.value("ok", false) && pe["peers"].is_array(), "/link peers answers");
-            auto in = cell::link::op("inbox", nlohmann::json::object());
+            auto in = cell::flowlink::op("inbox", nlohmann::json::object());
             check(in.value("ok", false) && in["items"].is_array(), "/link inbox answers");
             bool ok2 = true;
-            const std::string txt = cell::link::run({"/link", "pair", "60"}, "", ok2);
+            const std::string txt = cell::flowlink::run({"/link", "pair", "60"}, "", ok2);
             check(ok2 && txt.find("pairing code") != std::string::npos, "/link run renders the pairing code");
-            cell::link::op("off", nlohmann::json::object());
-            check(!cell::link::status().value("enabled", false), "/link off unmounts the service");
+            cell::flowlink::op("off", nlohmann::json::object());
+            check(!cell::flowlink::status().value("enabled", false), "/link off unmounts the service");
+        }
+        // ---- the remote console (cli.exec + streamed cli.out) ------------
+        {
+            std::string why;
+            auto r = a.call(b.client_id(), "cli.exec", {{"line", "/help"}, {"rid", "smoke-1"}},
+                            15000, why);
+            check(why.empty() && r.value("ok", false),
+                  "A runs a console line on B" + (why.empty() ? "" : ": " + why));
+            bool streamed = false;
+            for (int i = 0; i < 40 && !streamed; i++)
+            {
+                {
+                    std::lock_guard<std::mutex> lk(ev_mx);
+                    for (const auto &e : events)
+                        if (e.value("type", "") == "peer_event" &&
+                            e.value("method", "") == "cli.out" &&
+                            e.value("params", nlohmann::json::object())
+                                    .value("text", "")
+                                    .find("ran: /help") != std::string::npos)
+                            streamed = true;
+                }
+                if (!streamed)
+                    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            }
+            check(streamed, "B streams the console output back over the session");
+        }
+        // ---- the open-workspace list -------------------------------------
+        {
+            b.publish_workspaces(nlohmann::json::array(
+                {{{"ws", "w1"}, {"cwd", "/tmp/w1"}, {"active", true}}}));
+            std::string why;
+            auto r = a.call(b.client_id(), "ws.list", nlohmann::json::object(), 10000, why);
+            check(why.empty() && r["workspaces"].is_array() && r["workspaces"].size() == 1,
+                  "A reads B's published workspace list" + (why.empty() ? "" : ": " + why));
+            check(a.remote_workspaces(b.client_id()).size() == 1,
+                  "the pushed list is cached for the picker");
         }
         a.stop();
         b.stop();
@@ -1191,24 +1248,24 @@ namespace app
         // here exactly as it does in the CLI.
         // FlowLink's own settings live in .cell/links/links.json now; move the
         // keys older builds kept in config.json before anything reads them.
-        cell::link::migrate_legacy_settings();
-        cell::link::mount_hook() = [&core](std::string &err) -> bool
+        cell::flowlink::migrate_legacy_settings();
+        cell::flowlink::mount_hook() = [&core](std::string &err) -> bool
         {
             if (!core.fl_start(err))
                 return false;
-            cell::link::set_enabled(true);
+            cell::flowlink::set_enabled(true);
             core.fl_tools_dirty();
             return true;
         };
-        cell::link::unmount_hook() = [&core]
+        cell::flowlink::unmount_hook() = [&core]
         {
             core.fl_stop();
-            cell::link::set_enabled(false);
+            cell::flowlink::set_enabled(false);
             core.fl_tools_dirty();
         };
         auto start_flowlink = [&]()
         {
-            if (!cell::link::settings().value("enabled", false))
+            if (!cell::flowlink::settings().value("enabled", false))
                 return;
             std::string err;
             if (!core.fl_start(err))

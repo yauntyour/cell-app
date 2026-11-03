@@ -21126,51 +21126,19 @@ function flExtraTargets() {
   return Array.isArray(t) ? t.map(String).filter(Boolean) : [];
 }
 
-/* targets[] 的 kind -> 中文标签（顺序也是诊断面板里的分组顺序）。
-   DESIGN：broadcast / multicast / local / gateway / peer / extra。 */
-const FL_TARGET_KINDS = [
-  { id: 'broadcast', label: '广播' },
-  { id: 'multicast', label: '组播' },
-  { id: 'local', label: '本机' },
-  { id: 'gateway', label: '网关' },
-  { id: 'peer', label: '对端' },
-  { id: 'extra', label: '自定义' },
-];
-
-/* 新后端给 {addr,port,kind,label}；旧后端给 "addr:port" 字符串。两种都收，
-   这样页面在 Lead 改完后端前后都能渲染。 */
-function flTargetList() {
-  const raw = flStatusObj().targets;
-  if (!Array.isArray(raw)) return [];
-  const out = [];
-  for (const t of raw) {
-    if (typeof t === 'string') {
-      const i = t.lastIndexOf(':');
-      const addr = i > 0 ? t.slice(0, i) : t;
-      const port = i > 0 ? (Number(t.slice(i + 1)) || 0) : 0;
-      out.push({ addr: addr, port: port, kind: '', label: '' });
-    } else if (t && typeof t === 'object') {
-      out.push({
-        addr: String(t.addr || ''),
-        port: Number(t.port || 0),
-        kind: String(t.kind || ''),
-        label: String(t.label || ''),
-      });
-    }
-  }
-  return out;
-}
 
 /* 发现状态：优先用后端字段；旧后端没有这个字段（默认空串）时按
    enabled + discovery_bound 推断，避免把「旧后端 + 已开启」误判成已关闭。 */
 function flDiscoveryState() {
   const st = flStatusObj();
-  const s = st.discovery_state;
-  if (s === 'active' || s === 'probe-only' || s === 'off') return s;
+  const md = st.mdns || {};
+  const s = md.state || st.discovery_state;
+  if (s === 'active' || s === 'degraded' || s === 'off') return s;
   if (!st.enabled) return 'off';
-  return Number(st.discovery_bound || 0) > 0 ? 'active' : 'probe-only';
+  return 'active';
 }
-const FL_DISC_LABEL = { active: '监听中', 'probe-only': '仅主动探测', off: '已关闭' };
+function flDiscoveryOn() { return !!(flStatusObj().mdns || {}).on; }
+const FL_DISC_LABEL = { active: '发现中', degraded: '降级', off: '已停止' };
 
 /* 设备列表 = 已配对 + 扫到的；同一台只出现一次，已配对信息优先 */
 function flDevices() {
@@ -21425,6 +21393,7 @@ function flDeviceRow(d) {
    中文标签与后端约定一致；rx 计数用来看广播是不是根本进不来。 */
 function flDiagBlock() {
   const st = flStatusObj();
+  const md = st.mdns || {};
   const state = flDiscoveryState();
   const det = el('details', 'fl-diag');
   const sum = el('summary', 'fl-diag-sum');
@@ -21433,54 +21402,36 @@ function flDiagBlock() {
   det.appendChild(sum);
 
   const body = el('div', 'fl-diag-body');
-  const db = Number(st.discovery_bound || 0);
-  const dp = Number(st.discovery_port || 0);
-  const discTxt = state === 'off' ? '已关闭'
-    : db ? String(db)
-    : dp ? dp + '（仅主动探测）' : '—';
+  const inst = md.instance || '—';
+  const host = md.host || '—';
   body.appendChild(el('div', 'fl-diag-line mono',
-    '发现端口 ' + discTxt + ' · 接收端口 ' + flPortText(st.rx_port)));
+    'mDNS ' + (Number(md.port || 0) || 5353) + ' · 实例 ' + inst + ' · 主机 ' + host));
+  body.appendChild(el('div', 'fl-hint',
+    '发现走标准 DNS-SD（_cell._tcp.local）。服务类型可以被系统工具直接浏览：'
+    + 'dns-sd -B _cell._tcp 与这里看到的是同一批设备。'));
 
-  // targets 分组
-  const groups = new Map();
-  for (const t of flTargetList()) {
-    const k = t.kind || 'other';
-    if (!groups.has(k)) groups.set(k, []);
-    groups.get(k).push(t);
-  }
-  if (!groups.size) {
-    body.appendChild(el('div', 'fl-hint', '暂无发送目标：服务未开启，或还没有枚举到网卡。'));
-  } else {
-    const known = new Set(FL_TARGET_KINDS.map(k => k.id));
-    const order = FL_TARGET_KINDS.map(k => k.id);
-    for (const gid of groups.keys()) if (!known.has(gid)) order.push(gid);
+  // 本机地址：A / AAAA 记录就来自这里
+  const addrs = Array.isArray(md.addresses) ? md.addresses : [];
+  if (addrs.length) {
     const grid = el('div', 'fl-diag-groups');
-    for (const gid of order) {
-      const items = groups.get(gid);
-      if (!items || !items.length) continue;
-      const kind = FL_TARGET_KINDS.find(k => k.id === gid);
-      const label = kind ? kind.label : '其他';
-      const g = el('div', 'fl-diag-group');
-      const gh = el('div', 'fl-diag-gh');
-      gh.appendChild(el('span', 'fl-diag-tag', label));
-      gh.appendChild(el('span', 'fl-diag-count', String(items.length)));
-      g.appendChild(gh);
-      const lines = el('div', 'fl-diag-list mono');
-      for (const t of items) {
-        const item = el('div', 'fl-diag-item', t.addr + (t.port ? ':' + t.port : ''));
-        item.title = t.label || (label + '目标');
-        lines.appendChild(item);
-      }
-      g.appendChild(lines);
-      grid.appendChild(g);
+    const g = el('div', 'fl-diag-group');
+    const gh = el('div', 'fl-diag-gh');
+    gh.appendChild(el('span', 'fl-diag-tag', '本机地址'));
+    gh.appendChild(el('span', 'fl-diag-count', String(addrs.length)));
+    g.appendChild(gh);
+    const lines = el('div', 'fl-diag-list mono');
+    for (const a of addrs) {
+      const item = el('div', 'fl-diag-item', a.addr + (a.family ? '  (' + a.family + ')' : ''));
+      item.title = a.loopback ? '回环地址，不会写进 A/AAAA 记录' : (a.scope ? 'scope ' + a.scope : '');
+      lines.appendChild(item);
     }
+    g.appendChild(lines);
+    grid.appendChild(g);
     body.appendChild(grid);
-    body.appendChild(el('div', 'fl-hint',
-      '每轮 announce 都会发往上面这些目标（对端与本机地址优先）；收到广播 / 探测后回包走单播。'));
+  } else {
+    body.appendChild(el('div', 'fl-hint', '还没有枚举到本机地址：服务未开启。'));
   }
 
-  // rx 计数
-  const rx = st.rx || {};
   const stats = el('div', 'fl-diag-stats');
   const stat = (k, v, cls) => {
     const s = el('span', 'fl-diag-stat' + (cls ? ' ' + cls : ''));
@@ -21488,12 +21439,14 @@ function flDiagBlock() {
     s.appendChild(el('span', 'fl-diag-stat-v mono', String(v == null || v === '' ? '—' : v)));
     return s;
   };
-  stats.appendChild(stat('收到广播', rx.announce));
-  stats.appendChild(stat('收到探测', rx.probe));
-  stats.appendChild(stat('已发送', rx.sent));
-  if (Number(rx.errors || 0) > 0) stats.appendChild(stat('错误', rx.errors, 'bad'));
-  stats.appendChild(stat('最后来源', rx.last_from));
+  stats.appendChild(stat('收到查询', md.rx_query));
+  stats.appendChild(stat('收到应答', md.rx_response));
+  stats.appendChild(stat('已发查询', md.tx_query));
+  stats.appendChild(stat('已发应答', md.tx_response));
+  stats.appendChild(stat('缓存设备', md.peers));
+  stats.appendChild(stat('最后来源', md.last_from));
   body.appendChild(stats);
+  if (md.error) body.appendChild(el('div', 'fl-hint bad', 'mDNS 绑定降级：' + md.error));
 
   det.appendChild(body);
   return det;
@@ -21501,10 +21454,13 @@ function flDiagBlock() {
 
 function flPaintScan(main) {
   const on = flEnabled();
+  const discovering = on && flDiscoveryOn();
   flHead(main, 'Scan Links',
     on ? '同一网段里开着 FlowLink 的 cell 会出现在这里。选中一台，输入它显示的配对码即可建立互信。'
        : 'FlowLink 服务当前关闭：打开开关后才能发现设备。',
-    [flBtn('重新扫描', 'refresh', () => flScan(), 'ghost')]);
+    [flBtn('重新扫描', 'refresh', () => flScan(), 'ghost'),
+     flBtn(discovering ? '停止发现' : '开始发现', discovering ? 'x' : 'link',
+           () => flToggleDiscovery(!discovering), discovering ? 'ghost' : 'accent')]);
 
   const body = el('div', 'fl-content');
 
@@ -21553,27 +21509,26 @@ function flPaintScan(main) {
   const discState = flDiscoveryState();
   let discTxt, discPill, discPillCls;
   if (discState === 'off') {
-    discTxt = '已关闭（主动发现关闭）';
-    discPill = '已关闭'; discPillCls = 'warn';
+    discTxt = '已停止（不再广播/监听）';
+    discPill = '已停止'; discPillCls = 'warn';
   } else if (discBound) {
-    discTxt = discBound + '（监听中）';
-    discPill = '监听中'; discPillCls = 'ok';
+    discTxt = discBound + '（收发中）';
+    discPill = '发现中'; discPillCls = 'ok';
   } else {
-    discTxt = discCfg + ' 被占用 · 仅主动探测';
-    discPill = '仅探测'; discPillCls = 'warn';
+    discTxt = discCfg + ' 被占用 · 降级';
+    discPill = '降级'; discPillCls = 'warn';
   }
-  const discRow = flKv('发现端口', discTxt, 'mono');
+  const discRow = flKv('发现 (mDNS)', discTxt, 'mono');
   discRow.appendChild(flPill(discPill, discPillCls));
-  discRow.title = 'rendezvous 端口：其他 cell 的广播 / 组播 / 单播探测打到这个端口才收得到。'
-    + '它只是 best effort —— 被占用时（同一台机器开了两个实例，或 WSL 与 Windows 在镜像网络下'
-    + '共享 UDP 端口）不会让服务启动失败，只会退化成「仅主动探测」；主动发现关闭时则完全不监听。';
+  discRow.title = 'DNS-SD 端口（默认 5353）：本机在这里收发 _cell._tcp.local 的查询与应答。'
+    + '被别的 mDNS 程序独占时会退化成随机端口（仍能收单播应答），「停止发现」则完全关掉。';
   self.appendChild(discRow);
 
-  const rxPort = Number(selfSt.rx_port || 0);
-  const rxRow = flKv('接收端口', flPortText(rxPort), 'mono');
-  rxRow.title = '每次启动随机分配（bind 0.0.0.0:0），所以同一台机器上开两个实例也不会抢端口；'
-    + '对端的单播回包与探测回包都发到这里（beacon 里的 rp 字段）。';
-  self.appendChild(rxRow);
+  const mdObj = selfSt.mdns || {};
+  const instRow = flKv('服务实例', mdObj.instance || '—', 'mono');
+  instRow.title = 'DNS-SD 实例名：' + (mdObj.instance || '') + '.' + (mdObj.service || '_cell._tcp.local')
+    + '；主机记录 ' + (mdObj.host || '—') + ' 同时带 A 与 AAAA。';
+  self.appendChild(instRow);
 
   const p = flPairing();
   if (p.open && p.code) {
@@ -21706,6 +21661,19 @@ async function flScan() {
       if (!devs.some(d => d.client_id === FL.sel)) FL.sel = devs.length ? devs[0].client_id : '';
       toast('扫描完成 · ' + devs.length + ' 台设备', 'ok', 1600);
       flPaint();
+    }
+  } catch (e) { toast(e.message || String(e), 'bad'); }
+}
+
+async function flToggleDiscovery(on) {
+  try {
+    const out = await cmd('flowlink.discovery', { on: !!on });
+    if (out && out.ok !== false) {
+      flMerge(out);
+      toast(on ? '已开始广播与监听' : '已停止发现（配对与重连不受影响）', 'ok', 2000);
+      flPaint();
+    } else {
+      toast((out && out.error) || '切换失败', 'bad');
     }
   } catch (e) { toast(e.message || String(e), 'bad'); }
 }
@@ -22241,6 +22209,11 @@ async function flSendRemote(t) {
 /* 对端推回来的回合事件（agent.event） */
 function flOnPeerEvent(ev) {
   const params = (ev && ev.params) || {};
+  // the peer pushed its open-workspace list: refresh the picker it belongs to
+  if ((ev && ev.method) === 'ws.state') {
+    if (FL.tab === 'links') flLoadRemote(ev.client_id);
+    return;
+  }
   if ((ev && ev.method) !== 'agent.event') return;
   const rid = params.rid || '';
   const t = flTabByRid(rid);

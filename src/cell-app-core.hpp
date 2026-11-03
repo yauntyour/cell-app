@@ -465,23 +465,23 @@ namespace app
 
         // ---- FlowLink ------------------------------------------------------
         // The service itself lives in the CORE (cell.cpp/cell.cpp, one file): one
-        // instance per process, mounted by cell::link::enable(). What belongs
+        // instance per process, mounted by cell::flowlink::enable(). What belongs
         // here is only the workspace-aware half — which directory a remote peer
         // may read, which session a shared conversation comes from — plus the
         // event/command surface the UI talks to.
-        bool fl_on() { return cell::link::running(); }
+        bool fl_on() { return cell::flowlink::running(); }
 
         // Everything the management page draws: the running service (if any),
         // the settings, the paired links, the pinned workspaces and the
         // transfer index — all of it readable while the service is off.
         nlohmann::json fl_status()
         {
-            nlohmann::json st = cell::link::status();
-            const nlohmann::json set = cell::link::settings();
+            nlohmann::json st = cell::flowlink::status();
+            const nlohmann::json set = cell::flowlink::settings();
             st["settings"] = set;
             st["enabled"] = fl_on();
             if (!st.contains("client_id") || !st["client_id"].is_string() || st["client_id"].get<std::string>().empty())
-                st["client_id"] = cell::link::identity().value("client_id", "");
+                st["client_id"] = cell::flowlink::identity().value("client_id", "");
             if (!st.contains("name") || st["name"].get<std::string>().empty())
                 st["name"] = set.value("name", "");
             if (!st.contains("peers"))
@@ -490,7 +490,7 @@ namespace app
             if (!fl_on())
             {
                 nlohmann::json peers = nlohmann::json::array();
-                for (const auto &m : cell::link::links())
+                for (const auto &m : cell::flowlink::links())
                 {
                     peers.push_back({{"client_id", m.value("client_id", "")},
                                      {"name", m.value("name", "")},
@@ -513,8 +513,8 @@ namespace app
                                  {"expires", 0}, {"peer", ""}, {"fails", 0}};
                 st["transmissions"] = nlohmann::json{{"unread", 0}, {"total", 0}};
             }
-            st["workspaces"] = cell::link::workspaces();
-            st["transfers"] = cell::link::transfers();
+            st["workspaces"] = cell::flowlink::workspaces();
+            st["transfers"] = cell::flowlink::transfers();
             return st;
         }
         // "Scan Links": every device we can see right now, paired or not, with
@@ -591,7 +591,7 @@ namespace app
                 }
                 if (rid.empty())
                     return;
-                auto svc = cell::link::service();
+                auto svc = cell::flowlink::service_instance();
                 if (svc)
                     svc->notify(peer, "agent.event", {{"rid", rid}, {"ev", ev}}); });
         }
@@ -618,8 +618,8 @@ namespace app
         {
             if (fl_on())
                 return true;
-            const nlohmann::json set = cell::link::settings();
-            cell::link::mount_options o;
+            const nlohmann::json set = cell::flowlink::settings();
+            cell::flowlink::mount_options o;
             o.root = cell::root;
             o.name = set.value("name", "");
             o.port = (std::uint16_t)std::clamp(set.value("port", 47822), 0, 65535);
@@ -634,15 +634,47 @@ namespace app
             { fl_publish(ev); };
             o.on_call = [this](const std::string &method, const nlohmann::json &params, std::string &e)
             { return fl_serve(method, params, e); };
-            if (!cell::link::enable(o, err))
+            // The desktop shell has no REPL: a remote console line can still run
+            // the shared /link surface, but a plain turn belongs in a FlowLink
+            // workspace tab, where the stream already has a place to land.
+            o.on_cli = [this](const std::string &line, const cell::flowlink::output_fn &sink, std::string &e)
+            {
+                const std::string text = cell::text::trim(line);
+                if (text.empty())
+                    return true;
+                if (text.rfind("/link", 0) != 0)
+                {
+                    e = "this cell is the desktop shell: open a FlowLink workspace tab here for turns, or attach to a CLI cell";
+                    return false;
+                }
+                bool ok = true;
+                const std::string out = cell::flowlink::run(cell::flowlink::tokenize(text), "", ok);
+                if (!out.empty())
+                    sink(out + "\n");
+                if (!ok)
+                    e = out.empty() ? std::string("command failed") : out;
+                return ok;
+            };
+            if (!cell::flowlink::enable(o, err))
                 return false;
             fl_relay_start();
+            fl_publish_workspaces();
             return true;
         }
         void fl_stop()
         {
             fl_relay_stop();
-            cell::link::disable();
+            cell::flowlink::disable();
+        }
+        // Push the open-workspace list to every connected peer. Without this the
+        // remote picker only ever sees what it asked for last, and a workspace
+        // opened here after the peer looked stays invisible.
+        void fl_publish_workspaces()
+        {
+            auto svc = cell::flowlink::service_instance();
+            if (!svc || !svc->running())
+                return;
+            svc->publish_workspaces(workspaces_json());
         }
         // the engine tool list changed (fl appears/disappears with the service)
         void fl_tools_dirty()
@@ -659,7 +691,7 @@ namespace app
         {
             using namespace std::string_view_literals;
             const std::string_view method = method_in;
-            const bool accept = cell::link::settings().value("accept", false);
+            const bool accept = cell::flowlink::settings().value("accept", false);
             // the device list of this cell: harmless, and the pairing page
             // needs it before the user has granted anything else
             if (method == "ws.list"sv)
@@ -678,7 +710,7 @@ namespace app
                     err = why.empty() ? "no workspace is open on this cell" : why;
                     return nlohmann::json{};
                 }
-                return cell::link::serve_files(ctx->cwd, method_in, params, err);
+                return cell::flowlink::serve_files(ctx->cwd, method_in, params, err);
             }
             if (method == "tw.new"sv || method == "tw.run"sv)
                 return fl_serve_tw(method_in, params, err);
@@ -766,7 +798,7 @@ namespace app
         workspace_ctx *fl_pick_workspace(std::string &err)
         {
             std::lock_guard<std::mutex> lk(cmd_mx);
-            const std::string dir = cell::text::trim(cell::link::settings().value("workspace", ""));
+            const std::string dir = cell::text::trim(cell::flowlink::settings().value("workspace", ""));
             if (dir.empty())
             {
                 std::lock_guard<std::mutex> g(ctx_mx);
@@ -837,7 +869,7 @@ namespace app
             nlohmann::json out = nlohmann::json::array();
             try
             {
-                for (const auto &p : cell::link::status().value("peers", nlohmann::json::array()))
+                for (const auto &p : cell::flowlink::status().value("peers", nlohmann::json::array()))
                     out.push_back({{"id", p.value("client_id", "")},
                                    {"name", p.value("name", "")},
                                    {"online", p.value("online", false)},
@@ -854,10 +886,10 @@ namespace app
         {
             if (!fl_on())
                 return {{"ok", false}, {"text", "FlowLink is off — enable it on the FlowLink page"}};
-            const std::string id = cell::link::resolve_cell(cell_ref);
+            const std::string id = cell::flowlink::resolve_cell(cell_ref);
             if (id.empty())
                 return {{"ok", false}, {"text", std::format("unknown cell '{}' — tw operation=cells lists them", cell_ref)}};
-            auto svc = cell::link::service();
+            auto svc = cell::flowlink::service_instance();
             if (!svc)
                 return {{"ok", false}, {"text", "FlowLink is off"}};
             const std::string op = req.value("operation", "run");
@@ -917,7 +949,7 @@ namespace app
             t.run = [this](const nlohmann::json &j, const cell::tools::runtime &rt, cell::ToolOutput &out) -> bool
             {
                 const std::string op = j.value("operation", "");
-                auto svc = cell::link::service();
+                auto svc = cell::flowlink::service_instance();
                 if (!svc || !svc->running())
                 {
                     out.text = "FlowLink is off — enable it on the FlowLink page.";
@@ -1001,7 +1033,7 @@ namespace app
                             text += "\n" + note + "\n";
                         const nlohmann::json messages = m.contains("messages") ? m["messages"] : nlohmann::json::array();
                         text += std::format("\n--- shared conversation ({}) ---\n\n", m.value("session", "?"));
-                        text += cell::link::render_transcript(messages);
+                        text += cell::flowlink::render_transcript(messages);
                         out.text = text;
                         return true;
                     }
@@ -1021,7 +1053,7 @@ namespace app
                             out.text = "no session to share";
                             return false;
                         }
-                        nlohmann::json msgs = cell::link::transcript_json(sid);
+                        nlohmann::json msgs = cell::flowlink::transcript_json(sid);
                         if (msgs.empty())
                         {
                             out.text = "this session has no shareable messages yet";
@@ -1036,7 +1068,7 @@ namespace app
                                             {"kind", "session"},
                                             {"session", sid},
                                             {"messages", msgs}};
-                        const std::string peer = cell::link::resolve_cell(cellref);
+                        const std::string peer = cell::flowlink::resolve_cell(cellref);
                         if (peer.empty())
                         {
                             out.text = std::format("unknown cell '{}' — operation=cells lists them", cellref);
@@ -1072,7 +1104,7 @@ namespace app
                                             {"session", ""},
                                             {"messages", nlohmann::json::array(
                                                              {{{"role", "user"}, {"text", body}}})}};
-                        const std::string peer = cell::link::resolve_cell(cellref);
+                        const std::string peer = cell::flowlink::resolve_cell(cellref);
                         if (peer.empty())
                         {
                             out.text = std::format("unknown cell '{}' — operation=cells lists them", cellref);
@@ -1096,7 +1128,7 @@ namespace app
                             out.text = op + " requires 'cell'";
                             return false;
                         }
-                        const std::string peer = cell::link::resolve_cell(cellref);
+                        const std::string peer = cell::flowlink::resolve_cell(cellref);
                         if (peer.empty())
                         {
                             out.text = std::format("unknown cell '{}' — operation=cells lists them", cellref);
@@ -1932,7 +1964,7 @@ namespace app
                     {"update_check", prefs.update_check},
                     {"tray_supported", prefs::kTray},
                     {"splash", prefs::splash_json(prefs)},
-                    {"flowlink", cell::link::settings()}};
+                    {"flowlink", cell::flowlink::settings()}};
         }
         nlohmann::json settings_json() const
         {
@@ -2511,7 +2543,7 @@ namespace app
             st["prefs"] = prefs_json();
             st["flowlink"] = fl_status();
             // the sidebar's FlowLink workspace section (empty = section hidden)
-            st["flow_workspaces"] = cell::link::workspaces();
+            st["flow_workspaces"] = cell::flowlink::workspaces();
             if (!c)
             {
                 st["session"] = "";
@@ -2894,6 +2926,7 @@ namespace app
                         active_ws = c->cwd_key;
                     }
                     broadcast_state();
+                    fl_publish_workspaces();
                     nlohmann::json r = ok();
                     r["ws"] = c->cwd_key;
                     r["cwd"] = c->cwd;
@@ -2937,6 +2970,7 @@ namespace app
                             active_ws = ctxs.empty() ? "" : ctxs.begin()->first;
                     }
                     broadcast_state();
+                    fl_publish_workspaces();
                     return ok();
                 }
                 // 删除工作区：移除它在全局数据根下的全部会话记录（sessions/<ws>）
@@ -3026,6 +3060,7 @@ namespace app
                         active_ws = ws;
                     }
                     broadcast_state();
+                    fl_publish_workspaces();
                     return ok();
                 }
                 if (name == "workspace.list")
@@ -3144,9 +3179,9 @@ namespace app
                             patch[k] = args[k];
                     if (name == "flowlink.enable")
                         patch["enabled"] = true;
-                    if (!patch.empty() && !cell::link::patch_settings(patch))
+                    if (!patch.empty() && !cell::flowlink::patch_settings(patch))
                         return ok_error("could not write links.json");
-                    const bool want = cell::link::settings().value("enabled", false);
+                    const bool want = cell::flowlink::settings().value("enabled", false);
                     if (!want)
                     {
                         if (fl_on())
@@ -3170,9 +3205,23 @@ namespace app
                 }
                 if (name == "flowlink.disable")
                 {
-                    cell::link::patch_settings({{"enabled", false}});
+                    cell::flowlink::patch_settings({{"enabled", false}});
                     fl_stop();
                     fl_tools_dirty();
+                    return ok_with(fl_status());
+                }
+                // the page's "stop discovering" switch: sockets close and the
+                // goodbye goes out, while pairing and reconnects keep working
+                if (name == "flowlink.discovery")
+                {
+                    if (!fl_on())
+                        return ok_error("FlowLink is off — enable it first");
+                    auto svc = cell::flowlink::service_instance();
+                    if (!svc)
+                        return ok_error("FlowLink is off");
+                    std::string derr;
+                    if (!svc->set_discovery(args.value("on", true), derr))
+                        return ok_error(derr);
                     return ok_with(fl_status());
                 }
                 // "Scan Links": probe the network and hand back everything we
@@ -3182,13 +3231,14 @@ namespace app
                 {
                     if (!fl_on())
                         return ok_error("FlowLink is off — enable it first");
-                    auto svc = cell::link::service();
+                    auto svc = cell::flowlink::service_instance();
                     if (svc)
                     {
-                        svc->probe();
-                        // replies are asynchronous: give the LAN one RTT to answer
-                        // before snapshotting, otherwise "重新扫描" always looks empty
-                        std::this_thread::sleep_for(std::chrono::milliseconds(400));
+                        // answers arrive asynchronously; one short second round
+                        // makes a manual "重新扫描" show the peer that just booted
+                        svc->scan();
+                        std::this_thread::sleep_for(std::chrono::milliseconds(600));
+                        svc->scan();
                     }
                     nlohmann::json r = ok_with(fl_status());
                     r["devices"] = fl_devices();
@@ -3201,7 +3251,7 @@ namespace app
                 {
                     if (!fl_on())
                         return ok_error("FlowLink is off — enable it first");
-                    auto svc = cell::link::service();
+                    auto svc = cell::flowlink::service_instance();
                     if (!svc)
                         return ok_error("FlowLink is off");
                     const std::string addr = args.value("addr", std::string{});
@@ -3221,7 +3271,7 @@ namespace app
                 {
                     if (!fl_on())
                         return ok_error("FlowLink is off — enable it first");
-                    auto svc = cell::link::service();
+                    auto svc = cell::flowlink::service_instance();
                     if (!svc)
                         return ok_error("FlowLink is off");
                     try
@@ -3260,7 +3310,7 @@ namespace app
                             r["ok"] = true;
                             return ok_with(r);
                         }
-                        const std::string id = cell::link::resolve_cell(args.value("client_id", ""));
+                        const std::string id = cell::flowlink::resolve_cell(args.value("client_id", ""));
                         if (name == "flowlink.disconnect" || name == "flowlink.forget")
                         {
                             if (id.empty())
@@ -3274,7 +3324,7 @@ namespace app
                         }
                         // share / send: the transcript travels as JSONL and is
                         // indexed in the peer's links/transmission.json
-                        const std::string peer = cell::link::resolve_cell(args.value("cell", ""));
+                        const std::string peer = cell::flowlink::resolve_cell(args.value("cell", ""));
                         if (peer.empty())
                             return ok_error("unknown cell");
                         nlohmann::json item{{"from", svc->client_id()},
@@ -3301,7 +3351,7 @@ namespace app
                             }
                             if (sid.empty())
                                 return ok_error("no session to share");
-                            nlohmann::json msgs = cell::link::transcript_json(sid);
+                            nlohmann::json msgs = cell::flowlink::transcript_json(sid);
                             if (msgs.empty())
                                 return ok_error("this session has no shareable messages yet");
                             item["subject"] = args.value("subject", std::string("Shared conversation"));
@@ -3323,13 +3373,13 @@ namespace app
                 if (name == "flowlink.transfers")
                 {
                     nlohmann::json r = ok();
-                    r["items"] = cell::link::transfers();
+                    r["items"] = cell::flowlink::transfers();
                     return r;
                 }
                 if (name == "flowlink.transfer.read")
                 {
                     const std::string id = args.value("id", "");
-                    nlohmann::json t = cell::link::read_transfer(id);
+                    nlohmann::json t = cell::flowlink::read_transfer(id);
                     if (t.empty())
                         return ok_error("no such transfer");
                     cell::flowlink::store st{cell::root};
@@ -3348,7 +3398,7 @@ namespace app
                     else
                         (void)st.mark_transmission(id, args.value("read", true));
                     nlohmann::json r = ok();
-                    r["items"] = cell::link::transfers();
+                    r["items"] = cell::flowlink::transfers();
                     return r;
                 }
                 // ---- FlowLink workspaces -----------------------------------
@@ -3359,26 +3409,33 @@ namespace app
                 {
                     if (!fl_on())
                         return ok_error("FlowLink is off — enable it first");
-                    auto svc = cell::link::service();
-                    const std::string peer = cell::link::resolve_cell(args.value("cell", ""));
+                    auto svc = cell::flowlink::service_instance();
+                    const std::string peer = cell::flowlink::resolve_cell(args.value("cell", ""));
                     if (!svc || peer.empty())
                         return ok_error("unknown cell");
-                    std::string err;
-                    nlohmann::json r = svc->call(peer, "ws.list", nlohmann::json::object(), 15000, err);
-                    if (!err.empty())
-                        return ok_error(err);
+                    // the peer pushes its list on every change; the cache renders
+                    // instantly and survives a restart, the RPC is the fallback
+                    // for a cell that has not published yet
+                    nlohmann::json cached = svc->remote_workspaces(peer);
+                    if (!cached.is_array() || cached.empty())
+                    {
+                        std::string err;
+                        nlohmann::json r = svc->call(peer, "ws.list", nlohmann::json::object(), 15000, err);
+                        if (err.empty())
+                            cached = r.value("workspaces", nlohmann::json::array());
+                    }
                     nlohmann::json out = ok();
-                    out["workspaces"] = r.value("workspaces", nlohmann::json::array());
+                    out["workspaces"] = cached;
                     return out;
                 }
                 if (name == "flowlink.ws.add" || name == "flowlink.ws.remove")
                 {
                     if (!fl_on())
                         return ok_error("FlowLink is off — enable it first");
-                    auto svc = cell::link::service();
+                    auto svc = cell::flowlink::service_instance();
                     if (!svc)
                         return ok_error("FlowLink is off");
-                    const std::string peer = cell::link::resolve_cell(args.value("cell", ""));
+                    const std::string peer = cell::flowlink::resolve_cell(args.value("cell", ""));
                     if (peer.empty())
                         return ok_error("unknown cell");
                     if (name == "flowlink.ws.add")
@@ -3390,18 +3447,18 @@ namespace app
                     else if (!svc->remove_workspace(peer, args.value("cwd", "")))
                         return ok_error("not in the FlowLink workspace list");
                     nlohmann::json r = ok();
-                    r["workspaces"] = cell::link::workspaces();
+                    r["workspaces"] = cell::flowlink::workspaces();
                     return r;
                 }
                 if (name == "flowlink.ws.open")
                 {
                     if (!fl_on())
                         return ok_error("FlowLink is off — enable it first");
-                    const std::string peer = cell::link::resolve_cell(args.value("cell", ""));
+                    const std::string peer = cell::flowlink::resolve_cell(args.value("cell", ""));
                     const std::string cwd = args.value("cwd", "");
                     if (peer.empty() || cwd.empty())
                         return ok_error("cell and cwd are required");
-                    auto svc = cell::link::service();
+                    auto svc = cell::flowlink::service_instance();
                     if (!svc)
                         return ok_error("FlowLink is off");
                     // is the peer awake? (a remote workspace with no link is a
@@ -3421,8 +3478,8 @@ namespace app
                 {
                     if (!fl_on())
                         return ok_error("FlowLink is off — enable it first");
-                    auto svc = cell::link::service();
-                    const std::string peer = cell::link::resolve_cell(args.value("cell", ""));
+                    auto svc = cell::flowlink::service_instance();
+                    const std::string peer = cell::flowlink::resolve_cell(args.value("cell", ""));
                     if (!svc || peer.empty())
                         return ok_error("unknown cell");
                     const std::string rid = args.value("rid", "");
@@ -3454,11 +3511,11 @@ namespace app
                         if (workspace_ctx *c = target_ctx(args))
                             sid = c->h.now().id();
                     }
-                    auto toks = cell::link::tokenize(line);
+                    auto toks = cell::flowlink::tokenize(line);
                     if (toks.empty() || toks[0] != "/link")
                         toks.insert(toks.begin(), "/link");
                     bool good = true;
-                    const std::string text = cell::link::run(toks, sid, good);
+                    const std::string text = cell::flowlink::run(toks, sid, good);
                     nlohmann::json r = good ? ok() : ok_error(text);
                     r["text"] = text;
                     return r;
@@ -3467,10 +3524,10 @@ namespace app
                 {
                     if (!fl_on())
                         return ok_error("FlowLink is off — enable it first");
-                    const std::string peer = cell::link::resolve_cell(args.value("cell", args.value("peer", "")));
+                    const std::string peer = cell::flowlink::resolve_cell(args.value("cell", args.value("peer", "")));
                     if (peer.empty())
                         return ok_error("unknown cell");
-                    auto svc = cell::link::service();
+                    auto svc = cell::flowlink::service_instance();
                     if (!svc)
                         return ok_error("FlowLink is off");
                     std::string err;
