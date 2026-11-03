@@ -1103,15 +1103,49 @@ function buildAbout(st) {
 
 function flState() {
   return Object.assign({
-    enabled: false, client_id: '', name: '', port: 0, discovery_port: 0,
-    announce: true, accept_remote: false, peers: [], pairing: {},
-    settings: {}, workspaces: [], transfers: [],
+    enabled: false, client_id: '', name: '',
+    port: 0, port_preferred: 47822,
+    discovery_port: 47821, discovery_bound: 0,
+    rx_port: 0, discovery_state: '',
+    announce: true, accept_remote: false,
+    interfaces: [], targets: [], rx: {}, hints: [],
+    peers: [], pairing: {}, settings: {}, workspaces: [], transfers: [],
   }, S.flowlink || {});
 }
 function flPrefs() {
   const st = flState();
-  return Object.assign({ name: '', port: 47822, discovery: 47821, announce: true, accept: false, workspace: '' },
-    st.settings || {});
+  return Object.assign({
+    name: '', port: 47822, discovery: 47821, announce: true, accept: false,
+    workspace: '', extra_targets: [],
+  }, st.settings || {});
+}
+
+// 端口输入：空 / 0 = 自动分配；非法值交给调用方提示
+function flParsePort(v) {
+  const s = String(v == null ? '' : v).trim();
+  if (s === '') return 0;
+  const n = parseInt(s, 10);
+  return Number.isNaN(n) ? NaN : n;
+}
+function flPortOk(n) { return n === 0 || (n > 0 && n < 65536); }
+
+// 实际绑定端口（来自 status，不是输入框里的首选值）
+function flActualPortsLine(st) {
+  const tcp = Number(st.port || 0);
+  const db = Number(st.discovery_bound || 0);
+  const dp = Number(st.discovery_port || 0);
+  const rx = Number(st.rx_port || 0);
+  const state = st.discovery_state;
+  const disc = state === 'off' ? '已关闭'
+    : db > 0 ? db + '（监听中）'
+    : dp > 0 ? dp + ' 被占用 · 仅主动探测' : '—';
+  const row = el('div', 'fl-ident');
+  row.appendChild(el('span', null, '当前端口'));
+  row.appendChild(el('code', null, '传输 ' + (tcp > 0 ? tcp : '—')));
+  row.appendChild(el('code', null, '发现 ' + disc));
+  row.appendChild(el('code', null, '接收 ' + (rx > 0 ? rx : '—')));
+  row.title = '来自 flowlink.status 的实际绑定值；下面的输入框是首选端口。';
+  return row;
 }
 
 // 一行按钮 / 说明的组合（设置页各分节共用）
@@ -1166,11 +1200,11 @@ function flFill(body, paint) {
 
   /* ---- 1. 服务 ---- */
   const nameIn = setInput('设备名（默认主机名）', pf.name || '');
-  const portIn = setInput('47822', String(pf.port || 47822), 'number');
-  const discIn = setInput('47821', String(pf.discovery || 47821), 'number');
+  const portIn = setInput('47822', String(pf.port == null ? 47822 : pf.port), 'number');
+  const discIn = setInput('47821', String(pf.discovery == null ? 47821 : pf.discovery), 'number');
   const savePorts = setBtn('保存', 'ghost', () => {
-    const port = parseInt(portIn.value, 10), disc = parseInt(discIn.value, 10);
-    if (!(port > 0 && port < 65536) || !(disc > 0 && disc < 65536)) { toast('端口需在 1..65535', 'bad'); return; }
+    const port = flParsePort(portIn.value), disc = flParsePort(discIn.value);
+    if (!flPortOk(port) || !flPortOk(disc)) { toast('端口需在 1..65535；留空或 0 表示自动', 'bad'); return; }
     cmd('flowlink.settings', { name: nameIn.value.trim(), port: port, discovery: disc })
       .then(o => { if (o && o.ok !== false) { flMerge(o); toast('已保存（重新挂载服务）', 'ok'); } paint(); resync(); });
   }, 'check');
@@ -1180,10 +1214,11 @@ function flFill(body, paint) {
   formRow.appendChild(field('发现端口', discIn));
 
   const toggle = switchRow('启用 FlowLink 服务', on, v => {
+    const pv = flParsePort(portIn.value), dv = flParsePort(discIn.value);
     const args = {
       name: nameIn.value.trim(),
-      port: parseInt(portIn.value, 10) || 47822,
-      discovery: parseInt(discIn.value, 10) || 47821,
+      port: (pv > 0 && pv < 65536) ? pv : 0,
+      discovery: (dv > 0 && dv < 65536) ? dv : 0,
     };
     cmd(v ? 'flowlink.enable' : 'flowlink.disable', v ? args : {}).then(o => {
       if (o && o.ok !== false) flMerge(o);
@@ -1195,12 +1230,19 @@ function flFill(body, paint) {
   body.appendChild(card([
     setCardHead('服务', on ? setPill('运行中', 'ok') : setPill('已关闭')),
     toggle,
+    on ? flActualPortsLine(st) : null,
     on ? el('div', 'set-divider') : null,
     on ? formRow : null,
+    on ? el('div', 'set-hint', '端口是首选值：被占用时传输端口自动改用随机端口、发现端口退化为仅主动探测，都不会启动失败；留空或填 0 = 自动。') : null,
     on ? flRow([savePorts]) : null,
     on ? el('div', 'set-divider') : null,
-    on ? switchRow('允许被发现（UDP 广播 + 组播）', pf.announce, v =>
-      cmd('flowlink.settings', { announce: v }).then(o => { if (o && o.ok !== false) flMerge(o); paint(); })) : null,
+    on ? switchRow('主动发现（UDP 广播 + 组播 + 单播探测）', pf.announce, v =>
+      cmd('flowlink.settings', { announce: v }).then(o => { if (o && o.ok !== false) flMerge(o); paint(); }),
+      '定期向广播地址、组播组以及已知对端 / 本机地址 / 额外目标发送探测；关闭后不能被自动发现。') : null,
+    on ? el('div', 'set-hint', '需要手动指定发现地址（WSL 镜像网络、跨网段或防火墙挡住 UDP）？在 FlowLink 管理页 → 设置 → 额外发现地址里添加。') : null,
+    on && st.discovery_state === 'probe-only'
+      ? setNote('发现端口被占用：当前只能主动探测，收不到其他设备的广播。可换一个发现端口，或在 FlowLink 管理页填写「额外发现地址」。', 'warn')
+      : null,
     on ? switchRow('接受远程作业', pf.accept, v =>
       cmd('flowlink.settings', { accept: v }).then(o => { if (o && o.ok !== false) flMerge(o); paint(); }),
       '允许已配对的对端在这里运行回合、读取工作区文件（只读，且限制在工作区内）。') : null,

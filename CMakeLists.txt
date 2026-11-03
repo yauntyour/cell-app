@@ -50,10 +50,15 @@ option(CELL_BUILD_UI "Regenerate the embedded UI from src/ui/src before building
 set(CELL_CXX_STANDARD "26" CACHE STRING
     "C++ standard (26 by default; set 23 on compilers without -std=c++26)")
 
-# ---- artifacts land in <source>/build ---------------------------------------
+# ---- artifacts land in the build tree that configured them -------------------
+# Default to CMAKE_BINARY_DIR, not <source>/build: a second build directory
+# (wsl_build/, a second checkout's build/, an ASAN build) must keep its own
+# executable instead of overwriting another build's artifact. With -B build the
+# default still resolves to <source>/build, which is what the README and the
+# release workflow use. -DCELL_OUTPUT_DIR=... overrides it.
 
-set(CELL_OUTPUT_DIR "${CMAKE_SOURCE_DIR}/build" CACHE PATH
-    "Directory the built executable lands in")
+set(CELL_OUTPUT_DIR "${CMAKE_BINARY_DIR}" CACHE PATH
+    "Directory the built executable lands in (default: this build directory)")
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CELL_OUTPUT_DIR}")
 foreach(_cell_cfg DEBUG RELEASE RELWITHDEBINFO MINSIZEREL) # multi-config generators
     set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_${_cell_cfg} "${CELL_OUTPUT_DIR}")

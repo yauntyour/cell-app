@@ -21,9 +21,9 @@ One agent runtime, one web UI, several ways to open it:
   working session at a time (use Teamwork to parallelise inside a directory).
 
 ```
-cell-app.exe                    the desktop app (auto-serves its UI on a free port)
-cell-app.exe --serve [PORT]     desktop app + explicit service port (default 8787)
-cell-app.exe --headless [PORT]  HTTP service only, no window
+cell-app.exe                    the desktop app (UI on an OS-assigned random port)
+cell-app.exe --serve [PORT]     desktop app + HTTP service (random port unless PORT is given)
+cell-app.exe --headless [PORT]  HTTP service only, no window (random port unless PORT is given)
 cell-app.exe --ui FILE          serve the UI page from disk (dev mode, see below)
 cell-app.exe --update-check     print "is this build the newest release?" and exit
 ```
@@ -117,7 +117,10 @@ shell is newer than the core.
 On Windows, run CMake from the MSYS2 UCRT64 shell (or point it at the
 toolchain: `-DCMAKE_CXX_COMPILER=D:/x64/msys2/ucrt64/bin/g++.exe`). Before
 compiling, the build regenerates the embedded UI (`src/ui/src/` →
-`src/cell-ui.hpp`) and drops the executable into `build/`.
+`src/cell-ui.hpp`) and drops the executable into the **configured build
+directory** (`-B build` → `build/cell-app.exe`, `-B wsl_build` →
+`wsl_build/cell-app`), so parallel Windows/WSL build trees never overwrite
+each other. `-DCELL_OUTPUT_DIR=DIR` overrides where the artifact lands.
 
 ```bash
 cmake -B build -DCELL_STATIC=OFF        # Windows: link against MSYS2 DLLs
@@ -311,8 +314,8 @@ lists the peers).
 
 | | |
 |---|---|
-| discovery | UDP broadcast + multicast on 47821, JSON beacons every 5 s |
-| transport | TCP 47822, length-prefixed frames, XChaCha20-Poly1305 on every frame |
+| discovery | JSON beacons every 5 s; a random UDP receive port plus an optional well-known listener (47821) and unicast keepalives to known peers — so two instances on one machine (Windows host + WSL cell, mirrored networking) still find each other |
+| transport | TCP preferred 47822, automatic random port when busy (the real port is advertised in the beacon), length-prefixed frames, XChaCha20-Poly1305 on every frame |
 | identity | `client_id` = 16 random bytes from libsodium (32 hex chars) |
 | pairing | 512-bit base62 code → Argon2id PSK + ephemeral X25519 handshake |
 | link key | 32 random bytes, sealed like the API-key vault, in `.cell/links/<client_id>/.key` |

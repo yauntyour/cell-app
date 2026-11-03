@@ -81,6 +81,46 @@
   background:var(--bg2);border:1px solid var(--line);color:var(--fg);font-size:12.5px;
   outline:none;transition:border-color var(--dur) var(--ease);width:100%}
 #flowlinkPage .fl-input:focus{border-color:var(--accent)}
+#flowlinkPage .fl-textarea{height:auto;min-height:96px;padding:9px 10px;line-height:1.65;
+  resize:vertical;font-family:var(--mono);font-size:11.5px}
+
+/* ---- 实际端口（只读） ---------------------------------------------- */
+#flowlinkPage .fl-actual{border:1px solid var(--line);border-radius:10px;
+  background:rgba(255,255,255,.02);padding:10px 12px;display:flex;flex-direction:column;gap:7px}
+#flowlinkPage .fl-actual-head{display:flex;align-items:center;gap:8px}
+#flowlinkPage .fl-actual-title{font-size:11.5px;font-weight:600;color:var(--fg2);letter-spacing:.02em}
+#flowlinkPage .fl-actual-rows{display:flex;flex-direction:column;gap:4px}
+#flowlinkPage .fl-portrow{display:flex;align-items:baseline;gap:10px;min-width:0}
+#flowlinkPage .fl-portk{flex:none;min-width:88px;font-size:11.5px;color:var(--fg4)}
+#flowlinkPage .fl-portv{font-size:12px;color:var(--fg2);min-width:0;overflow-wrap:anywhere}
+
+/* ---- 发现诊断（折叠） ---------------------------------------------- */
+#flowlinkPage .fl-diag{border:1px solid var(--line);border-radius:10px;
+  background:rgba(255,255,255,.02)}
+#flowlinkPage .fl-diag-sum{display:flex;align-items:center;gap:8px;padding:8px 12px;
+  cursor:pointer;list-style:none;user-select:none;font-size:11.5px;color:var(--fg2)}
+#flowlinkPage .fl-diag-sum::-webkit-details-marker{display:none}
+#flowlinkPage .fl-diag-sum::before{content:'';width:0;height:0;flex:none;margin-right:1px;
+  border-left:5px solid var(--fg4);border-top:4px solid transparent;border-bottom:4px solid transparent;
+  transition:transform var(--dur) var(--ease)}
+#flowlinkPage .fl-diag[open] .fl-diag-sum::before{transform:rotate(90deg)}
+#flowlinkPage .fl-diag-sum:hover{color:var(--fg)}
+#flowlinkPage .fl-diag-title{font-weight:600}
+#flowlinkPage .fl-diag-body{padding:0 12px 12px;display:flex;flex-direction:column;gap:10px}
+#flowlinkPage .fl-diag-line{font-size:11px;color:var(--fg3);overflow-wrap:anywhere}
+#flowlinkPage .fl-diag-groups{display:flex;flex-direction:column;gap:8px}
+#flowlinkPage .fl-diag-group{display:flex;flex-direction:column;gap:4px;min-width:0}
+#flowlinkPage .fl-diag-gh{display:flex;align-items:center;gap:6px}
+#flowlinkPage .fl-diag-tag{font-size:10.5px;color:var(--fg3);letter-spacing:.06em;
+  border:1px solid var(--line2);border-radius:var(--radius-full);padding:1px 7px}
+#flowlinkPage .fl-diag-count{font-family:var(--mono);font-size:10px;color:var(--fg4)}
+#flowlinkPage .fl-diag-list{display:flex;flex-direction:column;gap:2px;min-width:0}
+#flowlinkPage .fl-diag-item{font-size:11px;color:var(--fg2);overflow-wrap:anywhere}
+#flowlinkPage .fl-diag-stats{display:flex;flex-wrap:wrap;gap:6px 14px;padding-top:8px;
+  border-top:1px solid var(--line)}
+#flowlinkPage .fl-diag-stat{display:flex;align-items:baseline;gap:5px;font-size:10.5px;color:var(--fg4)}
+#flowlinkPage .fl-diag-stat-v{font-size:11.5px;color:var(--fg2)}
+#flowlinkPage .fl-diag-stat.bad .fl-diag-stat-v{color:var(--warn)}
 
 #flowlinkPage .fl-switchrow{align-items:flex-start;gap:12px}
 #flowlinkPage .fl-switch{width:38px;height:22px;flex:none;border-radius:11px;background:var(--line2);

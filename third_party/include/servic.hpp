@@ -414,9 +414,18 @@ namespace servic
                 throw boost::system::system_error(ec);
         }
 
+        // The port actually bound. With port 0 the OS assigns one, so callers that
+        // navigate a browser/webview must read this instead of the requested port.
+        unsigned short local_port() const
+        {
+            boost::system::error_code ec;
+            const auto ep = acceptor.local_endpoint(ec);
+            return ec ? 0 : ep.port();
+        }
+
         void run(rt::router &ros)
         {
-            std::cout << "Server listening on " << address_ << ":" << port_ << "\n";
+            std::cout << "Server listening on " << address_ << ":" << local_port() << "\n";
             co_spawn(handle, server_listener(ros), asio::detached);
             handle.run();
         }

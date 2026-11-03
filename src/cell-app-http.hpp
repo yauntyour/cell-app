@@ -586,7 +586,14 @@ namespace app
                 bound_port = 0;
                 return std::format("cannot listen on 127.0.0.1:{}: {}", port, e.what());
             }
-            bound_port = port;
+            // port 0 means "let the OS pick": the Host/Origin gate and the page's
+            // own URLs must use the port that was actually bound, not the request.
+            bound_port = server->local_port();
+            if (bound_port == 0)
+            {
+                server.reset();
+                return "cannot determine the bound HTTP port";
+            }
             if (n_threads < 1)
                 n_threads = 1;
             work.emplace(asio::make_work_guard(io)); // see the member comment

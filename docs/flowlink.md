@@ -19,22 +19,29 @@ It is **off by default**. Nothing is constructed until it is enabled: no
 
 ```
 cell A                                         cell B
-  │  UDP 47821: "I am here" (broadcast/multicast)  │
+  │  UDP <rand>: "I am here" → broadcast / multicast / unicast targets
+  │  UDP 47821..47824: best-effort rendezvous (receive only, may be unavailable)
   │◄──────────────────────────────────────────────►│   discovery
   │                                                │
-  │  TCP 47822: HELLO / HELLO_ACK / CONFIRM        │   pairing (once)
-  │◄──────────────────────────────────────────────►│   → link key
+  │  TCP 47822 (or a random port): HELLO / HELLO_ACK / CONFIRM
+  │◄──────────────────────────────────────────────►│   pairing (once) → link key
   │                                                │
-  │  TCP 47822: AEAD frames (mail, fs.*, tw.*)     │   sessions
+  │  TCP <actual>: AEAD frames (mail, fs.*, tw.*)  │   sessions
   │◄──────────────────────────────────────────────►│
 ```
+
+The ports on the wire are **discovered, not assumed**: a beacon carries the
+transport port and the sender's own receive port, so a cell whose preferred
+ports were taken by another process (or by the other OS under WSL2 mirrored
+networking) still works.
 
 * **Identity** — `client_id`, 16 random bytes from libsodium, 32 lowercase hex
   characters. It names the peer directory `.cell/links/<client_id>/` and is the
   value the `cell` field of the `tw` tool carries. It is generated once and
   kept in `.cell/links/identity.json`.
-* **Discovery** — a beacon reveals only `client_id`, display name, transport
-  port and whether a pairing window is open. No payload, no key material.
+* **Discovery** — a beacon reveals only `client_id`, display name, the
+  transport port, the sender's receive/rendezvous UDP ports and whether a
+  pairing window is open. No payload, no key material.
 * **Pairing** — a 512-bit code, typed once by one side, is the only credential.
   There is no PKI and no signature: whoever can prove knowledge of the code is
   the peer (TLS-like handshake, but the PSK *is* the trust anchor).
@@ -54,7 +61,7 @@ global `config.json` holds **none** of it (see §8):
 ├── .key                          master secret (shared with the credential vault)
 └── links/                        ← all FlowLink state
     ├── identity.json             {"client_id", "name", "created_at"}
-    ├── links.json                service settings + every paired link + workspace list
+    ├── links.json                service settings (incl. extra_targets) + paired links + workspaces
     ├── transmission.json         index of every transfer/mail received
     └── <client_id>/
         ├── .key                  the link key, sealed with Argon2id + AES-256-GCM
@@ -66,8 +73,8 @@ secret with a per-file salt, then AES-256-GCM (XChaCha20-Poly1305 where AES-GCM
 is unavailable). The file is owner-only (0600 on POSIX, read-only attribute on
 Windows).
 
-`links.json` is the single source of truth for FlowLink settings **and** the
-paired-device list: each peer's metadata (name, last address/port, `paired_at`,
+`links.json` is the single source of truth for FlowLink settings (including
+`extra_targets`) **and** the paired-device list: each peer's metadata (name, last address/port, `paired_at`,
 direction, OS/timezone/lang) is a record inside the `links` array — there is no
 separate `meta.json`. Received mail/transfers are stored as `<id>.jsonl` files
 under the peer dir and catalogued by `transmission.json` (the `/link inbox` /
@@ -78,68 +85,172 @@ on this side; the received `.jsonl` files remain.
 
 ## 3. Discovery protocol (UDP)
 
-One JSON object per datagram, ≤ 1 KiB, on port **47821**:
+One JSON object per datagram, ≤ 1 KiB:
 
 ```json
 {"m":"CELLFLNK","v":1,"t":"announce","id":"<client_id>","name":"laptop",
- "port":47822,"pair":false,"ts":1730563200}
+ "port":47822,"rp":51422,"dp":47821,"seq":41,"pair":false,
+ "accept":false,"os":"windows","tz":"…","lang":"zh-CN","ts":1730563200}
 ```
 
-| `t` | meaning |
+| field | meaning |
 |---|---|
-| `announce` | "I exist" — sent every 5 s (±1.2 s jitter) to every target in the table below |
-| `probe` | "who is there?" — receivers answer with a unicast `announce` |
+| `m` / `v` | protocol marker / version (unchanged) |
+| `t` | `announce` or `probe` |
+| `id`, `name` | `client_id`, display name |
+| `port` | this cell's TCP transport port — the **actual** one, which may be random |
+| `rp` | this cell's beacon/receive UDP port (random; replies come here when `47821` is not ours) |
+| `dp` | the rendezvous port this cell actually bound, `0` if it could not |
+| `seq` | monotonically increasing per-process counter (dedupe aid) |
+| `pair`, `accept` | pairing window open / accepts remote jobs |
+| `os`, `tz`, `lang`, `ts` | display metadata, timestamp |
 
-Where a beacon goes, rebuilt before **every** announce (adapters appear and
-vanish while the process runs — WSL starts after the app, a VPN connects, a dock
-is plugged in):
+The additions are backwards compatible: older peers ignore `rp`/`dp`/`seq`.
 
-| target | why |
-|---|---|
-| `255.255.255.255` | the subnet-independent limited broadcast |
-| `239.255.42.71` | multicast, joined on **every** interface; survives APs that filter broadcast between clients |
-| `<subnet broadcast>` of each IPv4 interface | the real directed broadcast, computed as `addr \| ~mask` from the interface's own prefix — never a `/24` guess |
-| the interface's default gateway | a unicast to a real host on the same segment; for WSL2 the gateway *is* the Windows host, the only path across its NAT |
+### Socket model
+
+Discovery never depends on winning a fixed port. When `announce` is on the
+service opens:
+
+* **beacon socket (always)** — UDP v4, `SO_REUSEADDR`, `SO_BROADCAST`, bound to
+  `0.0.0.0:0`. This is the **random receive port** (`rx_port` in status). Every
+  announce/probe is sent from it, so replies and probes aimed back at us land on
+  the same port. Binding 0 is what lets a second instance — or the other OS under
+  WSL2 mirrored networking — run next to the first one.
+* **rendezvous socket (best effort)** — UDP v4, bound to the first free port
+  of the configured `discovery` slot range (default `47821`..`47824`). It
+  receives broadcast/multicast/probes addressed to those ports and joins the
+  multicast group on every interface. If every slot is taken the service keeps
+  running and reports `discovery_state = "probe-only"`; it still sends and
+  receives unicast through the beacon socket. The range exists because one host
+  (Windows + WSL mirrored, or a second cell) can give the well-known port to only
+  one process; local addresses are probed on every slot, broadcast on the first.
+* **multicast senders (best effort)** — one socket per IPv4 interface address,
+  bound to that address with `IP_MULTICAST_IF` set, used only for multicast
+  egress (never receive). This fixes per-interface multicast sends.
+
+When `announce` is false no discovery sockets are created at all:
+`discovery_state = "off"`. Interface enumeration still runs (on start and every
+~10 s) so the page can render addresses and diagnostics.
+
+### Target list
+
+Rebuilt before **every** announce (adapters appear and vanish while the process
+runs — WSL starts after the app, a VPN connects, a dock is plugged in). Each
+entry has a `kind`; the page groups by it and prints the Chinese `label`.
+
+| `kind` | target | why |
+|---|---|---|
+| `local` | each IPv4 interface's own address, plus `127.0.0.1`, on every rendezvous slot | mirrored-mode rendezvous: under WSL2 mirrored networking both stacks share the address, so a unicast to ourselves reaches the other stack (and a second cell may have taken a later slot) |
+| `broadcast` | each interface's directed broadcast, `addr \| ~mask` (skipped on /31, /32) | the real subnet broadcast, never a `/24` guess |
+| `broadcast` | `255.255.255.255` | the subnet-independent limited broadcast |
+| `multicast` | `239.255.42.71` | survives APs that filter broadcast between clients (best effort) |
+| `gateway` | each interface's default gateway, on every rendezvous slot | a real host on the same segment; for WSL2 NAT the gateway *is* the Windows host |
+| `peer` | every discovered peer at its `rp` (and `dp`) port | **unicast keepalive** — this is what keeps WSL↔Windows discovery alive when broadcast cannot cross |
+| `peer` | every paired peer's persisted address at the discovery port | bootstrap after both sides restarted (their random beacon ports are gone) |
+| `extra` | user `extra_targets`, defaulting to the discovery port | cross-subnet, VPN, a peer behind NAT |
+
+The list is rebuilt on every beacon; the count is bounded in practice by the
+number of interfaces, peers and `extra_targets` (typically well under 64
+datagrams per 5 s). Each target is deduplicated by `addr:port`.
 
 The mask matters. A host on `100.2.22.110/18` has broadcast `100.2.63.255`;
 guessing `/24` produces `100.2.22.255`, which is an ordinary host address, so the
 datagram is a unicast to nobody and discovery silently finds nothing. WSL2 hands
 its vEthernet a `/20`, which is the case this project hit first.
 
-A receiver that sees a **new** peer — or one whose address changed — answers with
-a unicast `announce` to the datagram's source address, at most once per 10 s per
-peer. That makes discovery work when only one direction can carry broadcast (NAT,
-client isolation, a firewall that allows replies but not inbound broadcast).
-Beacons carry a `ts`, so the copies that arrive once per interface are applied
-(and counted) only once.
+Replies:
 
-Receivers ignore their own `client_id`, validate every field, and keep a peer
-table entry for 30 s (`kPeerTtlSeconds`). Discovery is best effort: a peer that
-cannot be seen can still be reached by typing its address —
-`flowlink.probe {addr}` unicasts a probe to one `ip[:port]` (the FlowLink page's
-*按地址探测*), and `/link join CODE IP` pairs with it directly.
+* a `probe` is always answered with a unicast `announce` to the source endpoint;
+* an `announce` is answered with a unicast `announce` when the peer is new or
+  its source endpoint changed, rate-limited to once per 5 s per peer (a loop
+  breaker; a `probe` reply is rate-limited to once per second). A cell never
+  replies to its own `client_id`.
+
+Dedupe: per peer, an `announce` carrying the same `ts` as the previous one is
+ignored, so the copies that arrive once per interface are applied (and counted)
+only once; `probe` and `announce` are tracked separately, so a pairing-state
+change is never suppressed by a duplicate. Peers not seen for 30 s are evicted.
+
+Receivers validate every field. Discovery is best effort: a peer that cannot be
+seen can still be reached by typing its address — `flowlink.probe {addr}`
+unicasts a probe to one `ip[:port]` (the FlowLink page's *按地址探测*), and
+`/link join CODE IP` pairs with it directly.
+
+### Evidence from WSL2 mirrored networking
+
+Measured on this machine (`networkingMode=Mirrored`, `hostAddressLoopback=true`):
+
+* the Windows cell held UDP 47821, so the WSL cell's `bind(47821)` failed with
+  `EADDRINUSE` — under mirrored networking the two OSes share the UDP port space,
+  exactly like they share TCP bindings. The old design then disabled discovery
+  entirely, which is why the WSL page showed `地址: —`.
+* **unicast works both ways** between the stacks: Windows→WSL and WSL→Windows were
+  delivered to `100.2.22.110:<port>` and to `127.0.0.1:<port>`.
+* **broadcast does not work WSL→Windows** (`100.2.63.255` and
+  `255.255.255.255` were dropped), while Windows→WSL broadcast was delivered.
+* multicast was not delivered in either direction (kept as best effort).
+* WSL sees `eth4 100.2.22.110/18` — the same IP as the Windows host.
+
+Conclusion: the fixed rendezvous port must be optional, and the reliable path is
+a random receive port plus **unicast** to local addresses, gateways, discovered
+peers and `extra_targets`. Do not depend on broadcast or on winning `47821`.
+
+### Port policy
+
+* FlowLink TCP: bind the preferred `port`; on failure retry with port 0 (random)
+  and log a warning. `flowlink.status.port` is the actual port,
+  `port_preferred` the configured one — the service never fails to start because
+  of the TCP port.
+* UDP beacon: always a random port.
+* Rendezvous: first free `discovery` slot (default `47821`..`47824`), best
+  effort; all slots busy is non-fatal (`probe-only`), and `discovery_bound`
+  reports the slot actually bound (`0` = none).
+* A second instance (or the other OS) on one machine therefore coexists with the
+  first: it gets its own random receive/TCP ports and degrades to probe-only only
+  if every rendezvous slot is taken.
+* HTTP/webview backend: desktop and headless default to an OS-assigned random
+  loopback port; an explicit `--serve PORT` / `--headless PORT` must bind that
+  port or fail loudly. Any other listener also uses port 0 unless the user
+  configured one.
 
 ### When nothing is discovered
 
 `flowlink.status` carries the diagnostics: `interfaces` (every IPv4 interface
 with its prefix, computed broadcast and gateway), `targets` (the exact endpoints
-a beacon goes to) and `rx` (`announce`/`probe` counters plus the last source).
-The FlowLink page shows the local addresses under **本机** and prints the target
-list whenever the device list is empty.
+a beacon goes to, each with `kind` and a short Chinese `label`), `rx`
+(`announce`/`probe`/`sent`/`errors` counters plus `last_from` and
+`since`), and `hints` (state-aware Chinese sentences for the degraded cases).
+The FlowLink page shows the actual discovery and receive ports under **本机**,
+renders `hints` when the device list is empty, and offers a collapsible
+**发现诊断** panel that groups `targets` by kind and prints the `rx` counters.
 
 * `rx.announce == 0` — nothing reaches us at all. Broadcast is not crossing
-  (different subnet, WSL2 NAT, a firewall) — probe the peer's address directly.
+  (different subnet, WSL2 NAT, a firewall) — probe the peer's address directly,
+  or add it under `extra_targets`.
+* `discovery_state == "probe-only"` — every rendezvous slot was taken; we can
+  still probe and answer unicast, but inbound broadcast/multicast to those ports
+  goes to the processes that own them. Change `discovery`, use
+  `extra_targets`, or rely on the unicast paths.
 * Two hosts on the same subnet that still cannot see each other are usually
-  separated by a `/24` assumption somewhere else, a Wi-Fi AP with client
-  isolation, or a host firewall dropping inbound UDP 47821 / TCP 47822.
+  separated by a Wi-Fi AP with client isolation, or a host firewall dropping
+  inbound UDP (`discovery` slot range and `rx_port`) or TCP (the actual
+  transport port).
 * WSL2: the Windows side announces into `vEthernet (WSL)`'s subnet and WSL
   unicasts to its gateway (the Windows host), so both directions work without
-  mirrored networking. Ports that must be reachable: UDP 47821, TCP 47822.
+  mirrored networking. Under mirrored networking use the unicast paths above —
+  WSL→Windows broadcast is dropped. Ports that must be reachable when something
+  filters: UDP <rendezvous> (47821 by default, optional), UDP <rx_port> (random),
+  TCP <actual transport port>.
 
 ## 4. Transport and framing (TCP)
 
-Port **47822**. Each frame is a 4-byte big-endian length followed by a JSON
-body (≤ 16 MiB).
+The transport port defaults to `47822` (the `port` setting) but is only a
+**preference**: if it is taken the service binds a random port and reports the
+actual one as `flowlink.status.port` (`port_preferred` keeps the configured
+value). Peers learn the actual port from the beacon's `port` field and from
+HELLO. Each frame is a 4-byte big-endian length followed by a JSON body
+(≤ 16 MiB).
 
 Before the handshake:
 
@@ -191,6 +302,17 @@ A (initiator)                                    B (responder)
 A wrong code fails at `verify mac` — before any data is exchanged. The pairing
 window closes on success, on `/link cancel`, or after its TTL (5 min default),
 and a peer may only pair while a window is open.
+
+### If an existing pairing stops reconnecting
+
+An older build wrote the sealed `<client_id>/.key` with `nonce`/`ct` under the
+wrong JSON keys on CPUs with AES-NI, so the file can never be decrypted. The
+symptom is a peer that still shows as paired but whose resume handshake fails
+with "unknown peer: pair first" (and a `no readable link key … re-pairing is
+required` warning in the log). Remove the pair on both sides and pair again
+(`/link forget CELL`, or 断开 in the FlowLink page); the current build writes
+readable keys on every CPU. New key files are always validated by
+`--smoke-flowlink` ("real nonce and ciphertext").
 
 ## 6. What a peer can do
 
@@ -263,15 +385,17 @@ FlowLink settings are **not** in the agent's `config.json` — they live in the
 top-level fields of `.cell/links/links.json`, alongside the `links` array (paired
 peers) and the `workspaces` array (pinned FlowLink workspaces). The agent core
 reads/writes them through `flowlink::store::settings()` / `patch_settings()`, and
-the desktop page through the `flowlink.prefs` command.
+the desktop page through the `flowlink.prefs` / `flowlink.settings` commands (the
+latter also carries `extra_targets`).
 
 | key | default | meaning |
 |---|---|---|
 | `enabled` | `false` | mount the service at startup |
 | `name` | `""` | display name (empty = host name) |
-| `port` | `47822` | TCP transport |
-| `discovery` | `47821` | UDP discovery |
-| `announce` | `true` | broadcast the beacon (off = reachable only by address) |
+| `port` | `47822` | preferred TCP transport port; `0` = random, and a busy port falls back to random automatically |
+| `discovery` | `47821` | first of the rendezvous UDP slots (`47821`..`47824`); all busy = `probe-only` |
+| `extra_targets` | `[]` | extra unicast discovery targets, one `ip[:port]` per entry (max 16; port defaults to `discovery`) |
+| `announce` | `true` | open the discovery sockets and send beacons/probes (off = no discovery sockets, so not discoverable and cannot probe) |
 | `accept` | `false` | accept `fs.*` / `tw.*` from paired peers |
 | `workspace` | `""` | directory remote work lands in (empty = active workspace / cwd) |
 
@@ -307,7 +431,8 @@ Not covered (by design):
   peer may read the shared workspace and start jobs if `accept` is on.
 * **Traffic analysis** — sizes and timing are visible to the network.
 * **Discovery privacy** — an enabled, announcing cell is visible on the LAN by
-  name and `client_id`; turn `announce` off to stay silent.
+  name and `client_id`; the random receive port does not hide its identity. Turn
+  `announce` off to stay silent (this also disables probing).
 * **NAT / routed networks** — the protocol is LAN-scoped (broadcast/multicast
   discovery, direct TCP). Peers behind NAT need a manual address and a port
   forward.
@@ -319,10 +444,14 @@ Not covered (by design):
   `SO_REUSEADDR` (see above).
 * POSIX: key files are `chmod 0600`; the listener sets `SO_REUSEADDR` only to
   survive `TIME_WAIT` after a restart.
-* Discovery sends to `255.255.255.255`, the multicast group (joined on every
-  interface), each interface's real directed broadcast (`addr | ~mask`, never a
-  `/24` guess) and its default gateway — a host with several NICs, a docker
-  bridge or a `/18` `/20` mask still reaches its peers (see §3).
+* Discovery sends to each interface's own unicast address, its real directed
+  broadcast (`addr | ~mask`, never a `/24` guess), its default gateway,
+  `255.255.255.255`, the multicast group (joined on every interface), discovered
+  peers' random receive ports and the user's `extra_targets` — a host with several
+  NICs, a docker bridge or a `/18` `/20` mask still reaches its peers (see §3).
+  The receive socket uses a random port, so two stacks or two instances on one
+  machine do not fight over 47821 (WSL2 mirrored networking shares UDP *and* TCP
+  port space).
 * `--smoke-flowlink` (run by CI on Windows, Linux and macOS) starts two cells in
   one process and checks discovery, a wrong code, pairing, the sealed key file,
   mail in both directions, RPC, a reconnect from the stored key, and the

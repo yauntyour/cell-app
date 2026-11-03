@@ -626,6 +626,10 @@ namespace app
             o.discovery = (std::uint16_t)std::clamp(set.value("discovery", 47821), 0, 65535);
             o.announce = set.value("announce", true);
             o.accept_remote = set.value("accept", false);
+            if (set.contains("extra_targets") && set["extra_targets"].is_array())
+                for (const auto &e : set["extra_targets"])
+                    if (e.is_string() && !e.get_ref<const std::string &>().empty())
+                        o.extra_targets.push_back(e.get<std::string>());
             o.on_event = [this](const nlohmann::json &ev)
             { fl_publish(ev); };
             o.on_call = [this](const std::string &method, const nlohmann::json &params, std::string &e)
@@ -3134,7 +3138,8 @@ namespace app
                 if (name == "flowlink.settings" || name == "flowlink.enable" || name == "flowlink.prefs")
                 {
                     nlohmann::json patch = nlohmann::json::object();
-                    for (const char *k : {"name", "port", "discovery", "announce", "accept", "workspace"})
+                    for (const char *k : {"name", "port", "discovery", "announce", "accept", "workspace",
+                                          "extra_targets"})
                         if (args.contains(k) && !args[k].is_null())
                             patch[k] = args[k];
                     if (name == "flowlink.enable")
@@ -3179,7 +3184,12 @@ namespace app
                         return ok_error("FlowLink is off — enable it first");
                     auto svc = cell::link::service();
                     if (svc)
+                    {
                         svc->probe();
+                        // replies are asynchronous: give the LAN one RTT to answer
+                        // before snapshotting, otherwise "重新扫描" always looks empty
+                        std::this_thread::sleep_for(std::chrono::milliseconds(400));
+                    }
                     nlohmann::json r = ok_with(fl_status());
                     r["devices"] = fl_devices();
                     return r;

@@ -5,6 +5,8 @@
 
      Scan Links   发现同网段的 cell（系统 / 时区 / 语言 / client_id），
                   选中一台输入配对码即可配对；也可以反过来亮出自己的码。
+                  本机卡片摊开实际发现 / 接收端口，设备为空时展开「发现诊断」
+                  看每轮 beacon 的目标和 rx 计数。
      已配对        信任的设备；选中后列出对端**已打开的工作区**，挑一个
                   加进本机的「FlowLink 工作区」列表。
      传输列表      对端分享过来的会话 / 已存档会话（JSONL 落盘，索引在
@@ -42,7 +44,25 @@ const FL = {
 const FLT = new Map();
 
 /* ---------- 数据 ---------------------------------------------------- */
-function flStatusObj() { return S.flowlink || {}; }
+/* status 默认值。新后端的发现字段（discovery_bound / rx_port /
+   discovery_state / targets / hints / rx）在旧后端或事件增量里可能缺失，
+   读之前统一补一层，页面里就不用到处写 `|| []` / `|| 0`。 */
+const FL_STATUS_DEFAULTS = {
+  enabled: false, client_id: '', name: '',
+  port: 0, port_preferred: 47822,
+  discovery_port: 47821, discovery_bound: 0,
+  rx_port: 0, discovery_state: '',
+  announce: true, accept_remote: false,
+  interfaces: [], targets: [], rx: {}, hints: [],
+  settings: {}, pairing: {}, peers: [], workspaces: [],
+  transfers: [], transmissions: {},
+};
+function flStatusObj() {
+  const raw = S.flowlink;
+  const st = Object.assign({}, FL_STATUS_DEFAULTS, (raw && typeof raw === 'object') ? raw : {});
+  for (const k in FL_STATUS_DEFAULTS) if (st[k] == null) st[k] = FL_STATUS_DEFAULTS[k];
+  return st;
+}
 function flSettings() { return flStatusObj().settings || {}; }
 function flPeers() {
   const p = flStatusObj().peers;
@@ -60,6 +80,60 @@ function flTransfers() {
 function flClientId() { return flStatusObj().client_id || ''; }
 function flName() { return flStatusObj().name || flSettings().name || ''; }
 function flPairing() { return flStatusObj().pairing || {}; }
+function flPortText(n) {
+  const v = Number(n || 0);
+  return v > 0 ? String(v) : '—';
+}
+function flExtraTargets() {
+  const t = flSettings().extra_targets;
+  return Array.isArray(t) ? t.map(String).filter(Boolean) : [];
+}
+
+/* targets[] 的 kind -> 中文标签（顺序也是诊断面板里的分组顺序）。
+   DESIGN：broadcast / multicast / local / gateway / peer / extra。 */
+const FL_TARGET_KINDS = [
+  { id: 'broadcast', label: '广播' },
+  { id: 'multicast', label: '组播' },
+  { id: 'local', label: '本机' },
+  { id: 'gateway', label: '网关' },
+  { id: 'peer', label: '对端' },
+  { id: 'extra', label: '自定义' },
+];
+
+/* 新后端给 {addr,port,kind,label}；旧后端给 "addr:port" 字符串。两种都收，
+   这样页面在 Lead 改完后端前后都能渲染。 */
+function flTargetList() {
+  const raw = flStatusObj().targets;
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  for (const t of raw) {
+    if (typeof t === 'string') {
+      const i = t.lastIndexOf(':');
+      const addr = i > 0 ? t.slice(0, i) : t;
+      const port = i > 0 ? (Number(t.slice(i + 1)) || 0) : 0;
+      out.push({ addr: addr, port: port, kind: '', label: '' });
+    } else if (t && typeof t === 'object') {
+      out.push({
+        addr: String(t.addr || ''),
+        port: Number(t.port || 0),
+        kind: String(t.kind || ''),
+        label: String(t.label || ''),
+      });
+    }
+  }
+  return out;
+}
+
+/* 发现状态：优先用后端字段；旧后端没有这个字段（默认空串）时按
+   enabled + discovery_bound 推断，避免把「旧后端 + 已开启」误判成已关闭。 */
+function flDiscoveryState() {
+  const st = flStatusObj();
+  const s = st.discovery_state;
+  if (s === 'active' || s === 'probe-only' || s === 'off') return s;
+  if (!st.enabled) return 'off';
+  return Number(st.discovery_bound || 0) > 0 ? 'active' : 'probe-only';
+}
+const FL_DISC_LABEL = { active: '监听中', 'probe-only': '仅主动探测', off: '已关闭' };
 
 /* 设备列表 = 已配对 + 扫到的；同一台只出现一次，已配对信息优先 */
 function flDevices() {
@@ -239,6 +313,19 @@ function flInput(ph, val, type) {
   if (val != null) i.value = val;
   return i;
 }
+function flTextarea(ph, val, rows) {
+  const t = el('textarea', 'fl-input fl-textarea');
+  t.rows = rows || 4;
+  if (ph) t.placeholder = ph;
+  t.value = val == null ? '' : val;
+  return t;
+}
+function flKv(k, v, cls) {
+  const row = el('div', 'fl-kv');
+  row.appendChild(el('span', 'fl-k', k));
+  row.appendChild(el('span', 'fl-v' + (cls ? ' ' + cls : ''), v));
+  return row;
+}
 function flFmtBytes(n) {
   n = Number(n || 0);
   if (n < 1024) return n + ' B';
@@ -296,6 +383,85 @@ function flDeviceRow(d) {
   return row;
 }
 
+/* 发现诊断（可折叠）：把「beacon 到底发去哪了、有没有回音」摊开。
+   设备列表为空时才显示 —— 有设备时这些只是噪音。targets 按 kind 分组，
+   中文标签与后端约定一致；rx 计数用来看广播是不是根本进不来。 */
+function flDiagBlock() {
+  const st = flStatusObj();
+  const state = flDiscoveryState();
+  const det = el('details', 'fl-diag');
+  const sum = el('summary', 'fl-diag-sum');
+  sum.appendChild(el('span', 'fl-diag-title', '发现诊断'));
+  sum.appendChild(flPill(FL_DISC_LABEL[state] || state, state === 'active' ? 'ok' : 'warn'));
+  det.appendChild(sum);
+
+  const body = el('div', 'fl-diag-body');
+  const db = Number(st.discovery_bound || 0);
+  const dp = Number(st.discovery_port || 0);
+  const discTxt = state === 'off' ? '已关闭'
+    : db ? String(db)
+    : dp ? dp + '（仅主动探测）' : '—';
+  body.appendChild(el('div', 'fl-diag-line mono',
+    '发现端口 ' + discTxt + ' · 接收端口 ' + flPortText(st.rx_port)));
+
+  // targets 分组
+  const groups = new Map();
+  for (const t of flTargetList()) {
+    const k = t.kind || 'other';
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(t);
+  }
+  if (!groups.size) {
+    body.appendChild(el('div', 'fl-hint', '暂无发送目标：服务未开启，或还没有枚举到网卡。'));
+  } else {
+    const known = new Set(FL_TARGET_KINDS.map(k => k.id));
+    const order = FL_TARGET_KINDS.map(k => k.id);
+    for (const gid of groups.keys()) if (!known.has(gid)) order.push(gid);
+    const grid = el('div', 'fl-diag-groups');
+    for (const gid of order) {
+      const items = groups.get(gid);
+      if (!items || !items.length) continue;
+      const kind = FL_TARGET_KINDS.find(k => k.id === gid);
+      const label = kind ? kind.label : '其他';
+      const g = el('div', 'fl-diag-group');
+      const gh = el('div', 'fl-diag-gh');
+      gh.appendChild(el('span', 'fl-diag-tag', label));
+      gh.appendChild(el('span', 'fl-diag-count', String(items.length)));
+      g.appendChild(gh);
+      const lines = el('div', 'fl-diag-list mono');
+      for (const t of items) {
+        const item = el('div', 'fl-diag-item', t.addr + (t.port ? ':' + t.port : ''));
+        item.title = t.label || (label + '目标');
+        lines.appendChild(item);
+      }
+      g.appendChild(lines);
+      grid.appendChild(g);
+    }
+    body.appendChild(grid);
+    body.appendChild(el('div', 'fl-hint',
+      '每轮 announce 都会发往上面这些目标（对端与本机地址优先）；收到广播 / 探测后回包走单播。'));
+  }
+
+  // rx 计数
+  const rx = st.rx || {};
+  const stats = el('div', 'fl-diag-stats');
+  const stat = (k, v, cls) => {
+    const s = el('span', 'fl-diag-stat' + (cls ? ' ' + cls : ''));
+    s.appendChild(el('span', 'fl-diag-stat-k', k));
+    s.appendChild(el('span', 'fl-diag-stat-v mono', String(v == null || v === '' ? '—' : v)));
+    return s;
+  };
+  stats.appendChild(stat('收到广播', rx.announce));
+  stats.appendChild(stat('收到探测', rx.probe));
+  stats.appendChild(stat('已发送', rx.sent));
+  if (Number(rx.errors || 0) > 0) stats.appendChild(stat('错误', rx.errors, 'bad'));
+  stats.appendChild(stat('最后来源', rx.last_from));
+  body.appendChild(stats);
+
+  det.appendChild(body);
+  return det;
+}
+
 function flPaintScan(main) {
   const on = flEnabled();
   flHead(main, 'Scan Links',
@@ -341,6 +507,37 @@ function flPaintScan(main) {
       (i.gateway ? '  网关 ' + i.gateway : '')).join('\n');
   self.appendChild(addrRow);
 
+  // 发现端口 = rendezvous（well-known）端口，best effort；接收端口 = 每次
+  // 随机分配的 beacon 端口。两者分开之后，用户最常问的两件事——「WSL 里
+  // 为什么没地址」和「两台机器为什么抢端口」——都能在这里直接回答。
+  const selfSt = flStatusObj();
+  const discBound = Number(selfSt.discovery_bound || 0);
+  const discCfg = Number(selfSt.discovery_port || 0) || 47821;
+  const discState = flDiscoveryState();
+  let discTxt, discPill, discPillCls;
+  if (discState === 'off') {
+    discTxt = '已关闭（主动发现关闭）';
+    discPill = '已关闭'; discPillCls = 'warn';
+  } else if (discBound) {
+    discTxt = discBound + '（监听中）';
+    discPill = '监听中'; discPillCls = 'ok';
+  } else {
+    discTxt = discCfg + ' 被占用 · 仅主动探测';
+    discPill = '仅探测'; discPillCls = 'warn';
+  }
+  const discRow = flKv('发现端口', discTxt, 'mono');
+  discRow.appendChild(flPill(discPill, discPillCls));
+  discRow.title = 'rendezvous 端口：其他 cell 的广播 / 组播 / 单播探测打到这个端口才收得到。'
+    + '它只是 best effort —— 被占用时（同一台机器开了两个实例，或 WSL 与 Windows 在镜像网络下'
+    + '共享 UDP 端口）不会让服务启动失败，只会退化成「仅主动探测」；主动发现关闭时则完全不监听。';
+  self.appendChild(discRow);
+
+  const rxPort = Number(selfSt.rx_port || 0);
+  const rxRow = flKv('接收端口', flPortText(rxPort), 'mono');
+  rxRow.title = '每次启动随机分配（bind 0.0.0.0:0），所以同一台机器上开两个实例也不会抢端口；'
+    + '对端的单播回包与探测回包都发到这里（beacon 里的 rp 字段）。';
+  self.appendChild(rxRow);
+
   const p = flPairing();
   if (p.open && p.code) {
     const box = el('div', 'fl-codebox');
@@ -374,20 +571,23 @@ function flPaintScan(main) {
   list.appendChild(lh);
 
   if (!devs.length) {
-    list.appendChild(el('div', 'fl-hint', '还没有发现设备。确认对方也开了 FlowLink、在同一个网段，然后点「重新扫描」。'));
-    // 发现靠 UDP 广播：一个都没收到，多半是广播根本出不去（不同网段、防火墙、
-    // WSL2 的 NAT），而不是对方没开。把广播目标摊开，用户才知道下一步该填哪个地址。
-    const rx = flStatusObj().rx || {};
-    if (!rx.announce) {
-      list.appendChild(el('div', 'fl-hint bad',
-        '本机还没有收到任何广播。若对方在 WSL 里、跨了 NAT，或被防火墙挡住，广播到不了 —— 用下面的「按地址探测」直接填对方的地址。'));
+    // hints[] 是后端按当前状态给出的中文句子（端口被占、还没收到包、WSL
+    // 镜像网络、防火墙……）。有就照抄，没有就退回原来的通用文案。
+    const st = flStatusObj();
+    const hints = Array.isArray(st.hints) ? st.hints.filter(h => h) : [];
+    const state = flDiscoveryState();
+    if (hints.length) {
+      for (const h of hints)
+        list.appendChild(el('div', 'fl-hint' + (state === 'active' ? '' : ' bad'), h));
+    } else {
+      list.appendChild(el('div', 'fl-hint', '还没有发现设备。确认对方也开了 FlowLink、在同一个网段，然后点「重新扫描」。'));
+      const rx = st.rx || {};
+      if (!Number(rx.announce || 0) && state !== 'off') {
+        list.appendChild(el('div', 'fl-hint bad',
+          '本机还没有收到任何广播。若对方在 WSL 里、跨了 NAT，或被防火墙挡住，广播到不了 —— 用下面的「按地址探测」直接填对方的地址。'));
+      }
     }
-    const targets = flStatusObj().targets || [];
-    if (targets.length) {
-      const line = el('div', 'fl-hint mono', '广播目标：' + targets.join(' · '));
-      line.title = 'UDP ' + (flStatusObj().discovery_port || 47821) + ' 上每个 beacon 会发往的地址';
-      list.appendChild(line);
-    }
+    list.appendChild(flDiagBlock());
   } else {
     const wrap = el('div', 'fl-devs');
     for (const d of devs) wrap.appendChild(flDeviceRow(d));
@@ -430,8 +630,9 @@ function flPaintScan(main) {
   pgo.disabled = FL.busy;
   prow.appendChild(pgo);
   list.appendChild(flField('探测地址', prow,
-    '广播出不去时用这个：填对方「本机」里显示的地址（端口默认 ' +
-    (flStatusObj().discovery_port || 47821) + '，可写 ip:port）。'));
+    '广播 / 组播到不了时用这个：填对方「本机」里显示的地址。WSL2 的 NAT 与镜像网络、'
+    + '跨网段、或防火墙挡住 UDP 时，单播探测是唯一能直接摸到对方的路。端口默认 '
+    + (Number(flStatusObj().discovery_port || 0) || 47821) + '，也可以写 ip:port。'));
 
   body.appendChild(list);
   main.appendChild(body);
@@ -740,9 +941,68 @@ async function flDropTransfer(id) {
   }
 }
 
+/* 实际绑定端口（只读）：来自 status，和下面的偏好输入框不是一回事。
+   TCP 抢不到首选会退到随机端口，UDP rendezvous 抢不到只会退化为仅探测。 */
+function flActualPorts() {
+  const st = flStatusObj();
+  const on = !!st.enabled;
+  const wrap = el('div', 'fl-actual');
+  const head = el('div', 'fl-actual-head');
+  head.appendChild(el('span', 'fl-actual-title', '实际端口'));
+  head.appendChild(flPill(on ? '服务运行中' : '服务未开启', on ? 'ok' : 'warn'));
+  wrap.appendChild(head);
+
+  const rows = el('div', 'fl-actual-rows');
+  const row = (k, v) => {
+    const r = el('div', 'fl-portrow');
+    r.appendChild(el('span', 'fl-portk', k));
+    r.appendChild(el('span', 'fl-portv mono', v));
+    return r;
+  };
+  const tcp = Number(st.port || 0);
+  const pref = Number(st.port_preferred || 0);
+  let tcpTxt = flPortText(tcp);
+  if (tcp && pref && pref !== tcp) tcpTxt += '（首选 ' + pref + ' 被占用，已自动改用随机端口）';
+  rows.appendChild(row('当前传输端口', tcpTxt));
+  const db = Number(st.discovery_bound || 0);
+  const dp = Number(st.discovery_port || 0);
+  const discState = flDiscoveryState();
+  rows.appendChild(row('当前发现端口',
+    discState === 'off' ? '已关闭（主动发现关闭）'
+      : db ? db + '（监听中）'
+      : dp ? dp + ' 被占用 · 仅主动探测' : '—'));
+  const rx = Number(st.rx_port || 0);
+  rows.appendChild(row('接收端口', rx ? rx + '（随机 UDP）' : '—'));
+  wrap.appendChild(rows);
+  wrap.appendChild(el('div', 'fl-hint',
+    '实际端口只读。下面的输入框是「首选端口」：保存后会重新挂载服务；被占用时传输端口自动改用随机端口、'
+    + '发现端口退化为仅主动探测，都不会让服务启动失败。'));
+  return wrap;
+}
+
+/* 额外发现地址：每行一个 ip[:port]。广播 / 组播在 WSL 镜像网络、跨网段或
+   防火墙下可能到不了对端，这些单播目标就是绕过它们的固定路径。 */
+function flParseExtraTargets(text) {
+  const out = [];
+  const seen = new Set();
+  for (const line of String(text || '').split(/\r?\n/)) {
+    const v = line.trim();
+    if (!v || seen.has(v)) continue;
+    seen.add(v);
+    out.push(v);
+  }
+  return out;
+}
+async function flSaveExtra(text) {
+  const list = flParseExtraTargets(text);
+  if (list.length > 16) { toast('最多 16 个额外发现地址', 'bad'); return; }
+  await flPatch({ extra_targets: list });
+}
+
 /* ---------- 设置 ---------------------------------------------------- */
 function flPaintSettings(main) {
   const s = flSettings();
+  const st = flStatusObj();
   flHead(main, '设置',
     '服务开关与端口。这些设置随 FlowLink 一起存在 .cell/links/links.json，不写进系统主配置。',
     []);
@@ -777,12 +1037,19 @@ function flPaintSettings(main) {
   const nameIn = flInput('留空 = 主机名', s.name || '');
   card.appendChild(flField('设备名', nameIn, '对方在设备列表里看到的名字'));
 
+  // 实际绑定值放在偏好输入框上方：先看「现在是什么」，再改「想要什么」
+  card.appendChild(flActualPorts());
+
   const portIn = flInput('47822', String(s.port == null ? 47822 : s.port), 'number');
   const discIn = flInput('47821', String(s.discovery == null ? 47821 : s.discovery), 'number');
   const ports = el('div', 'fl-row');
   ports.appendChild(flField('传输端口 (TCP)', portIn));
   ports.appendChild(flField('发现端口 (UDP)', discIn));
   card.appendChild(ports);
+  card.appendChild(el('div', 'fl-hint',
+    '传输端口留空或填 0 = 每次随机；发现端口一般保持 47821，填 0 会得到一个别人不知道的随机端口。'
+    + '端口被占用不会启动失败：传输端口自动改用随机端口（见上面的「当前传输端口」），'
+    + '发现端口退化为仅主动探测，对端仍可用「按地址探测」连上。'));
 
   const annRow = el('div', 'fl-row fl-switchrow');
   const annSw = el('button', 'fl-switch' + (s.announce !== false ? ' on' : ''));
@@ -790,8 +1057,10 @@ function flPaintSettings(main) {
   annSw.onclick = () => flPatch({ announce: !(s.announce !== false) });
   annRow.appendChild(annSw);
   const annTxt = el('div', 'fl-switch-txt');
-  annTxt.appendChild(el('div', 'fl-switch-title', '广播自身'));
-  annTxt.appendChild(el('div', 'fl-hint', '关闭后仍可主动配对，但不会被同网段的设备自动发现。'));
+  annTxt.appendChild(el('div', 'fl-switch-title', '主动发现'));
+  annTxt.appendChild(el('div', 'fl-hint',
+    '开启后定期发出通告与探测：UDP 广播 + 组播 + 对已知对端、本机地址和额外目标的单播探测。'
+    + '关闭后不创建任何发现 socket（既不能广播也不能主动探测），但 TCP 传输、已配对凭据与按地址配对仍然可用。'));
   annRow.appendChild(annTxt);
   card.appendChild(annRow);
 
@@ -819,9 +1088,29 @@ function flPaintSettings(main) {
       workspace: wsIn.value.trim(),
     });
   }, 'accent'));
-  row.appendChild(el('span', 'fl-hint', '改端口会重新挂载服务。'));
+  row.appendChild(el('span', 'fl-hint', '保存会重新挂载服务；已配对设备用保存的互信凭据自动重连。'));
   card.appendChild(row);
   body.appendChild(card);
+
+  /* ---- 发现：额外单播目标 ----
+     广播 / 组播在 WSL2（NAT 或镜像网络）、跨网段、防火墙挡住 UDP 时都可能
+     到不了对端。把对方地址加在这里，每轮发现会额外向它发一次单播探测。 */
+  const discCard = el('section', 'fl-card');
+  const dh = el('div', 'fl-card-head');
+  dh.appendChild(el('span', 'fl-card-title', '发现'));
+  discCard.appendChild(dh);
+  discCard.appendChild(el('div', 'fl-hint',
+    '广播 / 组播在 WSL2（NAT 或镜像网络）、跨网段、防火墙挡住 UDP 时可能到不了对端。'
+    + '把对方地址加到这里，每轮发现会额外向它发一次单播探测 —— 这是穿过这些边界最可靠的路径。'
+    + '端口不写就用发现端口（' + (Number(st.discovery_port || 0) || 47821) + '）。'));
+  const extraIn = flTextarea('每行一个地址，例如：\n100.2.22.110\n192.168.1.9:47821',
+    flExtraTargets().join('\n'), 4);
+  discCard.appendChild(flField('额外发现地址', extraIn, '每行一个 ip[:port]，最多 16 个；留空 = 只用自动发现。'));
+  const erow = el('div', 'fl-row');
+  erow.appendChild(flBtn('保存发现地址', 'check', () => flSaveExtra(extraIn.value), 'accent'));
+  erow.appendChild(el('span', 'fl-hint', '保存会重新挂载服务；已配对设备用保存的凭据自动重连。'));
+  discCard.appendChild(erow);
+  body.appendChild(discCard);
 
   const idCard = el('section', 'fl-card');
   const ih = el('div', 'fl-card-head');
@@ -832,7 +1121,7 @@ function flPaintSettings(main) {
   kv.appendChild(el('code', 'fl-v mono', flClientId() || '—'));
   idCard.appendChild(kv);
   idCard.appendChild(el('div', 'fl-hint',
-    '目录：.cell/links/（identity.json 标识 / links.json 设置与连接 / transmission.json 传输索引 / <client_id>/.key 互信凭据）'));
+    '目录：.cell/links/（identity.json 标识 / links.json 设置与连接，含额外发现地址 / transmission.json 传输索引 / <client_id>/.key 互信凭据）'));
   body.appendChild(idCard);
   main.appendChild(body);
 }

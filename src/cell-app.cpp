@@ -2,7 +2,7 @@
 // for cell.cpp.
 //
 //   cell-app.exe                    the desktop app
-//   cell-app.exe --serve [PORT]     desktop app + HTTP service (default 8787)
+//   cell-app.exe --serve [PORT]     desktop app + HTTP service (default: random port)
 //   cell-app.exe --headless [PORT]  HTTP service only, no window
 //
 // The single-file CLI (cell.cpp) is included verbatim with its main()
@@ -719,8 +719,9 @@ namespace app
         printf("cell — desktop shell + web service\n\n");
         printf("usage: cell-app.exe [options]\n\n");
         printf("  --serve [PORT]    also expose the same UI and API over HTTP\n");
-        printf("                    (default port 8787)\n");
+        printf("                    (default: an OS-assigned random port, printed/logged)\n");
         printf("  --headless [PORT] start only the HTTP service, no window\n");
+        printf("                    (default: an OS-assigned random port)\n");
         printf("  --ui FILE         serve the UI page from this file (dev mode:\n");
         printf("                    edit + refresh, no rebuild; default: embedded)\n");
         printf("  --root DIR        use DIR as the data root instead of <exe dir>/.cell\n");
@@ -772,6 +773,11 @@ namespace app
         // instance (both cells share it — that is how they find each other)
         oa.announce = true;
         oa.discovery_port = 47851;
+        // CELL_FLOWLINK_SMOKE_VERBOSE=1 traces the handshake/session decisions of
+        // a failing smoke run without changing the pass/fail output.
+        if (const char *verbose = std::getenv("CELL_FLOWLINK_SMOKE_VERBOSE"); verbose && *verbose)
+            oa.on_log = [](const std::string &level, const std::string &msg)
+            { fprintf(stderr, "[flowlink %s] %s\n", level.c_str(), msg.c_str()); };
         service::options ob = oa;
         ob.root = base / "b";
         ob.name = "cell-b";
@@ -792,6 +798,22 @@ namespace app
         check(port_a > 0, "cell A listens on an ephemeral port");
         check(a.client_id().size() == 32, "client_id is 32 hex characters (libsodium randombytes)");
         check(a.client_id() != b.client_id(), "the two cells have distinct client ids");
+        // Two cells on one host share the UDP port space: at most one of them can
+        // hold the rendezvous port, but BOTH must get a private beacon port and
+        // keep probing. This is exactly the Windows-host + WSL-cell situation.
+        const auto st_a = a.status();
+        const auto st_b = b.status();
+        check(st_a.value("rx_port", 0) > 0 && st_b.value("rx_port", 0) > 0,
+              "both cells got their own random discovery receive port");
+        check(st_a.value("rx_port", 0) != st_b.value("rx_port", 0),
+              "the two discovery receive ports are different");
+        check(st_a["interfaces"].is_array() && !st_a["interfaces"].empty(),
+              "the status reports IPv4 interfaces (Scan Links 本机地址)");
+        check(st_a.value("discovery_state", "") == "active" ||
+                  st_a.value("discovery_state", "") == "probe-only",
+              "the status reports a discovery state");
+        check(st_b.value("discovery_port", 0) == 47851,
+              "a cell that cannot bind the discovery port keeps probing it");
 
         // ---- a wrong pairing code must not pair --------------------------
         {
@@ -837,6 +859,13 @@ namespace app
             std::ifstream f(base / "b" / "links" / a.client_id() / ".key");
             const std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
             check(text.find("argon2id") != std::string::npos, "the link key file is sealed like the vault (argon2id)");
+            // Regression: the AES-GCM branch used to write nonce/ct under the
+            // wrong JSON keys, producing null fields and an unreadable key file on
+            // any CPU with AES-NI (resume then threw inside the io worker).
+            const nlohmann::json sealed = nlohmann::json::parse(text, nullptr, false);
+            check(sealed.is_object() && sealed["nonce"].is_string() && !sealed["nonce"].get<std::string>().empty() &&
+                      sealed["ct"].is_string() && !sealed["ct"].get<std::string>().empty(),
+                  "the sealed key file carries a real nonce and ciphertext (readable on resume)");
         }
         // ---- transfer B -> A --------------------------------------------
         {
@@ -939,15 +968,17 @@ namespace app
         std::string ui_arg; // --ui FILE: serve the page from disk (dev mode)
         std::string root_arg; // --root DIR: use another .cell data root
         int smoke = 0;
-        int serve_port = 0; // 0 = no HTTP service
+        int serve_port = 0; // 0 = OS-assigned port; >0 = explicit; HTTP is always on
         bool headless = false;
         bool update_check = false; // --update-check: probe and print, then leave
         for (int i = 1; i < argc; i++)
         {
             std::string a = argv[i];
-            // --serve / --headless take an optional port in 1..65535. A
-            // non-numeric/out-of-range value used to become 0 (silently no
-            // service, headless spun forever) - reject the command line instead.
+            // --serve / --headless take an optional port in 1..65535. Without a
+            // value the service binds port 0 (the OS picks a random free port),
+            // so a second instance never fights over a fixed 8787. A
+            // non-numeric/out-of-range value rejects the command line instead of
+            // silently becoming "no service" (headless then spun forever).
             auto port_arg = [&](const char *flag) -> int
             {
                 if (i + 1 < argc && argv[i + 1][0] != '-')
@@ -962,7 +993,7 @@ namespace app
                     }
                     return (int)v;
                 }
-                return 8787;
+                return 0; // OS-assigned (random) port
             };
             if (a == "--ui" && i + 1 < argc)
                 ui_arg = argv[++i];
@@ -1133,16 +1164,19 @@ namespace app
         // events while the port still shows as LISTENING).
         http_service http(core);
         http.ui_path = ui_arg; // --ui FILE: serve the page from disk instead
-        auto start_http = [&]() -> bool
+        // Bind the HTTP service. preferred == 0 asks the OS for a random free
+        // port; a positive value must bind that exact port (the caller decides
+        // whether to retry). serve_port becomes the ACTUAL bound port, so the
+        // webview navigates to the right URL even when the port was assigned.
+        auto start_http = [&](int preferred) -> bool
         {
-            if (serve_port <= 0)
-                return true;
-            std::string err = http.start(serve_port, 4);
+            std::string err = http.start(preferred, 4);
             if (!err.empty())
             {
                 log.error("http", err);
                 return false;
             }
+            serve_port = http.bound_port;
             log.info("http", std::format("serving on http://127.0.0.1:{}/ (desktop={})", serve_port, !headless));
             return true;
         };
@@ -1213,9 +1247,12 @@ namespace app
 
             if (headless)
             {
-                // service-only mode: run until Ctrl+C / a termination signal
-                if (!start_http())
+                // service-only mode: run until Ctrl+C / a termination signal.
+                // A random port (0) is the default; an explicit port must work.
+                if (!start_http(serve_port))
                 {
+                    if (serve_port > 0)
+                        log.error("http", std::format("port {} is not available", serve_port));
                     core.shutdown();
                     return 1;
                 }
@@ -1264,23 +1301,18 @@ namespace app
                 // up without its winsock cleanup racing the acceptor (see the
                 // note above). The window then loads the same page a browser
                 // gets: one page, one transport (HTTP + SSE).
-                bool served = false;
-                if (serve_port > 0)
+                // The desktop default is an OS-assigned random port: no fixed
+                // 8787 scan, no collision with a WSL instance or another app.
+                bool served = start_http(serve_port);
+                if (!served && serve_port > 0)
                 {
-                    served = start_http();
+                    log.warn("http", std::format("requested port {} is busy; using a random port", serve_port));
+                    serve_port = 0;
+                    served = start_http(0);
                 }
-                else
-                {
-                    for (int p = 8787; p <= 8806 && !served; p++)
-                    {
-                        serve_port = p;
-                        served = start_http();
-                    }
-                    if (!served)
-                        log.error("http", "no free port in 8787..8806 - the embedded page has no HTTP "
-                                          "backend and boots in demo mode (set --serve PORT)");
-
-                }
+                if (!served)
+                    log.error("http", "the embedded page has no HTTP backend and boots in demo "
+                                      "mode (set --serve PORT to force one)");
                 // the window exists, so WebView2 has finished its winsock
                 // init/cleanup cycle: FlowLink may open its sockets now
                 start_flowlink();
