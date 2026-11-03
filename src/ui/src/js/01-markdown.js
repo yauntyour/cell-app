@@ -46,30 +46,65 @@ function listMark(l) {
 function isHr(l) { return /^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/.test(l) && /^[\s\-*_]+$/.test(l); }
 
 // 表格：表头 + 分隔行 + 若干数据行
+/* 拆一行表格。三件事必须做对，否则一张表就会被切歪：
+     · \| 是单元格里的字面竖线（Markdown 的转义），不拆；
+     · 行内代码里的 | 是内容（`ls | head`），不拆；
+     · 行首/行尾那个可选的边框竖线要吃掉，但它不属于任何单元格。 */
+function tableCells(line) {
+  let s = String(line == null ? '' : line).trim();
+  if (s.startsWith('|')) s = s.slice(1);
+  if (s.endsWith('|') && !s.endsWith('\\|')) s = s.slice(0, -1);
+  const out = [];
+  let cur = '';
+  let inCode = false;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (ch === '\\' && s[i + 1] === '|') { cur += '|'; i++; continue; }
+    if (ch === '`') { inCode = !inCode; cur += ch; continue; }
+    if (ch === '|' && !inCode) { out.push(cur.trim()); cur = ''; continue; }
+    cur += ch;
+  }
+  out.push(cur.trim());
+  return out;
+}
+// 分隔行 → 每列的对齐方式（GFM：:--- 左、---: 右、:---: 居中）
+function tableAligns(sep) {
+  return tableCells(sep).map(c => {
+    const l = c.startsWith(':'), r = c.endsWith(':');
+    if (l && r) return 'center';
+    if (r) return 'right';
+    if (l) return 'left';
+    return '';
+  });
+}
+function alignAttr(a) { return a ? ' style="text-align:' + a + '"' : ''; }
+
 function parseTable(lines, i) {
-  const cells = l => {
-    let s = l.trim();
-    if (s.startsWith('|')) s = s.slice(1);
-    if (s.endsWith('|')) s = s.slice(0, -1);
-    return s.split('|').map(c => c.trim());
-  };
-  const head = cells(lines[i]);
+  const head = tableCells(lines[i]);
+  const al = tableAligns(lines[i + 1]);
+  // 列数以表头与分隔行里更宽的那个为准：少写一列 |---| 不该把数据列吃掉
+  const cols = Math.max(head.length, al.length);
   i += 2; // 跳过分隔行
   const rows = [];
   while (i < lines.length && !isBlank(lines[i]) && lines[i].indexOf('|') >= 0) {
-    rows.push(cells(lines[i]));
+    // 分隔行之后紧跟的必须是数据行：遇到标题 / 列表 / 围栏就收手，别把它们吞进表里
+    if (/^\s*(#{1,6}\s|>|```)/.test(lines[i]) || listMark(lines[i])) break;
+    rows.push(tableCells(lines[i]));
     i++;
   }
   let h = '<div class="tabwrap"><table class="md-tab"><thead><tr>';
-  for (const c of head) h += '<th>' + mdInline(c) + '</th>';
+  for (let k = 0; k < cols; k++)
+    h += '<th' + alignAttr(al[k]) + '>' + mdInline(head[k] == null ? '' : head[k]) + '</th>';
   h += '</tr></thead><tbody>';
   for (const r of rows) {
     h += '<tr>';
-    for (let k = 0; k < head.length; k++) h += '<td>' + mdInline(r[k] == null ? '' : r[k]) + '</td>';
+    for (let k = 0; k < cols; k++)
+      h += '<td' + alignAttr(al[k]) + '>' + mdInline(r[k] == null ? '' : r[k]) + '</td>';
     h += '</tr>';
   }
   return { html: h + '</tbody></table></div>', next: i };
 }
+
 
 // 列表：按缩进递归，支持有序 / 无序 / 任务清单与嵌套
 function parseList(lines, i, baseIndent) {

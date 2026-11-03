@@ -877,8 +877,108 @@ namespace app
                 return method == "agent.send"sv ? fl_serve_agent(params, err)
                                                 : fl_serve_agent_stop(params, err);
             }
+            // the knobs that decide HOW a remote turn runs here: provider, model,
+            // thinking budget, sandbox mode and the tool switch. Same gate as
+            // running a turn on this machine — whoever may start a turn here may
+            // also say which model it runs with (otherwise every remote turn
+            // would silently inherit whatever this cell happened to select).
+            if (method == "ws.config"sv || method == "ws.config.set"sv)
+            {
+                if (!acc_ws)
+                    return denied("workspace access");
+                if (method == "ws.config.set"sv)
+                    return fl_serve_config(params, err);
+                std::lock_guard<std::mutex> lk(cmd_mx);
+                return {{"ok", true}, {"config", fl_config_json()}};
+            }
+            if (method == "ws.models"sv)
+            {
+                if (!acc_ws)
+                    return denied("workspace access");
+                std::lock_guard<std::mutex> lk(cmd_mx);
+                nlohmann::json r = models_fetch();
+                if (!r.value("ok", false))
+                {
+                    err = r.value("error", "could not fetch the model list");
+                    return nlohmann::json{};
+                }
+                return {{"ok", true}, {"models", r.value("models", nlohmann::json::array())}};
+            }
             err = "unknown method: " + method_in;
             return nlohmann::json{};
+        }
+
+        // ---- FlowLink: the remote composer's settings ----------------------
+        // One description of "how a turn runs on this machine", shaped like the
+        // `hello` state the frontends already understand (model / model_set /
+        // provider / providers / sandbox / tools / settings), so a remote tab can
+        // paint the same chips with the peer's real values instead of "对端".
+        nlohmann::json fl_config_json()
+        {
+            nlohmann::json j = settings_json();
+            j["model"] = cfg.model_label();
+            j["model_set"] = !cfg.current_model.empty();
+            j["provider"] = cfg.providers.empty()
+                                ? ""
+                                : (cfg.current_provider.empty() ? cfg.providers[0].name : cfg.current_provider);
+            j["sandbox"] = cell::box::mode_name(cell::box::sandbox_mode());
+            j["tools"] = cfg.tools;
+            j["providers"] = providers_json();
+            return j;
+        }
+
+        // A peer patching the settings above. Only the keys a remote turn can
+        // actually observe are accepted; everything else stays a local decision.
+        nlohmann::json fl_serve_config(const nlohmann::json &params, std::string &err)
+        {
+            nlohmann::json patch = params.value("patch", nlohmann::json::object());
+            if (!patch.is_object())
+            {
+                err = "patch must be an object";
+                return nlohmann::json{};
+            }
+            std::lock_guard<std::mutex> lk(cmd_mx);
+            std::string why;
+            if (config_change_blocked(why))
+            {
+                err = why;
+                return nlohmann::json{};
+            }
+            nlohmann::json rest = patch;
+            // provider first: selecting one clears current_model
+            if (patch.contains("provider") && patch["provider"].is_string())
+            {
+                rest.erase("provider");
+                const std::string name = cell::text::trim(patch["provider"].get<std::string>());
+                if (!name.empty())
+                {
+                    nlohmann::json r = providers_select(name);
+                    if (!r.value("ok", false))
+                    {
+                        err = r.value("error", "could not switch provider");
+                        return nlohmann::json{};
+                    }
+                }
+            }
+            if (patch.contains("model") && patch["model"].is_string())
+            {
+                rest.erase("model");
+                cfg.current_model = cell::text::trim(patch["model"].get<std::string>());
+                save_cfg();
+            }
+            if (!rest.empty())
+            {
+                nlohmann::json r = apply_settings(rest);
+                if (!r.value("ok", false))
+                {
+                    err = r.value("error", "could not apply the settings");
+                    return nlohmann::json{};
+                }
+            }
+            cell::sys::logger::instance().info("flowlink", "remote peer updated this cell's turn settings");
+            // this window's own composer must follow a change made from a peer
+            bus.post({{"t", "flowlink"}, {"ev", {{"type", "config"}}}});
+            return {{"ok", true}, {"config", fl_config_json()}};
         }
 
         // A turn started from another cell's FlowLink workspace. It runs here,
@@ -2949,6 +3049,10 @@ namespace app
             for (size_t i = 0; i < rows.size() && i < cap; i++)
             {
                 workspace_ctx *cur = find_ws(rows[i].group);
+                // busy 是**工作区**级的（一个 workdir 同时只跑一个回合），但侧栏
+                // 把它挂在每一行上：「正在运行」属于当前这条会话，同组的其它会话
+                // 不该跟着亮灯（否则整个工作区看起来有好几条会话都在跑）。
+                const bool is_cur = cur && cur->h.now().id() == rows[i].id;
                 out.push_back({{"id", rows[i].id},
                                {"ws", rows[i].group},
                                {"group", rows[i].group},
@@ -2958,8 +3062,8 @@ namespace app
                                {"msgs", rows[i].msgs},
                                {"jobs", rows[i].jobs},
                                {"archives", rows[i].archives},
-                               {"active", cur && cur->h.now().id() == rows[i].id},
-                               {"busy", cur && cur->busy.load()},
+                               {"active", is_cur},
+                               {"busy", is_cur && cur->busy.load()},
                                {"open", cur != nullptr}});
             }
             return out;
@@ -3501,11 +3605,16 @@ namespace app
                     auto svc = cell::flowlink::service_instance();
                     if (svc)
                     {
-                        // answers arrive asynchronously; one short second round
-                        // makes a manual "重新扫描" show the peer that just booted
+                        // answers arrive asynchronously, and a unicast /24 sweep
+                        // (see flowlink unicast_sweep) is part of this call: give
+                        // the slow path a window before reporting the list, so a
+                        // manual "重新扫描" shows the peer instead of "0 台".
+                        // The query burst itself is 250 ms apart; 1.1 s of waiting
+                        // covers the sweep plus one retransmit.
                         svc->scan();
-                        std::this_thread::sleep_for(std::chrono::milliseconds(600));
+                        std::this_thread::sleep_for(std::chrono::milliseconds(350));
                         svc->scan();
+                        std::this_thread::sleep_for(std::chrono::milliseconds(650));
                     }
                     nlohmann::json r = ok_with(fl_status());
                     r["devices"] = fl_devices();
@@ -3700,7 +3809,8 @@ namespace app
                     name == "flowlink.ws.history" || name == "flowlink.ws.open" ||
                     name == "flowlink.ws.add" || name == "flowlink.ws.remove" ||
                     name == "flowlink.ws.send" || name == "flowlink.ws.stop" ||
-                    name == "flowlink.ws.watch" || name == "flowlink.ws.unwatch")
+                    name == "flowlink.ws.watch" || name == "flowlink.ws.unwatch" ||
+                    name == "flowlink.ws.config" || name == "flowlink.ws.config.set")
                 {
                     std::string gerr;
                     if (!fl_can("access_workspace", gerr))
@@ -3846,6 +3956,54 @@ namespace app
                     if (!err.empty())
                         return ok_error(err);
                     return ok_with(r);
+                }
+                // The knobs that decide HOW a remote turn runs (provider, model,
+                // thinking budget, sandbox, tool switch) belong to the machine
+                // that runs it. They used to be off limits from a FlowLink tab,
+                // which left the remote composer showing "对端" and every turn
+                // silently using whatever the peer happened to have selected.
+                // Read and write both go through the peer's own commands — the
+                // gate is the same accept_workspace grant as running a turn there.
+                if (name == "flowlink.ws.config" || name == "flowlink.ws.config.set")
+                {
+                    if (!fl_on())
+                        return ok_error("FlowLink is off — enable it first");
+                    auto svc = cell::flowlink::service_instance();
+                    const std::string peer = cell::flowlink::resolve_cell(args.value("cell", ""));
+                    if (!svc || peer.empty())
+                        return ok_error("unknown cell");
+                    std::string err;
+                    if (name == "flowlink.ws.config.set")
+                    {
+                        nlohmann::json patch = args.value("patch", nlohmann::json::object());
+                        if (!patch.is_object())
+                            return ok_error("patch must be an object");
+                        nlohmann::json r = svc->call(peer, "ws.config.set", {{"patch", patch}}, 15000, err);
+                        if (!err.empty())
+                            return ok_error(err);
+                        nlohmann::json out = ok_with(r);
+                        out["cell"] = peer;
+                        return out;
+                    }
+                    // one round trip for the settings, plus the provider's model
+                    // list when the caller asks for it (a network call on the peer)
+                    const bool want_models = args.value("models", false);
+                    nlohmann::json r = svc->call(peer, "ws.config", nlohmann::json::object(),
+                                                 want_models ? 60000 : 12000, err);
+                    if (!err.empty())
+                        return ok_error(err);
+                    nlohmann::json out = ok_with(r);
+                    out["cell"] = peer;
+                    if (want_models)
+                    {
+                        std::string merr;
+                        nlohmann::json m = svc->call(peer, "ws.models", nlohmann::json::object(), 60000, merr);
+                        out["models"] = merr.empty() ? m.value("models", nlohmann::json::array())
+                                                     : nlohmann::json::array();
+                        if (!merr.empty())
+                            out["models_error"] = merr;
+                    }
+                    return out;
                 }
                 // the CLI's /link syntax, for any frontend: same parser, same text
                 if (name == "flowlink.exec")

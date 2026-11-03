@@ -188,6 +188,13 @@
 
 /* ---- 侧栏里的 FlowLink 工作区条目 ---------------------------------- */
 #sessionList .fl-sitem .stag.fl-tag{color:var(--accent);border-color:var(--accent)}
+/* 对端工作区与控制台里的分组同一套外观：组头是工作区，组内是它的会话。
+   监视按钮常显（悬停只是加深），否则「只读看对端」这个动作没人找得到。 */
+#flowWsSection .fl-sgroup .gname{max-width:104px}
+#flowWsSection .fl-sgroup .sitem .stag.fl-tag{color:var(--accent);border-color:var(--accent)}
+#flowWsSection .fl-mon{opacity:.55}
+#flowWsSection .sgroup-head:hover .fl-mon{opacity:1}
+#flowWsSection .fl-mon:hover{background:var(--accent-soft);color:var(--accent)}
 
 @media (max-width:980px){
   #flowlinkPage .fl-side{width:200px}

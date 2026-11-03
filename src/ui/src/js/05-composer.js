@@ -752,15 +752,65 @@ function paintSandboxChip(mode) {
 
 /* S.model 是「供应商:模型」（核心的 model_label），但输入栏的圆钮只放模型名：
    供应商有自己的 chip，模型名再带上只会被挤成省略号。 */
-function modelShortName() {
-  // 未选模型时 model_label() 只剩供应商名，当成模型名显示会让人以为已选好
-  if (!S.modelSet) return '';
-  const m = String(S.model || '');
-  const p = String(S.provider || '');
+function shortModelLabel(model, provider) {
+  const m = String(model || '');
+  const p = String(provider || '');
   if (p && m.slice(0, p.length + 1) === p + ':') return m.slice(p.length + 1);
   const i = m.indexOf(':');
   return i > 0 ? m.slice(i + 1) : m;
 }
+function modelShortName() {
+  // 未选模型时 model_label() 只剩供应商名，当成模型名显示会让人以为已选好
+  if (!S.modelSet) return '';
+  return shortModelLabel(S.model, S.provider);
+}
+
+/* ---- 远程工作区（FlowLink）：这些值属于执行回合的那台机器 ------------
+   t.remote.conf 是对端 settings 的一份缓存（见 12-flowlink.js 的
+   flLoadRemoteConf / flPatchRemoteConf）。下面这组 eff* 让 chip 的「画」与
+   「改」都走同一个来源：本地页签读 S.*，远程页签读对端的值。 */
+function effProvider(t) {
+  const c = t && t.remote ? flRemoteConf(t) : null;
+  if (!c) return '';
+  if (c.provider) return String(c.provider);
+  const m = String(c.model || '');
+  const i = m.indexOf(':');
+  return i > 0 ? m.slice(0, i) : '';
+}
+function effModelText(t) {
+  const c = t && t.remote ? flRemoteConf(t) : null;
+  if (!c) return '';
+  if (c.model_set === false) return '';
+  return shortModelLabel(c.model, c.provider);
+}
+function effThink(t) {
+  const c = t && t.remote ? flRemoteConf(t) : null;
+  if (!c) return 0;
+  const v = Number(c.think_level || 0);
+  return THINK_LEVELS[v] ? v : 0;
+}
+function effTools(t) {
+  const c = t && t.remote ? flRemoteConf(t) : null;
+  return c ? c.tools !== false : true;
+}
+function effSandbox(t) {
+  const c = t && t.remote ? flRemoteConf(t) : null;
+  if (!c) return 'full-access';
+  return c.sandbox || c.sandbox_mode || 'full-access';
+}
+/* 远程页签还没读到对端设置时，chip 用这个标题说明「正在读对端」 */
+function effPending(t) {
+  const c = t && t.remote ? flRemoteConf(t) : null;
+  return !!t && !!t.remote && !(c && c.loaded) && !(c && c.err);
+}
+function effErr(t) {
+  const c = t && t.remote ? flRemoteConf(t) : null;
+  return (c && c.err) || '';
+}
+function effPeer(t) { return t && t.remote ? flPeerLabel(t.remote.cell) : ''; }
+/* chip 的 title 前缀：远程时把「这是对端的值」说清楚 */
+function effPrefix(t) { return t && t.remote ? effPeer(t) + ' · ' : ''; }
+
 /* 模型菜单/设置页标记「当前」用：列表里是裸模型名，状态里是「供应商:模型」 */
 function isCurrentModel(m) { return !!m && (m === S.model || m === modelShortName()); }
 /* 状态里的模型名补齐回「供应商:模型」，别让 S.model 在两种形状间来回变 */
@@ -768,8 +818,17 @@ function modelLabelOf(m) { return S.provider ? S.provider + ':' + m : m; }
 
 /* 未选模型：有供应商但模型为空（后端 state.model_set=false）。切供应商会清空
    current_model，此时 model_label() 只剩供应商名，chip 上看起来像「已选好」——
-   必须用权威标志判断，不能靠「有没有冒号」猜字符串形状。 */
-function needsModel() { return !!S.provider && S.modelSet === false; }
+   必须用权威标志判断，不能靠「有没有冒号」猜字符串形状。
+   远程页签用的是对端的那份值（对端没选模型，这里同样发不出去）。 */
+function needsModel() {
+  const t = curTab();
+  if (t && t.remote) {
+    const c = flRemoteConf(t);
+    if (!c || !c.loaded) return false; // 还没读到：别拿本机的状态去拦对端的回合
+    return !!c.provider && c.model_set === false;
+  }
+  return !!S.provider && S.modelSet === false;
+}
 
 /* 强制提醒：未选模型时不允许开始会话 —— 红字提示 + chip 抖一下 + 直接弹模型
    菜单（菜单打开时会自动拉列表，用户不必再去找入口） */
@@ -787,16 +846,22 @@ function paintModelChip(t) {
   const chip = $('#modelChip');
   if (!chip) return;
   const need = !!t && needsModel(); // 有工作区才谈得上「开始会话」
-  const name = need ? '选择模型' : (modelShortName() || '(未选择模型)');
+  const remote = !!(t && t.remote);
+  const name = need ? '选择模型'
+    : (remote ? (effModelText(t) || (effPending(t) ? '读取对端…' : '(未选择模型)'))
+              : (modelShortName() || '(未选择模型)'));
   chip.innerHTML = '<span class="cmp-chip-ico">' + iconHtml('cpu') + '</span>'
     + '<span class="cmp-model-name trunc"></span>'
     + '<span class="cmp-chev">' + iconHtml('chevronDown') + '</span>';
   const nm = chip.querySelector('.cmp-model-name');
   if (nm) nm.textContent = name;
   chip.classList.toggle('need', need);
+  chip.classList.toggle('peer', remote);
+  const prov = remote ? effProvider(t) : providerName();
   chip.title = need
-    ? '未选择模型：供应商 ' + (providerName() || '?') + ' 已切换，但还没有指定模型\n点这里选一个模型后才能开始会话'
-    : '模型：' + name + '\n点击切换模型';
+    ? (remote ? effPeer(t) + ' 上还没有选择模型：供应商 ' : '未选择模型：供应商 ') + (prov || '?')
+      + ' 已切换，但还没有指定模型\n点这里选一个模型后才能开始会话'
+    : effPrefix(t) + '模型：' + name + '\n点击切换模型' + (remote ? '（改的是对端）' : '');
   chip.disabled = !t;
   chip.setAttribute('aria-expanded', cmpMenu && cmpMenu.kind === 'model' ? 'true' : 'false');
 }
@@ -813,14 +878,18 @@ function providerName() {
 function paintProviderChip(t) {
   const chip = $('#providerChip');
   if (!chip) return;
-  const p = providerName();
+  const remote = !!(t && t.remote);
+  const p = remote ? effProvider(t) : providerName();
   chip.innerHTML = '<span class="cmp-chip-ico">' + iconHtml('database') + '</span>'
     + '<span class="cmp-chip-txt trunc"></span>'
     + '<span class="cmp-chev">' + iconHtml('chevronDown') + '</span>';
   const txt = chip.querySelector('.cmp-chip-txt');
-  if (txt) txt.textContent = p || '供应商';
-  chip.classList.toggle('need', !!t && !p);
-  chip.title = p ? '供应商：' + p + '\n点击切换供应商（会清空当前模型）' : '还没有选择供应商';
+  if (txt) txt.textContent = p || (remote && effPending(t) ? '…' : '供应商');
+  chip.classList.toggle('need', !!t && !p && !(remote && effPending(t)));
+  chip.classList.toggle('peer', remote);
+  chip.title = p
+    ? effPrefix(t) + '供应商：' + p + '\n点击切换供应商（会清空当前模型）' + (remote ? '（改的是对端）' : '')
+    : (remote ? effPeer(t) + ' 上还没有配置供应商' : '还没有选择供应商');
   chip.disabled = !t;
   chip.setAttribute('aria-expanded', cmpMenu && cmpMenu.kind === 'provider' ? 'true' : 'false');
 }
@@ -834,14 +903,18 @@ function thinkLevel() {
 function paintThinkChip(t) {
   const chip = $('#thinkChip');
   if (!chip) return;
-  const v = thinkLevel();
+  const remote = !!(t && t.remote);
+  const v = remote ? effThink(t) : thinkLevel();
   const lvl = THINK_LEVELS[v];
   chip.innerHTML = '<span class="cmp-chip-ico">' + iconHtml('bulb') + '</span>'
     + '<span class="cmp-chip-txt">思考</span>'
     + '<span class="cmp-think-lv' + (v ? ' on' : '') + '">' + THINK_SHORT[v] + '</span>'
     + '<span class="cmp-chev">' + iconHtml('chevronDown') + '</span>';
   chip.classList.toggle('off', v === 0);
-  chip.title = '思考强度：' + (v ? lvl.name + ' (' + v + ') · ' + lvl.desc : '关闭（不推理，最快）');
+  chip.classList.toggle('peer', remote);
+  chip.title = effPrefix(t) + '思考强度：'
+    + (v ? lvl.name + ' (' + v + ') · ' + lvl.desc : '关闭（不推理，最快）')
+    + (remote ? '\n改的是对端的值' : '');
   chip.disabled = !t;
   chip.setAttribute('aria-expanded', cmpMenu && cmpMenu.kind === 'think' ? 'true' : 'false');
 }
@@ -850,20 +923,27 @@ function paintThinkChip(t) {
 function paintToolsChip(t) {
   const chip = $('#toolsChip');
   if (!chip) return;
-  const on = S.tools !== false;
+  const remote = !!(t && t.remote);
+  const on = remote ? effTools(t) : (S.tools !== false);
   chip.innerHTML = '<span class="cmp-chip-ico">' + iconHtml('sliders') + '</span>'
     + '<span class="cmp-chip-txt">工具</span>'
     + '<span class="cmp-dot' + (on ? ' on' : '') + '"></span>';
   chip.classList.toggle('off', !on);
+  chip.classList.toggle('peer', remote);
   chip.setAttribute('aria-pressed', on ? 'true' : 'false');
-  chip.title = '工具调用：' + (on ? '开（可读写文件 / 执行命令）' : '关（模型只能回复文本）')
-    + '\n点击' + (on ? '关闭' : '开启');
+  chip.title = effPrefix(t) + '工具调用：' + (on ? '开（可读写文件 / 执行命令）' : '关（模型只能回复文本）')
+    + '\n点击' + (on ? '关闭' : '开启') + (remote ? '（改的是对端）' : '');
   chip.disabled = !t;
 }
 function toggleTools() {
   const t = curTab();
   if (!t) return;
-  const on = S.tools === false;
+  const on = !(t.remote ? effTools(t) : (S.tools !== false));
+  if (t.remote) {
+    flPatchRemoteConf(t, { tools: on }, '对端工具调用：' + (on ? '开' : '关'))
+      .then(() => focusInput());
+    return;
+  }
   cmd('settings.set', { patch: { tools: on } }).then(out => {
     if (!out || out.ok === false) return;
     S.tools = on;
@@ -873,6 +953,7 @@ function toggleTools() {
     focusInput();
   });
 }
+
 
 function paintSendState(t) {
   const send = $('#sendBtn');
@@ -903,6 +984,40 @@ function paintSendState(t) {
   send.title = '发送 (Enter)';
   const has = !!(String(t.composer.text || '').trim() || (t.composer.attachments || []).length);
   if (!has) send.classList.add('dim');
+}
+
+/* 远程会话（FlowLink 工作区）：模型 / 供应商 / 沙箱 / 工具 / 思考强度属于
+   执行回合的那台机器 —— 但「属于对端」不等于「改不了」：chip 保持在原位、
+   保持可点，值读自对端（eff*），改动经 flowlink.ws.config.set 写到对端。
+   监视模式（watch）是只读订阅，连值都拿不到：那一档恢复成「对端」锁定。 */
+function flLockChips() {
+  const set = (sel, txt, title) => {
+    const b = $(sel);
+    if (!b) return;
+    b.disabled = true;
+    b.title = title;
+    const label = b.querySelector('.cmp-chip-txt') || b.querySelector('.cmp-model-name');
+    if (label) label.textContent = txt;
+    const lv = b.querySelector('.cmp-think-lv');
+    if (lv) { lv.textContent = ''; lv.classList.remove('on'); }
+  };
+  set('#sandboxChip', '对端', '监视模式：沙箱由会话所在的那台机器决定');
+  set('#toolsChip', '对端', '监视模式：工具开关由会话所在的那台机器决定');
+  set('#providerChip', '对端', '监视模式：供应商由会话所在的那台机器决定');
+  set('#modelChip', '对端模型', '监视模式：模型由会话所在的那台机器决定');
+  set('#thinkChip', '对端', '监视模式：思考强度由会话所在的那台机器决定');
+}
+
+function flPeerChips(t) {
+  ['#modeChip', '#btnAttach'].forEach(sel => {
+    const b = $(sel);
+    if (b) { b.disabled = true; b.title = '远程会话只接受文本输入'; }
+  });
+  if (t.remote.mode === 'watch') { flLockChips(); return; }
+  const c = flRemoteConf(t);
+  // 缓存过期（对端可能在本机改过）或还没读过：顺手拉一次，几十毫秒
+  const stale = !c || !c.loaded || (nowSec() - (c.at || 0) > 60);
+  if (stale && !t.remote.confLoading) flLoadRemoteConf(t);
 }
 
 function renderComposer() {
@@ -946,7 +1061,7 @@ function renderComposer() {
   ['#modeChip', '#sandboxChip', '#toolsChip', '#providerChip', '#modelChip', '#thinkChip', '#btnAttach']
     .forEach(s => { const b = $(s); if (b) b.disabled = false; });
   paintModeChip(mode);
-  paintSandboxChip(S.sandbox || 'full-access');
+  paintSandboxChip(t && t.remote ? effSandbox(t) : (S.sandbox || 'full-access'));
   paintToolsChip(t);
   paintProviderChip(t);
   paintModelChip(t);
@@ -971,6 +1086,17 @@ function renderComposer() {
 
   renderChips(t);
   paintSendState(t);
+  // 远程会话：这些设置属于对端（可读可改，走对端 RPC）；监视模式没有输入
+  if (t.remote) {
+    flPeerChips(t);
+    if (t.remote.mode === 'watch') {
+      ta.disabled = true;
+      ta.value = '';
+      ta.placeholder = '监视模式：只能查看对端活跃会话的输出，无法输入';
+      const sb = $('#sendBtn');
+      if (sb) { sb.disabled = true; sb.classList.remove('stop'); sb.title = '监视模式：不能发送'; }
+    }
+  }
   applyComposerWidthClass(); // 文案变了（换模型 / 换供应商）要重新量一次宽度档位
   if (typeof renderStatLine === 'function') renderStatLine();
   // 卡片高度可能刚被模式切换改掉（Teamwork 是 64vh，不看 --composer-h）：
@@ -1177,7 +1303,10 @@ async function sendCurrent() {
   // FlowLink 工作区：页签、转录、输入都在本机，回合在对端 cell 上跑
   if (t.remote) {
     closeSlash();
+    if (t.remote.mode === 'watch') { toast('监视模式不能输入', 'info'); return; }
     if (t.busy) { cmd('flowlink.ws.stop', { cell: t.remote.cell, cwd: t.remote.cwd, rid: t.remote.rid }); return; }
+    // 对端没选模型同样是「发出去也白跑」：当场拦住并弹对端的模型菜单
+    if (needsModel()) { demandModel('对端还没有选择模型 —— 先选一个才能开始会话'); return; }
     await flSendRemote(t);
     focusInput();
     return;
@@ -1357,7 +1486,7 @@ function toggleModeMenu(anchor) {
 function toggleSandboxMenu(anchor) {
   const t = curTab();
   if (!t) return;
-  const cur = S.sandbox || 'full-access';
+  const cur = t.remote ? effSandbox(t) : (S.sandbox || 'full-access');
   openComposerMenu(anchor, {
     kind: 'sandbox',
     build: menu => {
@@ -1368,65 +1497,115 @@ function toggleSandboxMenu(anchor) {
         row.onclick = () => { closeComposerMenu(false); if (cur !== m.v) setSandboxMode(m.v); else focusInput(); };
         menu.appendChild(row);
       }
+      if (t.remote) menu.appendChild(el('div', 'cmp-menu-hint', '沙箱属于 ' + effPeer(t) + '：改的是对端的权限边界'));
     },
   });
+}
+
+/* 远程页签的模型列表来自对端（它自己的供应商与密钥）：本地 S.models 是
+   本机供应商的列表，拿它去给远程会话选模型只会选出一个对端不存在的名字。 */
+function modelListFor(t) {
+  if (t && t.remote) {
+    const c = flRemoteConf(t);
+    return (c && Array.isArray(c.models)) ? c.models : [];
+  }
+  return S.models || [];
+}
+function isCurrentModelFor(t, m) {
+  if (t && t.remote) {
+    const c = flRemoteConf(t);
+    if (!c) return false;
+    const full = c.provider ? c.provider + ':' + m : m;
+    return m === c.model || m === shortModelLabel(c.model, c.provider) || full === c.model;
+  }
+  return isCurrentModel(m);
+}
+function fetchModelsFor(t, force) {
+  if (t && t.remote) {
+    return flLoadRemoteConf(t, true).then(conf => {
+      const n = conf && Array.isArray(conf.models) ? conf.models.length : 0;
+      if (force) toast(n ? '已拉取对端的 ' + n + ' 个模型' : '对端没有返回模型列表', n ? 'ok' : 'bad');
+      if (n && cmpMenu && cmpMenu.kind === 'model') reopenModelMenu();
+      return n > 0;
+    });
+  }
+  return fetchModels(force);
 }
 
 function toggleModelMenu(anchor) {
   const t = curTab();
   if (!t) return;
+  const remote = !!t.remote;
+  const list = modelListFor(t);
   openComposerMenu(anchor, {
     kind: 'model',
     align: 'right',
     build: menu => {
-      menu.appendChild(cmpMenuHead('模型'));
+      menu.appendChild(cmpMenuHead(remote ? '模型 · ' + effPeer(t) : '模型'));
       // 未选模型是「发不出去」的硬条件：菜单一开就把话说清楚
       if (needsModel()) menu.appendChild(el('div', 'cmp-menu-hint danger', '未选择模型 · 选一个才能开始会话'));
-      if (S.models.length) {
-        for (const m of S.models) {
-          const row = cmpMenuRow('cpu', m, isCurrentModel(m) ? '当前模型' : '', isCurrentModel(m));
+      if (remote && effErr(t)) menu.appendChild(el('div', 'cmp-menu-hint danger', effErr(t)));
+      if (list.length) {
+        for (const m of list) {
+          const on = isCurrentModelFor(t, m);
+          const row = cmpMenuRow('cpu', m, on ? '当前模型' : '', on);
           row.onclick = () => switchModel(m);
           menu.appendChild(row);
         }
       } else {
-        const row = cmpMenuRow('refresh', '拉取模型列表', 'models.fetch', false);
-        row.onclick = ev => { ev.stopPropagation(); fetchModels(true); };
+        const row = cmpMenuRow('refresh', remote ? '从对端拉取模型列表' : '拉取模型列表',
+          remote ? '对端的供应商 · 可能几秒' : 'models.fetch', false);
+        row.onclick = ev => { ev.stopPropagation(); fetchModelsFor(t, true); };
         menu.appendChild(row);
       }
-      const setRow = cmpMenuRow('settings', '打开模型设置…', '设置 · 模型', false);
-      setRow.onclick = () => { closeComposerMenu(false); openSettings('models'); };
-      menu.appendChild(setRow);
+      if (!remote) {
+        const setRow = cmpMenuRow('settings', '打开模型设置…', '设置 · 模型', false);
+        setRow.onclick = () => { closeComposerMenu(false); openSettings('models'); };
+        menu.appendChild(setRow);
+      } else {
+        menu.appendChild(el('div', 'cmp-menu-hint', '模型取自 ' + effPeer(t) + ' 的供应商；选择会立刻写到对端'));
+      }
     },
   });
-  autoFetchModels();
+  if (!list.length) fetchModelsFor(t, false);
 }
 
 /* 供应商菜单：换供应商会清空当前模型，走 /provider 同一条路径（resync + 重拉列表） */
 function toggleProviderMenu(anchor) {
   const t = curTab();
   if (!t) return;
-  const cur = providerName();
+  const remote = !!t.remote;
+  const cur = remote ? effProvider(t) : providerName();
+  const list = remote ? (((flRemoteConf(t) || {}).providers) || []) : (S.providers || []);
   openComposerMenu(anchor, {
     kind: 'provider',
     align: 'right',
     build: menu => {
-      menu.appendChild(cmpMenuHead('供应商'));
-      if (S.providers.length) {
-        for (const p of S.providers) {
-          const on = p.name === cur || !!p.current;
+      menu.appendChild(cmpMenuHead(remote ? '供应商 · ' + effPeer(t) : '供应商'));
+      if (list.length) {
+        for (const p of list) {
+          const on = p.name === cur || (!cur && !!p.current);
           const row = cmpMenuRow('database', p.name, on ? '当前供应商' : (p.api_style || ''), on);
           row.onclick = () => { closeComposerMenu(false); execSlash(t, '/provider', p.name); focusInput(); };
           menu.appendChild(row);
         }
+      } else if (remote) {
+        menu.appendChild(el('div', 'cmp-menu-hint',
+          (flRemoteConf(t) ? '' : '正在读取对端设置…') || '对端还没有配置供应商'));
       } else {
         const row = cmpMenuRow('database', '打开供应商设置…', '还没有配置供应商', false);
         row.onclick = () => { closeComposerMenu(false); openSettings('providers'); };
         menu.appendChild(row);
       }
-      menu.appendChild(cmpMenuSep());
-      const setRow = cmpMenuRow('settings', '管理供应商…', '设置 · 供应商', false);
-      setRow.onclick = () => { closeComposerMenu(false); openSettings('providers'); };
-      menu.appendChild(setRow);
+      if (!remote) {
+        menu.appendChild(cmpMenuSep());
+        const setRow = cmpMenuRow('settings', '管理供应商…', '设置 · 供应商', false);
+        setRow.onclick = () => { closeComposerMenu(false); openSettings('providers'); };
+        menu.appendChild(setRow);
+      } else {
+        menu.appendChild(el('div', 'cmp-menu-hint',
+          '供应商与密钥都在 ' + effPeer(t) + ' 上：这里只能切换它已有的那些'));
+      }
     },
   });
 }
@@ -1435,12 +1614,13 @@ function toggleProviderMenu(anchor) {
 function toggleThinkLevelMenu(anchor) {
   const t = curTab();
   if (!t) return;
-  const cur = thinkLevel();
+  const cur = t.remote ? effThink(t) : thinkLevel();
+  const remote = !!t.remote;
   openComposerMenu(anchor, {
     kind: 'think',
     align: 'right',
     build: menu => {
-      menu.appendChild(cmpMenuHead('思考强度'));
+      menu.appendChild(cmpMenuHead(remote ? '思考强度 · ' + effPeer(t) : '思考强度'));
       for (const l of THINK_LEVELS) {
         const row = cmpMenuRow('bulb', THINK_SHORT[l.v] + ' · ' + l.name, l.desc, cur === l.v);
         row.onclick = () => { closeComposerMenu(false); execSlash(t, '/think', String(l.v)); focusInput(); };
@@ -1448,7 +1628,9 @@ function toggleThinkLevelMenu(anchor) {
       }
       menu.appendChild(cmpMenuSep());
       const hint = el('div', 'cmp-menu-hint');
-      hint.innerHTML = '也可用 <kbd>/think</kbd> 直接设置';
+      hint.innerHTML = remote
+        ? '思考强度属于 ' + esc(effPeer(t)) + '：改动会立刻写到对端'
+        : '也可用 <kbd>/think</kbd> 直接设置';
       menu.appendChild(hint);
     },
   });
@@ -1507,6 +1689,14 @@ function reopenModelMenu() {
 async function switchModel(m) {
   closeComposerMenu(false);
   if (!m) return focusInput();
+  const t = curTab();
+  // 远程页签：模型属于对端，走 ws.config.set（本机的 model.set 只改本机）
+  if (t && t.remote) {
+    if (isCurrentModelFor(t, m)) return focusInput();
+    await flPatchRemoteConf(t, { model: m }, '对端模型：' + m);
+    focusInput();
+    return;
+  }
   if (isCurrentModel(m)) return focusInput();
   const out = await cmd('model.set', { model: m });
   if (!out || out.ok === false) return;
@@ -1522,6 +1712,13 @@ async function switchModel(m) {
 async function setSandboxMode(v) {
   closeComposerMenu(false);
   const info = CMP_SANDBOX[v] || { label: v };
+  const t = curTab();
+  // 远程页签：沙箱边界属于对端
+  if (t && t.remote) {
+    await flPatchRemoteConf(t, { sandbox_mode: v }, '对端沙箱：' + info.label);
+    focusInput();
+    return;
+  }
   const out = await cmd('settings.set', { patch: { sandbox_mode: v } });
   if (!out || out.ok === false) return;
   S.sandbox = v;
@@ -1568,13 +1765,20 @@ function slashArgItems(cmdName) {
       for (const s of S.sessions.filter(x => x.ws === S.active))
         add((s.title || shortId(s.id)).slice(0, 40), s.id, relTime(s.mtime));
       break;
-    case 'models':
-      add('◌ 拉取模型列表', '__fetch__', 'models.fetch');
-      for (const m of S.models) add(m, m, isCurrentModel(m) ? '当前' : '');
+    case 'models': {
+      // 远程页签的模型列表属于对端（见 modelListFor）
+      const t2 = curTab();
+      const remote = !!(t2 && t2.remote);
+      add('◌ 拉取模型列表', '__fetch__', remote ? '从对端拉取' : 'models.fetch');
+      for (const m of modelListFor(t2)) add(m, m, isCurrentModelFor(t2, m) ? '当前' : '');
       break;
-    case 'providers':
-      for (const p of S.providers) add(p.name, p.name, p.current ? '当前' : (p.api_style || ''));
+    }
+    case 'providers': {
+      const t3 = curTab();
+      const list = (t3 && t3.remote) ? (((flRemoteConf(t3) || {}).providers) || []) : (S.providers || []);
+      for (const p of list) add(p.name, p.name, p.current ? '当前' : (p.api_style || ''));
       break;
+    }
     case 'think':
       for (const l of THINK_LEVELS) add(l.name + ' (' + l.v + ')', String(l.v), l.desc);
       break;
@@ -2060,7 +2264,7 @@ function applySlash(e) {
   closeSlash();
   if (e.run) { syncComposerText(''); e.run(t); return; }
   if (e.insert === '__fetch__') {
-    fetchModels(true);
+    fetchModelsFor(curTab(), true);
     syncComposerText('');
     return;
   }
@@ -2166,6 +2370,9 @@ function afterSet(out, msg) {
 async function execSlash(t, name, arg) {
   arg = (arg || '').trim();
   name = CMD_ALIAS[name] || name; // /provide、/sessions… 统一成主名再分派
+  // 远程会话的模型 / 供应商 / 沙箱 / 工具 / 思考强度属于对端：命令不能落到
+  // 本机的全局设置上（那看着生效、实际对那个会话毫无影响），改走对端 RPC。
+  if (t && t.remote && flRemoteSlash(t, name, arg)) return;
   switch (name) {
     case '/new': return cmd('session.new', { ws: t.ws }).then(resync);
     case '/clear': return cmd('session.clear', { ws: t.ws }).then(resync);

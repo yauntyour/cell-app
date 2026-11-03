@@ -1249,9 +1249,22 @@ function flFill(body, paint) {
     on && st.discovery_state === 'probe-only'
       ? setNote('发现端口被占用：当前只能主动探测，收不到其他设备的广播。可换一个发现端口，或在 FlowLink 管理页填写「额外发现地址」。', 'warn')
       : null,
-    on ? switchRow('接受远程作业', pf.accept, v =>
-      cmd('flowlink.settings', { accept: v }).then(o => { if (o && o.ok !== false) flMerge(o); paint(); }),
-      '允许已配对的对端在这里运行回合、读取工作区文件（只读，且限制在工作区内）。') : null,
+    // 授权拆成了工作区 / Workflow / 监视三项，各有进出两个方向：这里是总览，
+    // 开关本身在 FlowLink 管理页的「权限」分节（那里的说明更完整）
+    on ? el('div', 'set-divider') : null,
+    on ? el('div', 'set-hint',
+      '对端能用本机什么，以及本机能用对端什么，都在 FlowLink 管理页 →「权限」里逐项开关：'
+      + '工作区访问（' + (pf.accept_workspace ? '开' : '关') + '）、Workflow（' + (pf.accept_workflow ? '开' : '关')
+      + '）、监视（' + (pf.accept_watch ? '开' : '关') + '）；本机使用对端：工作区（' + (pf.access_workspace ? '开' : '关')
+      + '）、Workflow（' + (pf.access_workflow ? '开' : '关') + '）。') : null,
+    on ? flRow([setBtn('打开权限设置', 'ghost', () => {
+      if (typeof closeSettings === 'function') closeSettings();
+      if (typeof openFlowLinkPage === 'function') {
+        openFlowLinkPage();
+        FL.tab = 'perm';
+        flPaint();
+      }
+    }, 'shield')]) : null,
     on ? flRow([el('span', null, '本机标识'), el('code', null, st.client_id || '')], 'fl-ident') : null,
     !on ? setNote('开启后，其他 cell 才能在 FlowLink 管理页的 Scan Links 里看到这台机器。', 'info') : null,
   ]));

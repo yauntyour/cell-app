@@ -23,7 +23,27 @@ function saveGroupState() {
 }
 
 /* ---- 侧栏 -------------------------------------------------------- */
-function renderSidebar() {
+/* 侧栏内容指纹：数据没变就一个节点都不重建。
+   流式输出时 markChat 每帧都会 schedule 一次 renderSidebar，而侧栏里的
+   数据（标题/条数/运行态）只在回合开始结束、会话落盘时才变 —— 无脑
+   replaceChildren 会让每个会话行、每个工作区分组在鼠标下被换掉，于是
+   「点另一条会话没反应」「分组点不开」「删除按钮点不到」。 */
+function sidebarSig(groups, q) {
+  let h = 0;
+  const put = (s) => { s = String(s); for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; h = (h * 7 + 1) | 0; };
+  put(q || '');
+  put(S.sessionsTotal || 0);
+  for (const g of groups.values()) {
+    put(g.ws); put(g.cwd || ''); put(g.open ? 1 : 0); put(g.busy ? 1 : 0); put(g.items.length);
+    for (const s of g.items) {
+      put(s.id); put(s.title || ''); put(s.mtime || 0); put(s.msgs || 0);
+      put(s.active ? 1 : 0); put(s.busy ? 1 : 0);
+      put(s.jobs || 0); put(s.archives || 0); put(s.worktree || '');
+    }
+  }
+  return h;
+}
+function renderSidebar(force) {
   const list = $('#sessionList');
   if (!list) return;
   const q = (S.sbFilter || '').trim().toLowerCase();
@@ -43,6 +63,10 @@ function renderSidebar() {
   }
   seedGroupsClosed(groups);
   for (const [ws, g] of groups) g.open = q ? true : !S.groupsClosed.has(ws);
+  const sig = sidebarSig(groups, q);
+  if (!force && list.__sig === sig && list.__flowSig === flowWsSig()) return;
+  list.__sig = sig;
+  list.__flowSig = flowWsSig();
 
   const nodes = [];
   for (const g of groups.values()) {
@@ -66,16 +90,16 @@ function renderSidebar() {
     const gdel = el('button', 'gdel');
     gdel.appendChild(iconEl('trash', 'sm'));
     gdel.title = '删除工作区（移除全部会话记录，保留目录）';
-    gdel.onclick = ev => { ev.stopPropagation(); deleteWorkspace(g.ws); };
+    onPress(gdel, ev => { ev.stopPropagation(); deleteWorkspace(g.ws); });
     head.appendChild(gdel);
     head.title = (g.cwd || g.ws) + ' | 点击' + (g.open ? '折叠' : '展开');
     head.setAttribute('aria-expanded', g.open ? 'true' : 'false');
-    head.onclick = () => {
+    onPress(head, () => {
       if (S.groupsClosed.has(g.ws)) S.groupsClosed.delete(g.ws);
       else S.groupsClosed.add(g.ws);
       saveGroupState();
-      renderSidebar();
-    };
+      renderSidebar(true); // 折叠状态变了：内容指纹不会变，得强制重建
+    });
     gEl.appendChild(head);
 
     const sorted = items.slice().sort((a, b) => (b.active - a.active) || (b.mtime - a.mtime));
@@ -108,7 +132,7 @@ function renderSidebar() {
         const a = el('span', 'stag ar', '存档 ' + s.archives);
         a.title = '该会话有 ' + s.archives + ' 个压缩历史存档（点击在右侧面板查看）';
         a.style.cursor = 'pointer';
-        a.onclick = ev => { ev.stopPropagation(); selectSession(s); openDock('archives'); };
+        onPress(a, ev => { ev.stopPropagation(); selectSession(s); openDock('archives'); });
         meta.appendChild(a);
       }
       if (s.busy) { const d = el('span', 'dot run'); d.style.marginLeft = 'auto'; meta.appendChild(d); }
@@ -117,10 +141,10 @@ function renderSidebar() {
       const del = el('button', 'idel');
       del.appendChild(iconEl('trash', 'sm'));
       del.title = '删除会话';
-      del.onclick = ev => { ev.stopPropagation(); deleteSession(s); };
+      onPress(del, ev => { ev.stopPropagation(); deleteSession(s); });
       it.appendChild(del);
       it.title = (s.title ? s.title + ' | ' : '') + s.id + ' | ' + (s.cwd || '');
-      it.onclick = () => selectSession(s);
+      onPress(it, () => selectSession(s));
       box.appendChild(it);
     }
     gEl.appendChild(box);
@@ -158,19 +182,39 @@ async function selectSession(s) {
 }
 
 /* ---- 标签栏 ------------------------------------------------------ */
-function renderTabbar() {
+/* 页签内容指纹：同上 —— 流式输出期间页签数据（运行态 / 未读 / 活动页）没变
+   就完全不碰 DOM，✕ 按钮才不会在鼠标按下与松开之间被换掉。 */
+function tabbarSig() {
+  let h = 0;
+  const put = (s) => { s = String(s); for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; };
+  put(S.active || '');
+  for (const ws of S.tabOrder) {
+    const t = S.tabs.get(ws); if (!t) continue;
+    put(ws); put(t.cwd || '');
+    put(t.busy ? 1 : 0); put(t.unread || 0); put(t.approval ? 1 : 0);
+    put(t.remote ? (t.remote.mode || '') + '|' + (t.remote.name || '') + '|' + (t.remote.cwd || '') : '');
+  }
+  return h;
+}
+function renderTabbar(force) {
   const bar = $('#tabbar');
   if (!bar) return;
+  const sig = tabbarSig();
+  if (!force && bar.__sig === sig) return;
+  bar.__sig = sig;
   const nodes = [];
   for (const ws of S.tabOrder) {
     const t = S.tabs.get(ws); if (!t) continue;
     const active = ws === S.active;
     const tb = el('div', 'tab' + (active ? ' active' : ''));
     tb.title = t.cwd || ws;
+    const watch = !!(t.remote && t.remote.mode === 'watch');
     if (t.busy) { const p = el('span', 'pulse busy'); tb.appendChild(p); }
-    else tb.appendChild(iconEl('folder', 'sm'));
-    const nm = el('span', 'tname trunc', t.remote ? (t.remote.name || baseName(t.cwd)) : (baseName(t.cwd) || shortId(ws)));
-    if (t.remote) nm.title = 'FlowLink · ' + t.remote.cwd + '（在对端 cell 上执行）';
+    else tb.appendChild(iconEl(watch ? 'eye' : 'folder', 'sm'));
+    const nm = el('span', 'tname trunc', watch
+      ? ('监视 · ' + (t.remote.name || baseName(t.cwd)))
+      : (t.remote ? (t.remote.name || baseName(t.cwd)) : (baseName(t.cwd) || shortId(ws))));
+    if (t.remote) nm.title = (watch ? '监视（只读）· ' : 'FlowLink · ') + t.remote.cwd + '（在对端 cell 上执行）';
     tb.appendChild(nm);
     const badge = t.approval ? 'warn' : '';
     if (t.unread > 0 || t.approval) {
@@ -178,9 +222,10 @@ function renderTabbar() {
     }
     const x = el('button', 'x', '✕');
     x.title = '关闭工作区';
-    x.onclick = ev => { ev.stopPropagation(); closeWorkspace(ws); };
+    // 先吞掉 pointerdown，别让页签本体把这次按下当成「切到这个页签」
+    onPress(x, ev => { ev.stopPropagation(); closeWorkspace(ws); });
     tb.appendChild(x);
-    tb.onclick = () => activateWs(ws);
+    onPress(tb, () => activateWs(ws));
     tb.oncontextmenu = ev => { ev.preventDefault(); tabMenu(ev, ws); };
     nodes.push(tb);
   }
@@ -351,6 +396,9 @@ async function closeWorkspace(ws) {
   if (t && t.remote) {
     if (t.busy && t.remote.rid)
       cmd('flowlink.ws.stop', { cell: t.remote.cell, cwd: t.remote.cwd, rid: t.remote.rid });
+    // 监视是订阅：关页签就退订，否则对端会一直往这条链路上推事件
+    if (t.remote.mode === 'watch')
+      cmd('flowlink.ws.unwatch', { cell: t.remote.cell, cwd: t.remote.cwd });
     removeTab(ws);
     if (S.tabOrder.length) activateWs(S.active);
     else renderPanes();
@@ -420,8 +468,14 @@ function renderStatLine() {
   const left = $('#statLeft');
   if (!left) return;
   if (!t) { left.textContent = '没有打开的工作区'; return; }
-  const sandbox = { 'read-only': '只读', 'edit-only': '仅编辑', 'full-access': '完全访问' }[S.sandbox] || S.sandbox || '—';
-  left.textContent = (S.model || '(无模型)') + ' · ' + sandbox + ' · ' + (S.tools ? '工具开' : '工具关');
+  // 远程页签报对端的实际值：状态行说「在执行回合的那台机器上是什么」
+  const remote = !!t.remote;
+  const model = remote ? (effModelText(t) || '(对端无模型)') : (S.model || '(无模型)');
+  const sb = remote ? effSandbox(t) : S.sandbox;
+  const tools = remote ? effTools(t) : (S.tools !== false);
+  const sandbox = { 'read-only': '只读', 'edit-only': '仅编辑', 'full-access': '完全访问' }[sb] || sb || '—';
+  left.textContent = (remote ? flPeerLabel(t.remote.cell) + ' · ' : '')
+    + model + ' · ' + sandbox + ' · ' + (tools ? '工具开' : '工具关');
 }
 
 /* ---------- 思考级别菜单（保留兼容；不再自动写 #statRight） ---------- */
@@ -542,7 +596,7 @@ function renderDock() {
   // FlowLink 工作区在执行在对端：本地文件 / Git / 终端面板对它没有意义
   if (t && t.remote && (S.dock === 'files' || S.dock === 'git' || S.dock === 'terminal')) {
     const box = el('div', 'empty');
-    box.appendChild(el('div', null, 'FlowLink 工作区（远程）'));
+    box.appendChild(el('div', null, t.remote.mode === 'watch' ? '监视模式（只读）' : 'FlowLink 工作区（远程）'));
     box.appendChild(el('div', 'tiny dim', t.remote.cwd + ' · 执行在对端 cell 上'));
     body.replaceChildren(box);
     return;

@@ -259,6 +259,13 @@
 .cmp-chip.off{color:var(--fg3)}
 .cmp-chip.off .cmp-chip-ico .uico{color:var(--fg4)}
 
+/* FlowLink 远程页签：这些 chip 的值属于对端机器（可读可改，改动写到对端）。
+   给一枚极淡的 accent 底 + 图标染色，与「本机设置」区分开——不新增按钮，
+   也不改变布局，只让人一眼看出「这一组是在改另一台机器」。 */
+.cmp-chip.peer{background:color-mix(in srgb,var(--accent) 9%,rgba(255,255,255,.04))}
+.cmp-chip.peer .cmp-chip-ico .uico{color:var(--accent)}
+.cmp-chip.peer:hover{background:color-mix(in srgb,var(--accent) 16%,rgba(255,255,255,.06))}
+
 /* 思考强度：左边「思考」是固定名词，右边档位（关/低/中/高/极高）才是读数 */
 .cmp-chip-think .cmp-think-lv{
   flex:none;display:inline-flex;align-items:center;justify-content:center;

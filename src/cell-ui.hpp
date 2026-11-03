@@ -867,7 +867,11 @@ body.locked{overflow:hidden}
 .msg.assistant.streaming .prose{color:var(--fg)}
 
 /* ---- 5.4 prose / markdown ----------------------------------------- */
-.prose{min-width:0;overflow-wrap:anywhere}
+/* overflow-wrap:anywhere 会把「最小内容宽度」压成 1 个字，表格里各列随即被
+   挤成竖排单字（长文本列吃掉所有余量）。break-word 同样能在放不下时断词，
+   但不参与固有宽度计算 —— 表格 / flex 里的列宽才是内容决定的。 */
+.prose{min-width:0;overflow-wrap:break-word}
+
 .prose .md-p{margin:0 0 12px;white-space:pre-wrap}
 .prose .md-p:last-child{margin-bottom:0}
 .prose h1.md-h,.prose h2.md-h,.prose h3.md-h,.prose h4.md-h,
@@ -905,10 +909,17 @@ body.locked{overflow:hidden}
   white-space:pre;font-family:var(--mono);font-size:12.5px;line-height:1.7;color:var(--fg);
   tab-size:2}
 /* 表格 */
-.prose .tabwrap{margin:0 0 16px;overflow-x:auto;border:1px solid var(--line);border-radius:var(--radius-s)}
-.prose .md-tab{width:100%;border-collapse:collapse;font-size:13px;min-width:320px}
+/* 列宽由内容决定（table-layout:auto）：表头 / 短列不再被长文本列挤扁。
+   th/td 显式写 break-word，别继承 .prose 的断词策略到固有宽度里；
+   min-width 给每列一个下限，两个字的表头不会折成一个字一行。 */
+.prose .tabwrap{margin:0 0 16px;max-width:100%;overflow-x:auto;
+  border:1px solid var(--line);border-radius:var(--radius-s)}
+.prose .md-tab{width:100%;border-collapse:collapse;font-size:13px;min-width:320px;
+  table-layout:auto}
 .prose .md-tab th,.prose .md-tab td{padding:8px 13px;text-align:left;vertical-align:top;
-  white-space:pre-wrap;border-bottom:1px solid var(--line)}
+  white-space:pre-wrap;overflow-wrap:break-word;word-break:normal;
+  border-bottom:1px solid var(--line)}
+.prose .md-tab th{min-width:3.5em}
 .prose .md-tab tbody tr:last-child td{border-bottom:0}
 .prose .md-tab thead th{background:var(--bg2);color:var(--fg3);font-size:11px;font-weight:600;
   letter-spacing:.06em;text-transform:uppercase;border-bottom:1px solid var(--line2)}
@@ -1485,6 +1496,13 @@ body.locked{overflow:hidden}
 .cmp-chip-tools .cmp-dot.on{background:var(--accent);box-shadow:0 0 0 2.5px var(--accent-soft)}
 .cmp-chip.off{color:var(--fg3)}
 .cmp-chip.off .cmp-chip-ico .uico{color:var(--fg4)}
+
+/* FlowLink 远程页签：这些 chip 的值属于对端机器（可读可改，改动写到对端）。
+   给一枚极淡的 accent 底 + 图标染色，与「本机设置」区分开——不新增按钮，
+   也不改变布局，只让人一眼看出「这一组是在改另一台机器」。 */
+.cmp-chip.peer{background:color-mix(in srgb,var(--accent) 9%,rgba(255,255,255,.04))}
+.cmp-chip.peer .cmp-chip-ico .uico{color:var(--accent)}
+.cmp-chip.peer:hover{background:color-mix(in srgb,var(--accent) 16%,rgba(255,255,255,.06))}
 
 /* 思考强度：左边「思考」是固定名词，右边档位（关/低/中/高/极高）才是读数 */
 .cmp-chip-think .cmp-think-lv{
@@ -4486,6 +4504,24 @@ function el(tag, cls, txt) {
   if (txt != null) n.textContent = txt;
   return n;
 }
+/* 「按下即生效」的点击：流式输出时侧栏 / 页签每帧都可能被重建，
+   「按下节点 → 松开时节点已被替换」会让 click 永远不发出来 —— 用户看到的
+   就是「页签关不掉」「点另一条会话没反应」。所以主按钮走 pointerdown，
+   随后的 click 只作为键盘（Enter/Space 没有 pointerdown）的兜底。
+   子元素要吞掉事件时自己 stopPropagation（例如页签上的 ✕）。 */
+function onPress(node, fn) {
+  let pressed = false;
+  node.addEventListener('pointerdown', ev => {
+    if (ev.button !== 0 && ev.pointerType === 'mouse') return; // 右键/中键交给原处理
+    pressed = true;
+    fn(ev);
+  });
+  node.addEventListener('click', ev => {
+    if (pressed) { pressed = false; return; }
+    fn(ev);
+  });
+  return node;
+}
 function esc(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, c =>
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -5036,7 +5072,37 @@ function markChat(ws) {
   schedule('sidebar', renderSidebar);
   schedule('tabbar', renderTabbar);
   schedule('foot', renderFoot); // 品牌标识的运行态（忙碌 ⇄ 静止）随回合切换
+  syncLiveTick();               // 有工作区在跑就开始补刷侧栏数字 / 用量
 }
+
+/* ---------- 运行中的「活数据」补刷 ----------------------------------
+   侧栏的会话条数、会话标题、全局用量都只在回合开始/结束时各拉一次：新建
+   的会话在跑第一轮时，侧栏永远是「0 条 + 一串 id」，用量也还是空的 ——
+   看着像「明明在跑，却什么数都没有」。这里在有任何工作区忙的时候低频
+   补刷一次（2.5s；用量 5s），全部空闲就立刻停表，静态界面不会有定时器
+   在跑。refreshSessions / refreshUsages 都是廉价的只读命令。 */
+const LIVE_TICK_MS = 2500;
+const LIVE_USAGE_MS = 5000;
+let liveTimer = 0, liveUsageAt = 0;
+function anyTabBusy() {
+  for (const [, t] of S.tabs) if (t && t.busy) return true;
+  return false;
+}
+function syncLiveTick() {
+  const busy = anyTabBusy();
+  if (busy && !liveTimer) liveTimer = setInterval(liveTick, LIVE_TICK_MS);
+  else if (!busy && liveTimer) { clearInterval(liveTimer); liveTimer = 0; }
+}
+function liveTick() {
+  if (!anyTabBusy()) { syncLiveTick(); return; }  // 回合已结束：停表
+  if (document.hidden) return;                    // 后台窗口不必刷
+  refreshSessions();
+  if (Date.now() - liveUsageAt >= LIVE_USAGE_MS) {
+    liveUsageAt = Date.now();
+    if (typeof refreshUsages === 'function') refreshUsages(true);
+  }
+}
+
 function markComposer(ws) {
   if (ws === S.active) schedule('composer', renderComposer);
 }
@@ -5200,13 +5266,17 @@ function onTurnEnd(e) {
   const statusText = '回合结束 · ' + r + ' 轮 · ' + n + ' 次工具调用' + (e.natural === false ? '（中断）' : '');
   const sid = t.session, notices = t._turnNotices || [], errors = t._turnErrors || [];
   // 回合里 LLM 可能通过 tw 工具创建/运行了团队任务（这一路径没有 SSE 事件）：
-  // 让面板重拉内容；出现新任务且右侧面板关着时自动展开 Teamwork 面板
+  // 让面板重拉内容；只有「本会话之前就有一份已知的任务列表」时，才把新出现的
+  // 任务当成理由自动展开 Teamwork 面板 —— 没有基线（刚建的新会话）时这一趟
+  // 拉回来的全都会被判成「新任务」，面板就会在毫无缘由的时候自己弹出来。
+  const jobsKnown = !!t.jobsFor && t.jobsFor === sid;
   const beforeIds = new Set((t.jobs || []).map(j => j.id));
   t.jobsFor = '';
   // 一轮跑完总会多出 token：强刷一次用量（侧栏 chip + 本会话页顶栏的数字）。
   // 不走 20s 缓存 —— 回合结束正是用户去看「这轮花了多少」的时刻，数字必须立刻对。
   if (typeof refreshUsages === 'function') refreshUsages(true);
   refreshTeamwork(e.ws, true).then(jobs => {
+    if (!jobsKnown) return; // 没有基线：只更新面板，不替用户开面板
     if (e.ws === S.active && jobs && jobs.some(j => !beforeIds.has(j.id)) && !S.dockOpen)
       openDock('teamwork');
   });
@@ -5312,14 +5382,18 @@ function onToolEnd(e) {
   tool.sec = e.sec; tool.chars = e.chars; tool.multimodal = e.multimodal;
   if (window.RT) RT.mark(e.ws);  // 工具跑完通常紧跟下一轮请求：作为 TTFT 的起点兜底
   markChat(e.ws);
-  // LLM 通过 tw 工具建/跑团队任务时没有 SSE 事件：工具一结束就重拉一次，
-  // 新任务出现且右栏关着就自动展开 Teamwork——用户提交后能立刻看到卡片
+  // LLM 通过 tw 工具建/跑团队任务时没有 SSE 事件：工具一结束就重拉一次。
+  // 只有已经读过本会话的任务列表（jobsFor 对齐当前 session）时才认为「diff
+  // 出来的都是新任务」并顺手展开右栏；没有基线时只静默更新数据。
   if (tool.name === 'tw' || tool.name === 'teamwork') {
-    const beforeIds = new Set(((S.tabs.get(e.ws) || {}).jobs || []).map(j => j.id));
     const t2 = S.tabs.get(e.ws);
-    if (t2) t2.jobsFor = '';
+    if (!t2) return;
+    const jobsKnown = !!t2.jobsFor && t2.jobsFor === t2.session;
+    const beforeIds = new Set((t2.jobs || []).map(j => j.id));
+    t2.jobsFor = '';
     refreshTeamwork(e.ws, true).then(jobs => {
       if (e.ws !== S.active || !jobs) return;
+      if (!jobsKnown) return; // 没有基线：不替用户开面板
       const fresh = jobs.filter(j => !beforeIds.has(j.id));
       if (!fresh.length) return;
       if (!S.dockOpen) openDock('teamwork');
@@ -5521,30 +5595,65 @@ function listMark(l) {
 function isHr(l) { return /^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/.test(l) && /^[\s\-*_]+$/.test(l); }
 
 // 表格：表头 + 分隔行 + 若干数据行
+/* 拆一行表格。三件事必须做对，否则一张表就会被切歪：
+     · \| 是单元格里的字面竖线（Markdown 的转义），不拆；
+     · 行内代码里的 | 是内容（`ls | head`），不拆；
+     · 行首/行尾那个可选的边框竖线要吃掉，但它不属于任何单元格。 */
+function tableCells(line) {
+  let s = String(line == null ? '' : line).trim();
+  if (s.startsWith('|')) s = s.slice(1);
+  if (s.endsWith('|') && !s.endsWith('\\|')) s = s.slice(0, -1);
+  const out = [];
+  let cur = '';
+  let inCode = false;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (ch === '\\' && s[i + 1] === '|') { cur += '|'; i++; continue; }
+    if (ch === '`') { inCode = !inCode; cur += ch; continue; }
+    if (ch === '|' && !inCode) { out.push(cur.trim()); cur = ''; continue; }
+    cur += ch;
+  }
+  out.push(cur.trim());
+  return out;
+}
+// 分隔行 → 每列的对齐方式（GFM：:--- 左、---: 右、:---: 居中）
+function tableAligns(sep) {
+  return tableCells(sep).map(c => {
+    const l = c.startsWith(':'), r = c.endsWith(':');
+    if (l && r) return 'center';
+    if (r) return 'right';
+    if (l) return 'left';
+    return '';
+  });
+}
+function alignAttr(a) { return a ? ' style="text-align:' + a + '"' : ''; }
+
 function parseTable(lines, i) {
-  const cells = l => {
-    let s = l.trim();
-    if (s.startsWith('|')) s = s.slice(1);
-    if (s.endsWith('|')) s = s.slice(0, -1);
-    return s.split('|').map(c => c.trim());
-  };
-  const head = cells(lines[i]);
+  const head = tableCells(lines[i]);
+  const al = tableAligns(lines[i + 1]);
+  // 列数以表头与分隔行里更宽的那个为准：少写一列 |---| 不该把数据列吃掉
+  const cols = Math.max(head.length, al.length);
   i += 2; // 跳过分隔行
   const rows = [];
   while (i < lines.length && !isBlank(lines[i]) && lines[i].indexOf('|') >= 0) {
-    rows.push(cells(lines[i]));
+    // 分隔行之后紧跟的必须是数据行：遇到标题 / 列表 / 围栏就收手，别把它们吞进表里
+    if (/^\s*(#{1,6}\s|>|```)/.test(lines[i]) || listMark(lines[i])) break;
+    rows.push(tableCells(lines[i]));
     i++;
   }
   let h = '<div class="tabwrap"><table class="md-tab"><thead><tr>';
-  for (const c of head) h += '<th>' + mdInline(c) + '</th>';
+  for (let k = 0; k < cols; k++)
+    h += '<th' + alignAttr(al[k]) + '>' + mdInline(head[k] == null ? '' : head[k]) + '</th>';
   h += '</tr></thead><tbody>';
   for (const r of rows) {
     h += '<tr>';
-    for (let k = 0; k < head.length; k++) h += '<td>' + mdInline(r[k] == null ? '' : r[k]) + '</td>';
+    for (let k = 0; k < cols; k++)
+      h += '<td' + alignAttr(al[k]) + '>' + mdInline(r[k] == null ? '' : r[k]) + '</td>';
     h += '</tr>';
   }
   return { html: h + '</tbody></table></div>', next: i };
 }
+
 
 // 列表：按缩进递归，支持有序 / 无序 / 任务清单与嵌套
 function parseList(lines, i, baseIndent) {
@@ -5810,7 +5919,27 @@ function saveGroupState() {
 }
 
 /* ---- 侧栏 -------------------------------------------------------- */
-function renderSidebar() {
+/* 侧栏内容指纹：数据没变就一个节点都不重建。
+   流式输出时 markChat 每帧都会 schedule 一次 renderSidebar，而侧栏里的
+   数据（标题/条数/运行态）只在回合开始结束、会话落盘时才变 —— 无脑
+   replaceChildren 会让每个会话行、每个工作区分组在鼠标下被换掉，于是
+   「点另一条会话没反应」「分组点不开」「删除按钮点不到」。 */
+function sidebarSig(groups, q) {
+  let h = 0;
+  const put = (s) => { s = String(s); for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; h = (h * 7 + 1) | 0; };
+  put(q || '');
+  put(S.sessionsTotal || 0);
+  for (const g of groups.values()) {
+    put(g.ws); put(g.cwd || ''); put(g.open ? 1 : 0); put(g.busy ? 1 : 0); put(g.items.length);
+    for (const s of g.items) {
+      put(s.id); put(s.title || ''); put(s.mtime || 0); put(s.msgs || 0);
+      put(s.active ? 1 : 0); put(s.busy ? 1 : 0);
+      put(s.jobs || 0); put(s.archives || 0); put(s.worktree || '');
+    }
+  }
+  return h;
+}
+function renderSidebar(force) {
   const list = $('#sessionList');
   if (!list) return;
   const q = (S.sbFilter || '').trim().toLowerCase();
@@ -5830,6 +5959,10 @@ function renderSidebar() {
   }
   seedGroupsClosed(groups);
   for (const [ws, g] of groups) g.open = q ? true : !S.groupsClosed.has(ws);
+  const sig = sidebarSig(groups, q);
+  if (!force && list.__sig === sig && list.__flowSig === flowWsSig()) return;
+  list.__sig = sig;
+  list.__flowSig = flowWsSig();
 
   const nodes = [];
   for (const g of groups.values()) {
@@ -5853,16 +5986,16 @@ function renderSidebar() {
     const gdel = el('button', 'gdel');
     gdel.appendChild(iconEl('trash', 'sm'));
     gdel.title = '删除工作区（移除全部会话记录，保留目录）';
-    gdel.onclick = ev => { ev.stopPropagation(); deleteWorkspace(g.ws); };
+    onPress(gdel, ev => { ev.stopPropagation(); deleteWorkspace(g.ws); });
     head.appendChild(gdel);
     head.title = (g.cwd || g.ws) + ' | 点击' + (g.open ? '折叠' : '展开');
     head.setAttribute('aria-expanded', g.open ? 'true' : 'false');
-    head.onclick = () => {
+    onPress(head, () => {
       if (S.groupsClosed.has(g.ws)) S.groupsClosed.delete(g.ws);
       else S.groupsClosed.add(g.ws);
       saveGroupState();
-      renderSidebar();
-    };
+      renderSidebar(true); // 折叠状态变了：内容指纹不会变，得强制重建
+    });
     gEl.appendChild(head);
 
     const sorted = items.slice().sort((a, b) => (b.active - a.active) || (b.mtime - a.mtime));
@@ -5895,7 +6028,7 @@ function renderSidebar() {
         const a = el('span', 'stag ar', '存档 ' + s.archives);
         a.title = '该会话有 ' + s.archives + ' 个压缩历史存档（点击在右侧面板查看）';
         a.style.cursor = 'pointer';
-        a.onclick = ev => { ev.stopPropagation(); selectSession(s); openDock('archives'); };
+        onPress(a, ev => { ev.stopPropagation(); selectSession(s); openDock('archives'); });
         meta.appendChild(a);
       }
       if (s.busy) { const d = el('span', 'dot run'); d.style.marginLeft = 'auto'; meta.appendChild(d); }
@@ -5904,10 +6037,10 @@ function renderSidebar() {
       const del = el('button', 'idel');
       del.appendChild(iconEl('trash', 'sm'));
       del.title = '删除会话';
-      del.onclick = ev => { ev.stopPropagation(); deleteSession(s); };
+      onPress(del, ev => { ev.stopPropagation(); deleteSession(s); });
       it.appendChild(del);
       it.title = (s.title ? s.title + ' | ' : '') + s.id + ' | ' + (s.cwd || '');
-      it.onclick = () => selectSession(s);
+      onPress(it, () => selectSession(s));
       box.appendChild(it);
     }
     gEl.appendChild(box);
@@ -5945,9 +6078,26 @@ async function selectSession(s) {
 }
 
 /* ---- 标签栏 ------------------------------------------------------ */
-function renderTabbar() {
+/* 页签内容指纹：同上 —— 流式输出期间页签数据（运行态 / 未读 / 活动页）没变
+   就完全不碰 DOM，✕ 按钮才不会在鼠标按下与松开之间被换掉。 */
+function tabbarSig() {
+  let h = 0;
+  const put = (s) => { s = String(s); for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; };
+  put(S.active || '');
+  for (const ws of S.tabOrder) {
+    const t = S.tabs.get(ws); if (!t) continue;
+    put(ws); put(t.cwd || '');
+    put(t.busy ? 1 : 0); put(t.unread || 0); put(t.approval ? 1 : 0);
+    put(t.remote ? (t.remote.mode || '') + '|' + (t.remote.name || '') + '|' + (t.remote.cwd || '') : '');
+  }
+  return h;
+}
+function renderTabbar(force) {
   const bar = $('#tabbar');
   if (!bar) return;
+  const sig = tabbarSig();
+  if (!force && bar.__sig === sig) return;
+  bar.__sig = sig;
   const nodes = [];
   for (const ws of S.tabOrder) {
     const t = S.tabs.get(ws); if (!t) continue;
@@ -5968,9 +6118,10 @@ function renderTabbar() {
     }
     const x = el('button', 'x', '✕');
     x.title = '关闭工作区';
-    x.onclick = ev => { ev.stopPropagation(); closeWorkspace(ws); };
+    // 先吞掉 pointerdown，别让页签本体把这次按下当成「切到这个页签」
+    onPress(x, ev => { ev.stopPropagation(); closeWorkspace(ws); });
     tb.appendChild(x);
-    tb.onclick = () => activateWs(ws);
+    onPress(tb, () => activateWs(ws));
     tb.oncontextmenu = ev => { ev.preventDefault(); tabMenu(ev, ws); };
     nodes.push(tb);
   }
@@ -6213,8 +6364,14 @@ function renderStatLine() {
   const left = $('#statLeft');
   if (!left) return;
   if (!t) { left.textContent = '没有打开的工作区'; return; }
-  const sandbox = { 'read-only': '只读', 'edit-only': '仅编辑', 'full-access': '完全访问' }[S.sandbox] || S.sandbox || '—';
-  left.textContent = (S.model || '(无模型)') + ' · ' + sandbox + ' · ' + (S.tools ? '工具开' : '工具关');
+  // 远程页签报对端的实际值：状态行说「在执行回合的那台机器上是什么」
+  const remote = !!t.remote;
+  const model = remote ? (effModelText(t) || '(对端无模型)') : (S.model || '(无模型)');
+  const sb = remote ? effSandbox(t) : S.sandbox;
+  const tools = remote ? effTools(t) : (S.tools !== false);
+  const sandbox = { 'read-only': '只读', 'edit-only': '仅编辑', 'full-access': '完全访问' }[sb] || sb || '—';
+  left.textContent = (remote ? flPeerLabel(t.remote.cell) + ' · ' : '')
+    + model + ' · ' + sandbox + ' · ' + (tools ? '工具开' : '工具关');
 }
 
 /* ---------- 思考级别菜单（保留兼容；不再自动写 #statRight） ---------- */
@@ -11659,15 +11816,65 @@ function paintSandboxChip(mode) {
 
 /* S.model 是「供应商:模型」（核心的 model_label），但输入栏的圆钮只放模型名：
    供应商有自己的 chip，模型名再带上只会被挤成省略号。 */
-function modelShortName() {
-  // 未选模型时 model_label() 只剩供应商名，当成模型名显示会让人以为已选好
-  if (!S.modelSet) return '';
-  const m = String(S.model || '');
-  const p = String(S.provider || '');
+function shortModelLabel(model, provider) {
+  const m = String(model || '');
+  const p = String(provider || '');
   if (p && m.slice(0, p.length + 1) === p + ':') return m.slice(p.length + 1);
   const i = m.indexOf(':');
   return i > 0 ? m.slice(i + 1) : m;
 }
+function modelShortName() {
+  // 未选模型时 model_label() 只剩供应商名，当成模型名显示会让人以为已选好
+  if (!S.modelSet) return '';
+  return shortModelLabel(S.model, S.provider);
+}
+
+/* ---- 远程工作区（FlowLink）：这些值属于执行回合的那台机器 ------------
+   t.remote.conf 是对端 settings 的一份缓存（见 12-flowlink.js 的
+   flLoadRemoteConf / flPatchRemoteConf）。下面这组 eff* 让 chip 的「画」与
+   「改」都走同一个来源：本地页签读 S.*，远程页签读对端的值。 */
+function effProvider(t) {
+  const c = t && t.remote ? flRemoteConf(t) : null;
+  if (!c) return '';
+  if (c.provider) return String(c.provider);
+  const m = String(c.model || '');
+  const i = m.indexOf(':');
+  return i > 0 ? m.slice(0, i) : '';
+}
+function effModelText(t) {
+  const c = t && t.remote ? flRemoteConf(t) : null;
+  if (!c) return '';
+  if (c.model_set === false) return '';
+  return shortModelLabel(c.model, c.provider);
+}
+function effThink(t) {
+  const c = t && t.remote ? flRemoteConf(t) : null;
+  if (!c) return 0;
+  const v = Number(c.think_level || 0);
+  return THINK_LEVELS[v] ? v : 0;
+}
+function effTools(t) {
+  const c = t && t.remote ? flRemoteConf(t) : null;
+  return c ? c.tools !== false : true;
+}
+function effSandbox(t) {
+  const c = t && t.remote ? flRemoteConf(t) : null;
+  if (!c) return 'full-access';
+  return c.sandbox || c.sandbox_mode || 'full-access';
+}
+/* 远程页签还没读到对端设置时，chip 用这个标题说明「正在读对端」 */
+function effPending(t) {
+  const c = t && t.remote ? flRemoteConf(t) : null;
+  return !!t && !!t.remote && !(c && c.loaded) && !(c && c.err);
+}
+function effErr(t) {
+  const c = t && t.remote ? flRemoteConf(t) : null;
+  return (c && c.err) || '';
+}
+function effPeer(t) { return t && t.remote ? flPeerLabel(t.remote.cell) : ''; }
+/* chip 的 title 前缀：远程时把「这是对端的值」说清楚 */
+function effPrefix(t) { return t && t.remote ? effPeer(t) + ' · ' : ''; }
+
 /* 模型菜单/设置页标记「当前」用：列表里是裸模型名，状态里是「供应商:模型」 */
 function isCurrentModel(m) { return !!m && (m === S.model || m === modelShortName()); }
 /* 状态里的模型名补齐回「供应商:模型」，别让 S.model 在两种形状间来回变 */
@@ -11675,8 +11882,17 @@ function modelLabelOf(m) { return S.provider ? S.provider + ':' + m : m; }
 
 /* 未选模型：有供应商但模型为空（后端 state.model_set=false）。切供应商会清空
    current_model，此时 model_label() 只剩供应商名，chip 上看起来像「已选好」——
-   必须用权威标志判断，不能靠「有没有冒号」猜字符串形状。 */
-function needsModel() { return !!S.provider && S.modelSet === false; }
+   必须用权威标志判断，不能靠「有没有冒号」猜字符串形状。
+   远程页签用的是对端的那份值（对端没选模型，这里同样发不出去）。 */
+function needsModel() {
+  const t = curTab();
+  if (t && t.remote) {
+    const c = flRemoteConf(t);
+    if (!c || !c.loaded) return false; // 还没读到：别拿本机的状态去拦对端的回合
+    return !!c.provider && c.model_set === false;
+  }
+  return !!S.provider && S.modelSet === false;
+}
 
 /* 强制提醒：未选模型时不允许开始会话 —— 红字提示 + chip 抖一下 + 直接弹模型
    菜单（菜单打开时会自动拉列表，用户不必再去找入口） */
@@ -11694,16 +11910,22 @@ function paintModelChip(t) {
   const chip = $('#modelChip');
   if (!chip) return;
   const need = !!t && needsModel(); // 有工作区才谈得上「开始会话」
-  const name = need ? '选择模型' : (modelShortName() || '(未选择模型)');
+  const remote = !!(t && t.remote);
+  const name = need ? '选择模型'
+    : (remote ? (effModelText(t) || (effPending(t) ? '读取对端…' : '(未选择模型)'))
+              : (modelShortName() || '(未选择模型)'));
   chip.innerHTML = '<span class="cmp-chip-ico">' + iconHtml('cpu') + '</span>'
     + '<span class="cmp-model-name trunc"></span>'
     + '<span class="cmp-chev">' + iconHtml('chevronDown') + '</span>';
   const nm = chip.querySelector('.cmp-model-name');
   if (nm) nm.textContent = name;
   chip.classList.toggle('need', need);
+  chip.classList.toggle('peer', remote);
+  const prov = remote ? effProvider(t) : providerName();
   chip.title = need
-    ? '未选择模型：供应商 ' + (providerName() || '?') + ' 已切换，但还没有指定模型\n点这里选一个模型后才能开始会话'
-    : '模型：' + name + '\n点击切换模型';
+    ? (remote ? effPeer(t) + ' 上还没有选择模型：供应商 ' : '未选择模型：供应商 ') + (prov || '?')
+      + ' 已切换，但还没有指定模型\n点这里选一个模型后才能开始会话'
+    : effPrefix(t) + '模型：' + name + '\n点击切换模型' + (remote ? '（改的是对端）' : '');
   chip.disabled = !t;
   chip.setAttribute('aria-expanded', cmpMenu && cmpMenu.kind === 'model' ? 'true' : 'false');
 }
@@ -11720,14 +11942,18 @@ function providerName() {
 function paintProviderChip(t) {
   const chip = $('#providerChip');
   if (!chip) return;
-  const p = providerName();
+  const remote = !!(t && t.remote);
+  const p = remote ? effProvider(t) : providerName();
   chip.innerHTML = '<span class="cmp-chip-ico">' + iconHtml('database') + '</span>'
     + '<span class="cmp-chip-txt trunc"></span>'
     + '<span class="cmp-chev">' + iconHtml('chevronDown') + '</span>';
   const txt = chip.querySelector('.cmp-chip-txt');
-  if (txt) txt.textContent = p || '供应商';
-  chip.classList.toggle('need', !!t && !p);
-  chip.title = p ? '供应商：' + p + '\n点击切换供应商（会清空当前模型）' : '还没有选择供应商';
+  if (txt) txt.textContent = p || (remote && effPending(t) ? '…' : '供应商');
+  chip.classList.toggle('need', !!t && !p && !(remote && effPending(t)));
+  chip.classList.toggle('peer', remote);
+  chip.title = p
+    ? effPrefix(t) + '供应商：' + p + '\n点击切换供应商（会清空当前模型）' + (remote ? '（改的是对端）' : '')
+    : (remote ? effPeer(t) + ' 上还没有配置供应商' : '还没有选择供应商');
   chip.disabled = !t;
   chip.setAttribute('aria-expanded', cmpMenu && cmpMenu.kind === 'provider' ? 'true' : 'false');
 }
@@ -11741,14 +11967,18 @@ function thinkLevel() {
 function paintThinkChip(t) {
   const chip = $('#thinkChip');
   if (!chip) return;
-  const v = thinkLevel();
+  const remote = !!(t && t.remote);
+  const v = remote ? effThink(t) : thinkLevel();
   const lvl = THINK_LEVELS[v];
   chip.innerHTML = '<span class="cmp-chip-ico">' + iconHtml('bulb') + '</span>'
     + '<span class="cmp-chip-txt">思考</span>'
     + '<span class="cmp-think-lv' + (v ? ' on' : '') + '">' + THINK_SHORT[v] + '</span>'
     + '<span class="cmp-chev">' + iconHtml('chevronDown') + '</span>';
   chip.classList.toggle('off', v === 0);
-  chip.title = '思考强度：' + (v ? lvl.name + ' (' + v + ') · ' + lvl.desc : '关闭（不推理，最快）');
+  chip.classList.toggle('peer', remote);
+  chip.title = effPrefix(t) + '思考强度：'
+    + (v ? lvl.name + ' (' + v + ') · ' + lvl.desc : '关闭（不推理，最快）')
+    + (remote ? '\n改的是对端的值' : '');
   chip.disabled = !t;
   chip.setAttribute('aria-expanded', cmpMenu && cmpMenu.kind === 'think' ? 'true' : 'false');
 }
@@ -11757,20 +11987,27 @@ function paintThinkChip(t) {
 function paintToolsChip(t) {
   const chip = $('#toolsChip');
   if (!chip) return;
-  const on = S.tools !== false;
+  const remote = !!(t && t.remote);
+  const on = remote ? effTools(t) : (S.tools !== false);
   chip.innerHTML = '<span class="cmp-chip-ico">' + iconHtml('sliders') + '</span>'
     + '<span class="cmp-chip-txt">工具</span>'
     + '<span class="cmp-dot' + (on ? ' on' : '') + '"></span>';
   chip.classList.toggle('off', !on);
+  chip.classList.toggle('peer', remote);
   chip.setAttribute('aria-pressed', on ? 'true' : 'false');
-  chip.title = '工具调用：' + (on ? '开（可读写文件 / 执行命令）' : '关（模型只能回复文本）')
-    + '\n点击' + (on ? '关闭' : '开启');
+  chip.title = effPrefix(t) + '工具调用：' + (on ? '开（可读写文件 / 执行命令）' : '关（模型只能回复文本）')
+    + '\n点击' + (on ? '关闭' : '开启') + (remote ? '（改的是对端）' : '');
   chip.disabled = !t;
 }
 function toggleTools() {
   const t = curTab();
   if (!t) return;
-  const on = S.tools === false;
+  const on = !(t.remote ? effTools(t) : (S.tools !== false));
+  if (t.remote) {
+    flPatchRemoteConf(t, { tools: on }, '对端工具调用：' + (on ? '开' : '关'))
+      .then(() => focusInput());
+    return;
+  }
   cmd('settings.set', { patch: { tools: on } }).then(out => {
     if (!out || out.ok === false) return;
     S.tools = on;
@@ -11780,6 +12017,7 @@ function toggleTools() {
     focusInput();
   });
 }
+
 
 function paintSendState(t) {
   const send = $('#sendBtn');
@@ -11812,29 +12050,38 @@ function paintSendState(t) {
   if (!has) send.classList.add('dim');
 }
 
-/* 远程会话：这些设置属于会话所在的那台机器，本机只能看不能改。
-   chip 保留在原来的位置（布局不变），文案换成「对端」并把操作锁死。 */
-function flLockChips(t) {
+/* 远程会话（FlowLink 工作区）：模型 / 供应商 / 沙箱 / 工具 / 思考强度属于
+   执行回合的那台机器 —— 但「属于对端」不等于「改不了」：chip 保持在原位、
+   保持可点，值读自对端（eff*），改动经 flowlink.ws.config.set 写到对端。
+   监视模式（watch）是只读订阅，连值都拿不到：那一档恢复成「对端」锁定。 */
+function flLockChips() {
   const set = (sel, txt, title) => {
     const b = $(sel);
     if (!b) return;
     b.disabled = true;
     b.title = title;
-    // 模型 chip 用的是 .cmp-model-name，其余是 .cmp-chip-txt
     const label = b.querySelector('.cmp-chip-txt') || b.querySelector('.cmp-model-name');
     if (label) label.textContent = txt;
-    const lv = b.querySelector('.cmp-think-lv'); // 思考强度那一档也是本机的值
+    const lv = b.querySelector('.cmp-think-lv');
     if (lv) { lv.textContent = ''; lv.classList.remove('on'); }
   };
-  set('#sandboxChip', '对端', '沙箱与权限边界由会话所在的那台机器决定');
-  set('#toolsChip', '对端', '工具调用开关由会话所在的那台机器决定');
-  set('#providerChip', '对端', '供应商由会话所在的那台机器决定');
-  set('#modelChip', '对端模型', '模型由会话所在的那台机器决定');
-  set('#thinkChip', '对端', '思考强度由会话所在的那台机器决定');
+  set('#sandboxChip', '对端', '监视模式：沙箱由会话所在的那台机器决定');
+  set('#toolsChip', '对端', '监视模式：工具开关由会话所在的那台机器决定');
+  set('#providerChip', '对端', '监视模式：供应商由会话所在的那台机器决定');
+  set('#modelChip', '对端模型', '监视模式：模型由会话所在的那台机器决定');
+  set('#thinkChip', '对端', '监视模式：思考强度由会话所在的那台机器决定');
+}
+
+function flPeerChips(t) {
   ['#modeChip', '#btnAttach'].forEach(sel => {
     const b = $(sel);
     if (b) { b.disabled = true; b.title = '远程会话只接受文本输入'; }
   });
+  if (t.remote.mode === 'watch') { flLockChips(); return; }
+  const c = flRemoteConf(t);
+  // 缓存过期（对端可能在本机改过）或还没读过：顺手拉一次，几十毫秒
+  const stale = !c || !c.loaded || (nowSec() - (c.at || 0) > 60);
+  if (stale && !t.remote.confLoading) flLoadRemoteConf(t);
 }
 
 function renderComposer() {
@@ -11878,7 +12125,7 @@ function renderComposer() {
   ['#modeChip', '#sandboxChip', '#toolsChip', '#providerChip', '#modelChip', '#thinkChip', '#btnAttach']
     .forEach(s => { const b = $(s); if (b) b.disabled = false; });
   paintModeChip(mode);
-  paintSandboxChip(S.sandbox || 'full-access');
+  paintSandboxChip(t && t.remote ? effSandbox(t) : (S.sandbox || 'full-access'));
   paintToolsChip(t);
   paintProviderChip(t);
   paintModelChip(t);
@@ -11903,9 +12150,9 @@ function renderComposer() {
 
   renderChips(t);
   paintSendState(t);
-  // 远程会话：模型 / 供应商 / 沙箱 / 工具 / 思考强度都属于对端；监视模式还没有输入
+  // 远程会话：这些设置属于对端（可读可改，走对端 RPC）；监视模式没有输入
   if (t.remote) {
-    flLockChips(t);
+    flPeerChips(t);
     if (t.remote.mode === 'watch') {
       ta.disabled = true;
       ta.value = '';
@@ -12122,6 +12369,8 @@ async function sendCurrent() {
     closeSlash();
     if (t.remote.mode === 'watch') { toast('监视模式不能输入', 'info'); return; }
     if (t.busy) { cmd('flowlink.ws.stop', { cell: t.remote.cell, cwd: t.remote.cwd, rid: t.remote.rid }); return; }
+    // 对端没选模型同样是「发出去也白跑」：当场拦住并弹对端的模型菜单
+    if (needsModel()) { demandModel('对端还没有选择模型 —— 先选一个才能开始会话'); return; }
     await flSendRemote(t);
     focusInput();
     return;
@@ -12301,7 +12550,7 @@ function toggleModeMenu(anchor) {
 function toggleSandboxMenu(anchor) {
   const t = curTab();
   if (!t) return;
-  const cur = S.sandbox || 'full-access';
+  const cur = t.remote ? effSandbox(t) : (S.sandbox || 'full-access');
   openComposerMenu(anchor, {
     kind: 'sandbox',
     build: menu => {
@@ -12312,65 +12561,115 @@ function toggleSandboxMenu(anchor) {
         row.onclick = () => { closeComposerMenu(false); if (cur !== m.v) setSandboxMode(m.v); else focusInput(); };
         menu.appendChild(row);
       }
+      if (t.remote) menu.appendChild(el('div', 'cmp-menu-hint', '沙箱属于 ' + effPeer(t) + '：改的是对端的权限边界'));
     },
   });
+}
+
+/* 远程页签的模型列表来自对端（它自己的供应商与密钥）：本地 S.models 是
+   本机供应商的列表，拿它去给远程会话选模型只会选出一个对端不存在的名字。 */
+function modelListFor(t) {
+  if (t && t.remote) {
+    const c = flRemoteConf(t);
+    return (c && Array.isArray(c.models)) ? c.models : [];
+  }
+  return S.models || [];
+}
+function isCurrentModelFor(t, m) {
+  if (t && t.remote) {
+    const c = flRemoteConf(t);
+    if (!c) return false;
+    const full = c.provider ? c.provider + ':' + m : m;
+    return m === c.model || m === shortModelLabel(c.model, c.provider) || full === c.model;
+  }
+  return isCurrentModel(m);
+}
+function fetchModelsFor(t, force) {
+  if (t && t.remote) {
+    return flLoadRemoteConf(t, true).then(conf => {
+      const n = conf && Array.isArray(conf.models) ? conf.models.length : 0;
+      if (force) toast(n ? '已拉取对端的 ' + n + ' 个模型' : '对端没有返回模型列表', n ? 'ok' : 'bad');
+      if (n && cmpMenu && cmpMenu.kind === 'model') reopenModelMenu();
+      return n > 0;
+    });
+  }
+  return fetchModels(force);
 }
 
 function toggleModelMenu(anchor) {
   const t = curTab();
   if (!t) return;
+  const remote = !!t.remote;
+  const list = modelListFor(t);
   openComposerMenu(anchor, {
     kind: 'model',
     align: 'right',
     build: menu => {
-      menu.appendChild(cmpMenuHead('模型'));
+      menu.appendChild(cmpMenuHead(remote ? '模型 · ' + effPeer(t) : '模型'));
       // 未选模型是「发不出去」的硬条件：菜单一开就把话说清楚
       if (needsModel()) menu.appendChild(el('div', 'cmp-menu-hint danger', '未选择模型 · 选一个才能开始会话'));
-      if (S.models.length) {
-        for (const m of S.models) {
-          const row = cmpMenuRow('cpu', m, isCurrentModel(m) ? '当前模型' : '', isCurrentModel(m));
+      if (remote && effErr(t)) menu.appendChild(el('div', 'cmp-menu-hint danger', effErr(t)));
+      if (list.length) {
+        for (const m of list) {
+          const on = isCurrentModelFor(t, m);
+          const row = cmpMenuRow('cpu', m, on ? '当前模型' : '', on);
           row.onclick = () => switchModel(m);
           menu.appendChild(row);
         }
       } else {
-        const row = cmpMenuRow('refresh', '拉取模型列表', 'models.fetch', false);
-        row.onclick = ev => { ev.stopPropagation(); fetchModels(true); };
+        const row = cmpMenuRow('refresh', remote ? '从对端拉取模型列表' : '拉取模型列表',
+          remote ? '对端的供应商 · 可能几秒' : 'models.fetch', false);
+        row.onclick = ev => { ev.stopPropagation(); fetchModelsFor(t, true); };
         menu.appendChild(row);
       }
-      const setRow = cmpMenuRow('settings', '打开模型设置…', '设置 · 模型', false);
-      setRow.onclick = () => { closeComposerMenu(false); openSettings('models'); };
-      menu.appendChild(setRow);
+      if (!remote) {
+        const setRow = cmpMenuRow('settings', '打开模型设置…', '设置 · 模型', false);
+        setRow.onclick = () => { closeComposerMenu(false); openSettings('models'); };
+        menu.appendChild(setRow);
+      } else {
+        menu.appendChild(el('div', 'cmp-menu-hint', '模型取自 ' + effPeer(t) + ' 的供应商；选择会立刻写到对端'));
+      }
     },
   });
-  autoFetchModels();
+  if (!list.length) fetchModelsFor(t, false);
 }
 
 /* 供应商菜单：换供应商会清空当前模型，走 /provider 同一条路径（resync + 重拉列表） */
 function toggleProviderMenu(anchor) {
   const t = curTab();
   if (!t) return;
-  const cur = providerName();
+  const remote = !!t.remote;
+  const cur = remote ? effProvider(t) : providerName();
+  const list = remote ? (((flRemoteConf(t) || {}).providers) || []) : (S.providers || []);
   openComposerMenu(anchor, {
     kind: 'provider',
     align: 'right',
     build: menu => {
-      menu.appendChild(cmpMenuHead('供应商'));
-      if (S.providers.length) {
-        for (const p of S.providers) {
-          const on = p.name === cur || !!p.current;
+      menu.appendChild(cmpMenuHead(remote ? '供应商 · ' + effPeer(t) : '供应商'));
+      if (list.length) {
+        for (const p of list) {
+          const on = p.name === cur || (!cur && !!p.current);
           const row = cmpMenuRow('database', p.name, on ? '当前供应商' : (p.api_style || ''), on);
           row.onclick = () => { closeComposerMenu(false); execSlash(t, '/provider', p.name); focusInput(); };
           menu.appendChild(row);
         }
+      } else if (remote) {
+        menu.appendChild(el('div', 'cmp-menu-hint',
+          (flRemoteConf(t) ? '' : '正在读取对端设置…') || '对端还没有配置供应商'));
       } else {
         const row = cmpMenuRow('database', '打开供应商设置…', '还没有配置供应商', false);
         row.onclick = () => { closeComposerMenu(false); openSettings('providers'); };
         menu.appendChild(row);
       }
-      menu.appendChild(cmpMenuSep());
-      const setRow = cmpMenuRow('settings', '管理供应商…', '设置 · 供应商', false);
-      setRow.onclick = () => { closeComposerMenu(false); openSettings('providers'); };
-      menu.appendChild(setRow);
+      if (!remote) {
+        menu.appendChild(cmpMenuSep());
+        const setRow = cmpMenuRow('settings', '管理供应商…', '设置 · 供应商', false);
+        setRow.onclick = () => { closeComposerMenu(false); openSettings('providers'); };
+        menu.appendChild(setRow);
+      } else {
+        menu.appendChild(el('div', 'cmp-menu-hint',
+          '供应商与密钥都在 ' + effPeer(t) + ' 上：这里只能切换它已有的那些'));
+      }
     },
   });
 }
@@ -12379,12 +12678,13 @@ function toggleProviderMenu(anchor) {
 function toggleThinkLevelMenu(anchor) {
   const t = curTab();
   if (!t) return;
-  const cur = thinkLevel();
+  const cur = t.remote ? effThink(t) : thinkLevel();
+  const remote = !!t.remote;
   openComposerMenu(anchor, {
     kind: 'think',
     align: 'right',
     build: menu => {
-      menu.appendChild(cmpMenuHead('思考强度'));
+      menu.appendChild(cmpMenuHead(remote ? '思考强度 · ' + effPeer(t) : '思考强度'));
       for (const l of THINK_LEVELS) {
         const row = cmpMenuRow('bulb', THINK_SHORT[l.v] + ' · ' + l.name, l.desc, cur === l.v);
         row.onclick = () => { closeComposerMenu(false); execSlash(t, '/think', String(l.v)); focusInput(); };
@@ -12392,7 +12692,9 @@ function toggleThinkLevelMenu(anchor) {
       }
       menu.appendChild(cmpMenuSep());
       const hint = el('div', 'cmp-menu-hint');
-      hint.innerHTML = '也可用 <kbd>/think</kbd> 直接设置';
+      hint.innerHTML = remote
+        ? '思考强度属于 ' + esc(effPeer(t)) + '：改动会立刻写到对端'
+        : '也可用 <kbd>/think</kbd> 直接设置';
       menu.appendChild(hint);
     },
   });
@@ -12451,6 +12753,14 @@ function reopenModelMenu() {
 async function switchModel(m) {
   closeComposerMenu(false);
   if (!m) return focusInput();
+  const t = curTab();
+  // 远程页签：模型属于对端，走 ws.config.set（本机的 model.set 只改本机）
+  if (t && t.remote) {
+    if (isCurrentModelFor(t, m)) return focusInput();
+    await flPatchRemoteConf(t, { model: m }, '对端模型：' + m);
+    focusInput();
+    return;
+  }
   if (isCurrentModel(m)) return focusInput();
   const out = await cmd('model.set', { model: m });
   if (!out || out.ok === false) return;
@@ -12466,6 +12776,13 @@ async function switchModel(m) {
 async function setSandboxMode(v) {
   closeComposerMenu(false);
   const info = CMP_SANDBOX[v] || { label: v };
+  const t = curTab();
+  // 远程页签：沙箱边界属于对端
+  if (t && t.remote) {
+    await flPatchRemoteConf(t, { sandbox_mode: v }, '对端沙箱：' + info.label);
+    focusInput();
+    return;
+  }
   const out = await cmd('settings.set', { patch: { sandbox_mode: v } });
   if (!out || out.ok === false) return;
   S.sandbox = v;
@@ -12512,13 +12829,20 @@ function slashArgItems(cmdName) {
       for (const s of S.sessions.filter(x => x.ws === S.active))
         add((s.title || shortId(s.id)).slice(0, 40), s.id, relTime(s.mtime));
       break;
-    case 'models':
-      add('◌ 拉取模型列表', '__fetch__', 'models.fetch');
-      for (const m of S.models) add(m, m, isCurrentModel(m) ? '当前' : '');
+    case 'models': {
+      // 远程页签的模型列表属于对端（见 modelListFor）
+      const t2 = curTab();
+      const remote = !!(t2 && t2.remote);
+      add('◌ 拉取模型列表', '__fetch__', remote ? '从对端拉取' : 'models.fetch');
+      for (const m of modelListFor(t2)) add(m, m, isCurrentModelFor(t2, m) ? '当前' : '');
       break;
-    case 'providers':
-      for (const p of S.providers) add(p.name, p.name, p.current ? '当前' : (p.api_style || ''));
+    }
+    case 'providers': {
+      const t3 = curTab();
+      const list = (t3 && t3.remote) ? (((flRemoteConf(t3) || {}).providers) || []) : (S.providers || []);
+      for (const p of list) add(p.name, p.name, p.current ? '当前' : (p.api_style || ''));
       break;
+    }
     case 'think':
       for (const l of THINK_LEVELS) add(l.name + ' (' + l.v + ')', String(l.v), l.desc);
       break;
@@ -13004,7 +13328,7 @@ function applySlash(e) {
   closeSlash();
   if (e.run) { syncComposerText(''); e.run(t); return; }
   if (e.insert === '__fetch__') {
-    fetchModels(true);
+    fetchModelsFor(curTab(), true);
     syncComposerText('');
     return;
   }
@@ -13110,12 +13434,9 @@ function afterSet(out, msg) {
 async function execSlash(t, name, arg) {
   arg = (arg || '').trim();
   name = CMD_ALIAS[name] || name; // /provide、/sessions… 统一成主名再分派
-  // 远程会话的模型 / 供应商 / 沙箱 / 工具 / 思考强度属于对端：命令也必须挡住，
-  // 否则它改的是本机的全局设置，看着生效、实际对那个会话毫无影响
-  if (t && t.remote && ['/model', '/provider', '/sandbox', '/tools', '/think', '/autoallow'].includes(name)) {
-    toast('远程会话：这些设置由对端决定，不能在这里修改', 'info', 2600);
-    return;
-  }
+  // 远程会话的模型 / 供应商 / 沙箱 / 工具 / 思考强度属于对端：命令不能落到
+  // 本机的全局设置上（那看着生效、实际对那个会话毫无影响），改走对端 RPC。
+  if (t && t.remote && flRemoteSlash(t, name, arg)) return;
   switch (name) {
     case '/new': return cmd('session.new', { ws: t.ws }).then(resync);
     case '/clear': return cmd('session.clear', { ws: t.ws }).then(resync);
@@ -21422,6 +21743,9 @@ function openFlowLinkPage() {
   flBuild();
   flPaint();
   refreshFlowlink();
+  // 打开就顺手扫一轮：设备列表本来就是「进来看一眼」的东西，要用户再点
+  // 「重新扫描」才动会显得发现很迟钝。扫描是幂等的，应答异步补进列表。
+  if (FL.tab === 'scan' && flEnabled() && !FL.scanning) flScan();
 }
 function closeFlowLinkPage() {
   const host = $('#flowlinkPage');
@@ -21693,7 +22017,7 @@ function flPaintScan(main) {
   flHead(main, 'Scan Links',
     on ? '同一网段里开着 FlowLink 的 cell 会出现在这里。选中一台，输入它显示的配对码即可建立互信。'
        : 'FlowLink 服务当前关闭：打开开关后才能发现设备。',
-    [flBtn('重新扫描', 'refresh', () => flScan(), 'ghost'),
+    [flBtn(FL.scanning ? '扫描中…' : '重新扫描', 'refresh', () => flScan(), 'ghost'),
      flBtn(discovering ? '停止发现' : '开始发现', discovering ? 'x' : 'link',
            () => flToggleDiscovery(!discovering), discovering ? 'ghost' : 'accent')]);
 
@@ -21925,18 +22249,38 @@ async function flProbe(addr) {
 
 async function flScan() {
   if (!flEnabled()) { toast('先开启 FlowLink 服务', 'info'); return; }
+  if (FL.scanning) return;
+  FL.scanning = true;
+  flPaint();
   try {
     const out = await cmd('flowlink.scan', {});
     if (out && out.ok !== false) {
       flMerge(out);
       FL.devices = Array.isArray(out.devices) ? out.devices : [];
       FL.scannedAt = nowSec();
-      const devs = flDevices();
-      if (!devs.some(d => d.client_id === FL.sel)) FL.sel = devs.length ? devs[0].client_id : '';
-      toast('扫描完成 · ' + devs.length + ' 台设备', 'ok', 1600);
+      flPickSel();
       flPaint();
     }
+    // 应答是异步到的：广播（mDNS）之外还有单播扫描，慢网段 / 跨虚拟网卡
+    // （WSL ↔ Windows）要一两秒才回。再补看两轮，别让「扫完 0 台」停留在
+    // 屏幕上 —— 之前就是这么显得「扫描很迟钝」。
+    for (let i = 0; i < 3; i++) {
+      await new Promise(r => setTimeout(r, 800));
+      const st = await api('flowlink.status', {});
+      if (!st || st.ok === false) break;
+      flMerge(st);
+      flPickSel();
+      flPaint();
+    }
+    toast('扫描完成 · ' + flDevices().length + ' 台设备', 'ok', 1600);
   } catch (e) { toast(e.message || String(e), 'bad'); }
+  FL.scanning = false;
+  flPaint();
+}
+// 选中项跟着扫描结果走：原来选的那台不在了就落到第一台
+function flPickSel() {
+  const devs = flDevices();
+  if (!devs.some(d => d.client_id === FL.sel)) FL.sel = devs.length ? devs[0].client_id : '';
 }
 
 async function flToggleDiscovery(on) {
@@ -22359,7 +22703,9 @@ function flPaintPerm(main) {
 
   body.appendChild(flPermCard('对端使用本机', '已配对的对端能在这台机器上做什么。全部默认关闭。', [
     flSwitchRow(!!s.accept_workspace, '允许对端访问本机工作区',
-      '对端可以列出本机的工作区与会话、读取工作区文件、在选中工作区里跑回合。关闭时连工作区列表都不返回。',
+      '对端可以列出本机的工作区与会话、读取工作区文件、在选中工作区里跑回合，'
+      + '并为本机上的这些回合选供应商 / 模型 / 思考强度 / 沙箱 / 工具开关（它们属于这台机器，改了本机也生效）。'
+      + '关闭时连工作区列表都不返回。',
       v => flPatch({ accept_workspace: v })),
     flSwitchRow(!!s.accept_workflow, '允许对端在本机运行 Workflow',
       '对端提交的 Teamwork 作业在本机执行（用本机的供应商与密钥），只把报告带回去。',
@@ -22382,7 +22728,9 @@ function flPaintPerm(main) {
   note.appendChild(el('div', 'fl-card-head')).appendChild(el('span', 'fl-card-title', '说明'));
   note.appendChild(el('p', 'fl-note',
     '配对只负责建立互信（双方各输入一次对方的配对码）；能做什么由这里的开关决定。'
-    + '监视是单向只读：它既不能发消息，也不能改模型、工具或沙箱权限 —— 那些设置始终属于会话所在的那台机器。'));
+    + '监视是单向只读：它既不能发消息，也不能改模型、工具或沙箱。'
+    + '远程工作区页签里的模型 / 供应商 / 思考强度 / 沙箱 / 工具是**对端的**值：'
+    + '改动经 flowlink.ws.config.set 写到执行回合的那台机器上，本机只显示它的实际状态。'));
   body.appendChild(note);
 
   main.appendChild(body);
@@ -22553,7 +22901,8 @@ function flRemoteEntries(entries, sid) {
 }
 
 /* 打开一个对端工作区（session 为空 = 对端当前的会话）。
-   远程会话的模型 / 工具 / 沙箱由对端决定，输入栏里的这些控件是锁死的。 */
+   模型 / 工具 / 沙箱 / 思考强度属于对端：输入栏里仍然可以改，但每一次改动
+   都是通过 flowlink.ws.config.set 写到对端，chip 上显示对端的真实值。 */
 async function openFlowWorkspace(cell, cwd, name, session) {
   if (!cell || !cwd) return;
   try {
@@ -22572,6 +22921,9 @@ async function openFlowWorkspace(cell, cwd, name, session) {
     renderTabbar();
     if (sid) flLoadRemoteHistory(key, cell, cwd, sid);
     else toast('FlowLink 工作区：执行在对端 cell 上', 'info', 2200);
+    // the turn settings belong to the peer: read them once so the composer
+    // paints its real model / thinking / sandbox instead of a placeholder
+    flLoadRemoteConf(t);
   } catch (e) { toast(e.message || String(e), 'bad'); }
 }
 
@@ -22619,6 +22971,147 @@ async function flLoadRemoteHistory(key, cell, cwd, sid) {
   } catch (e) {
     t.remote.err = e.message || String(e);
     markChat(key);
+  }
+}
+
+/* ---------- 对端的回合设置（模型 / 供应商 / 思考强度 / 沙箱 / 工具） ----
+   远程回合在对端执行，所以这些值属于对端：本机读一次缓存到页签上
+   （t.remote.conf），改动走 flowlink.ws.config.set 落到对端，并把对端返回的
+   实际状态写回缓存 —— chip 上显示的始终是对端真正在用的值，而不是本机的
+   全局设置（那两者以前混在一起，看着改了、实际对那个会话毫无影响）。
+   权限：与「在对端跑回合」同一项授权（accept_workspace / access_workspace）。 */
+function flPeerLabel(cell) {
+  const id = String(cell || '');
+  const d = flDevices().find(x => x.client_id === id);
+  const nm = (d && (d.name || '')) || '';
+  return nm || (id ? '对端 ' + id.slice(0, 8) : '对端');
+}
+
+function flRemoteConf(t) { return (t && t.remote && t.remote.conf) || null; }
+
+/* 把一次 ws.config 的返回并进页签缓存。没有 models 字段时保留上次拉到的列表，
+   只有换供应商才作废（列表属于供应商）。 */
+function flApplyRemoteConf(t, out, opts) {
+  if (!t || !t.remote || !out) return;
+  const c = out.config;
+  if (!c || typeof c !== 'object') return;
+  const conf = t.remote.conf || (t.remote.conf = {});
+  const prevProvider = conf.provider;
+  Object.assign(conf, c);
+  if (opts && Array.isArray(opts.models)) conf.models = opts.models;
+  else if (!Array.isArray(conf.models) || (prevProvider && prevProvider !== conf.provider)) conf.models = [];
+  conf.at = nowSec();
+  conf.loaded = true;
+  delete conf.loading;
+  delete conf.err;
+}
+
+/* 读一次对端设置。withModels 会顺带让对端去拉一次供应商的模型列表（网络往返，
+   可能要几秒）；默认只读设置，几十毫秒。 */
+async function flLoadRemoteConf(t, withModels) {
+  if (!t || !t.remote || t.remote.mode === 'watch') return null;
+  const cell = t.remote.cell;
+  if (t.remote.confLoading) return t.remote.confLoading;
+  const conf = t.remote.conf || (t.remote.conf = {});
+  conf.loading = true;
+  const p = (async () => {
+    try {
+      const out = await api('flowlink.ws.config', { cell: cell, models: !!withModels });
+      if (S.tabs.get(t.ws) !== t) return null;
+      if (!out || out.ok === false) {
+        conf.err = (out && out.error) || '读取对端设置失败';
+        return null;
+      }
+      flApplyRemoteConf(t, out, { models: out.models });
+      if (out.models_error) conf.modelsErr = out.models_error;
+      renderComposer();
+      if (typeof renderStatLine === 'function') renderStatLine();
+      return conf;
+    } catch (e) {
+      conf.err = e.message || String(e);
+      return null;
+    } finally {
+      if (S.tabs.get(t.ws) === t) { t.remote.confLoading = null; conf.loading = false; }
+    }
+  })();
+  t.remote.confLoading = p;
+  return p;
+}
+
+/* 改对端的回合设置。patch 只会带 ws.config.set 认的键：
+   provider / model / think_level / tools / sandbox_mode。 */
+async function flPatchRemoteConf(t, patch, okMsg) {
+  if (!t || !t.remote || t.remote.mode === 'watch') return false;
+  const out = await cmd('flowlink.ws.config.set', { cell: t.remote.cell, patch: patch });
+  if (!out || out.ok === false) {
+    toast((out && out.error) || flPeerLabel(t.remote.cell) + ' 没有接受这次修改', 'bad', 4200);
+    return false;
+  }
+  flApplyRemoteConf(t, out);
+  renderComposer();
+  if (typeof renderFoot === 'function') renderFoot();
+  if (typeof renderStatLine === 'function') renderStatLine();
+  if (okMsg) toast(okMsg, 'ok');
+  return true;
+}
+
+/* 远程页签上的 /model /provider /think /tools /sandbox：同一条命令路径，
+   但落到对端。返回 true = 已处理（execSlash 不再往下走本机分支）。 */
+function flRemoteSlash(t, name, arg) {
+  if (!t || !t.remote) return false;
+  const SET = ['/model', '/provider', '/think', '/tools', '/sandbox', '/autoallow'];
+  if (t.remote.mode === 'watch') {
+    if (SET.includes(name)) {
+      toast('监视模式：只能看，不能改对端设置', 'info', 2600);
+      return true;
+    }
+    return false;
+  }
+  const peer = flPeerLabel(t.remote.cell);
+  switch (name) {
+    case '/model': {
+      if (!arg) { toast('用法：/model <模型名>（对端 ' + peer + ' 的供应商）'); return true; }
+      flPatchRemoteConf(t, { model: arg }, '对端模型：' + arg);
+      return true;
+    }
+    case '/provider': {
+      if (!arg) { toast('用法：/provider <名称>（对端 ' + peer + ' 上已配置的供应商）'); return true; }
+      // 换供应商会清空对端的当前模型：随后让用户当场选一个
+      flPatchRemoteConf(t, { provider: arg }).then(ok => {
+        if (!ok) return;
+        const c = flRemoteConf(t);
+        if (c) c.models = [];
+        return flLoadRemoteConf(t, true).then(() => {
+          const chip = $('#modelChip');
+          if (chip && !(cmpMenu && cmpMenu.kind === 'model')) toggleModelMenu(chip);
+          toast('对端供应商已切到 ' + arg + '，请选择模型', 'info', 4000);
+        });
+      });
+      return true;
+    }
+    case '/think': {
+      if (!arg) { toast('用法：/think 0-4 或 ' + THINK_LEVELS.map(l => l.name).join('/')); return true; }
+      const lv = thinkLevelOf(arg);
+      if (lv == null) { toast('无效的思考级别：' + arg, 'bad'); return true; }
+      flPatchRemoteConf(t, { think_level: lv }, '对端思考级别：' + THINK_LEVELS[lv].name);
+      return true;
+    }
+    case '/tools': {
+      const on = !arg ? !effTools(t) : !/^(off|0|false|no)$/i.test(arg);
+      flPatchRemoteConf(t, { tools: on }, '对端工具调用：' + (on ? '开' : '关'));
+      return true;
+    }
+    case '/sandbox': {
+      if (!arg) { toast('用法：/sandbox ' + SANDBOX_MODES.map(m => m.v).join('|')); return true; }
+      setSandboxMode(arg);
+      return true;
+    }
+    case '/autoallow': {
+      const on = !arg ? true : !/^(off|0|false|no)$/i.test(arg);
+      flPatchRemoteConf(t, { autoallow: on }, '对端自动放行：' + (on ? '开' : '关'));
+      return true;
+    }
+    default: return false;
   }
 }
 
@@ -22760,11 +23253,36 @@ async function flLoadSessions(cell, cwd, force) {
   cur.at = Date.now() / 1000;
   renderFlowWsSidebar();
 }
+/* 这一段的内容指纹：renderSidebar 每帧都会被调用，FlowLink 分组没有变化时
+   不该跟着重建（否则对端的会话行同样会在鼠标下被换掉） */
+function flowWsSig() {
+  let h = 0;
+  const put = (s) => { s = String(s); for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; };
+  const items = flSettings().access_workspace ? flWorkspaces() : [];
+  put(items.length);
+  for (const w of items) {
+    const k = flGroupKey(w.cell, w.cwd);
+    put(k); put(w.name || ''); put(S.groupsClosed.has(k) ? 1 : 0);
+    const peer = flDevices().find(d => d.client_id === w.cell);
+    put(peer && peer.online ? 1 : 0);
+    const st = flSessState(w.cell, w.cwd);
+    put(st && st.loading ? 1 : 0); put((st && st.err) || '');
+    for (const s of flSessions(w.cell, w.cwd)) {
+      put(s.id); put(s.title || ''); put(s.mtime || 0); put(s.msgs || 0);
+      put(s.busy ? 1 : 0); put(s.active ? 1 : 0);
+      put(S.active === flTabKey(w.cell, w.cwd, s.id) ? 1 : 0);
+    }
+  }
+  return h;
+}
 /* 对端该工作区的会话按「工作区即分组」列出来 —— 与本地工作区分组同一套外观 */
-function renderFlowWsSidebar() {
+function renderFlowWsSidebar(force) {
   const sec = $('#flowWsSection');
   const list = $('#flowWsList');
   if (!sec || !list) return;
+  const sig = flowWsSig();
+  if (!force && list.__sig === sig) return;
+  list.__sig = sig;
   // 未开启「使用对端工作区」时，整段不显示 —— 也不去拉对端的会话列表
   const items = flSettings().access_workspace ? flWorkspaces() : [];
   sec.hidden = !items.length;           // 无内容时整段不显示
@@ -22800,20 +23318,20 @@ function renderFlowWsSidebar() {
     if (!busy) pulse.style.background = collapsed ? 'var(--fg4)' : 'var(--ok)';
     head.appendChild(pulse);
     head.title = g.cwd + ' | 对端 ' + (peer ? (peer.name || g.cell.slice(0, 8)) : g.cell.slice(0, 8));
-    head.onclick = () => {
+    onPress(head, () => {
       if (S.groupsClosed.has(g.key)) S.groupsClosed.delete(g.key);
       else S.groupsClosed.add(g.key);
       saveGroupState();
-      renderFlowWsSidebar();
-    };
+      renderFlowWsSidebar(true);
+    });
     // 监视：只看这条工作区里活跃会话的输出，不能输入
     const mon = el('button', 'gdel fl-mon');
     mon.appendChild(iconEl('eye', 'sm'));
     mon.title = '监视这个工作区（只读，无法输入）';
-    mon.onclick = ev => {
+    onPress(mon, ev => {
       ev.stopPropagation();
       openFlowWatch(g.cell, g.cwd, g.name);
-    };
+    });
     head.appendChild(mon);
     gEl.appendChild(head);
 
@@ -22838,7 +23356,7 @@ function renderFlowWsSidebar() {
       if (s.active) meta.appendChild(el('span', 'stag', '当前'));
       if (s.busy) { const d = el('span', 'dot run'); d.style.marginLeft = 'auto'; meta.appendChild(d); }
       it.appendChild(meta);
-      it.onclick = () => openFlowWorkspace(g.cell, g.cwd, g.name, s.id);
+      onPress(it, () => openFlowWorkspace(g.cell, g.cwd, g.name, s.id));
       box.appendChild(it);
     }
     gEl.appendChild(box);
@@ -22876,6 +23394,11 @@ function onFlowlinkEvent(ev) {
     renderFlowWsSidebar();
   } else if (type === 'peer_event') {
     flOnPeerEvent(ev);
+  } else if (type === 'config') {
+    // 本机的模型 / 思考强度 / 沙箱 / 工具被对端改过：本机窗口跟着刷新，
+    // 否则 composer 与设置页还停在旧值上（改的是真的，显示的是假的）
+    refreshFlowlink();
+    resync();
   }
   if (FL.tab && $('#flowlinkPage') && $('#flowlinkPage').classList.contains('show')) flPaint();
 }

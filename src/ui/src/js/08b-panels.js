@@ -2688,8 +2688,3 @@ window.openDiffPreview = pnlOpenDiffPreview;
     setTimeout(after, 0);
   }
 })();
-
-
-
-
-

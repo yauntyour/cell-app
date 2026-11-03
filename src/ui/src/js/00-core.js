@@ -50,7 +50,7 @@ const COMMANDS = [
   { name: '/archive', usage: '/archive', desc: '查看当前会话的历史存档（右侧面板）', run: () => { openDock('archives'); refreshArchives(S.active, true); } },
   { name: '/workspace', usage: '/workspace [path]', desc: '切换或打开工作区', ctx: 'workspaces' },
   { name: '/theme', usage: '/theme [dark|light|名称]', desc: '切换外观（内置深色/浅色 + 第三方主题）', ctx: 'theme' },
-  { name: '/link', usage: '/link [status|peers|pair|join CODE|transfers]', desc: '互联（FlowLink）：发现同网段的 cell、配对、共享会话、远程工作区', run: () => openFlowLinkPage() },
+  { name: '/link', usage: '/link [status|peers|pair|join CODE|approve CODE|transfers]', desc: '互联（FlowLink）：发现同网段的 cell、双向配对、共享会话、远程工作区', run: () => openFlowLinkPage() },
   { name: '/git', usage: '/git', desc: '打开 Git / Worktree 面板', run: () => openDock('git') },
   { name: '/worktree', usage: '/worktree', desc: '管理并行工作树（Git Worktree）', run: () => openDock('git') },
   { name: '/files', usage: '/files [path]', desc: '打开工作区文件面板；Ctrl+P 快速打开', run: () => openDock('files') },
@@ -83,6 +83,24 @@ function el(tag, cls, txt) {
   if (cls) n.className = cls;
   if (txt != null) n.textContent = txt;
   return n;
+}
+/* 「按下即生效」的点击：流式输出时侧栏 / 页签每帧都可能被重建，
+   「按下节点 → 松开时节点已被替换」会让 click 永远不发出来 —— 用户看到的
+   就是「页签关不掉」「点另一条会话没反应」。所以主按钮走 pointerdown，
+   随后的 click 只作为键盘（Enter/Space 没有 pointerdown）的兜底。
+   子元素要吞掉事件时自己 stopPropagation（例如页签上的 ✕）。 */
+function onPress(node, fn) {
+  let pressed = false;
+  node.addEventListener('pointerdown', ev => {
+    if (ev.button !== 0 && ev.pointerType === 'mouse') return; // 右键/中键交给原处理
+    pressed = true;
+    fn(ev);
+  });
+  node.addEventListener('click', ev => {
+    if (pressed) { pressed = false; return; }
+    fn(ev);
+  });
+  return node;
 }
 function esc(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, c =>
@@ -634,7 +652,37 @@ function markChat(ws) {
   schedule('sidebar', renderSidebar);
   schedule('tabbar', renderTabbar);
   schedule('foot', renderFoot); // 品牌标识的运行态（忙碌 ⇄ 静止）随回合切换
+  syncLiveTick();               // 有工作区在跑就开始补刷侧栏数字 / 用量
 }
+
+/* ---------- 运行中的「活数据」补刷 ----------------------------------
+   侧栏的会话条数、会话标题、全局用量都只在回合开始/结束时各拉一次：新建
+   的会话在跑第一轮时，侧栏永远是「0 条 + 一串 id」，用量也还是空的 ——
+   看着像「明明在跑，却什么数都没有」。这里在有任何工作区忙的时候低频
+   补刷一次（2.5s；用量 5s），全部空闲就立刻停表，静态界面不会有定时器
+   在跑。refreshSessions / refreshUsages 都是廉价的只读命令。 */
+const LIVE_TICK_MS = 2500;
+const LIVE_USAGE_MS = 5000;
+let liveTimer = 0, liveUsageAt = 0;
+function anyTabBusy() {
+  for (const [, t] of S.tabs) if (t && t.busy) return true;
+  return false;
+}
+function syncLiveTick() {
+  const busy = anyTabBusy();
+  if (busy && !liveTimer) liveTimer = setInterval(liveTick, LIVE_TICK_MS);
+  else if (!busy && liveTimer) { clearInterval(liveTimer); liveTimer = 0; }
+}
+function liveTick() {
+  if (!anyTabBusy()) { syncLiveTick(); return; }  // 回合已结束：停表
+  if (document.hidden) return;                    // 后台窗口不必刷
+  refreshSessions();
+  if (Date.now() - liveUsageAt >= LIVE_USAGE_MS) {
+    liveUsageAt = Date.now();
+    if (typeof refreshUsages === 'function') refreshUsages(true);
+  }
+}
+
 function markComposer(ws) {
   if (ws === S.active) schedule('composer', renderComposer);
 }
@@ -798,13 +846,17 @@ function onTurnEnd(e) {
   const statusText = '回合结束 · ' + r + ' 轮 · ' + n + ' 次工具调用' + (e.natural === false ? '（中断）' : '');
   const sid = t.session, notices = t._turnNotices || [], errors = t._turnErrors || [];
   // 回合里 LLM 可能通过 tw 工具创建/运行了团队任务（这一路径没有 SSE 事件）：
-  // 让面板重拉内容；出现新任务且右侧面板关着时自动展开 Teamwork 面板
+  // 让面板重拉内容；只有「本会话之前就有一份已知的任务列表」时，才把新出现的
+  // 任务当成理由自动展开 Teamwork 面板 —— 没有基线（刚建的新会话）时这一趟
+  // 拉回来的全都会被判成「新任务」，面板就会在毫无缘由的时候自己弹出来。
+  const jobsKnown = !!t.jobsFor && t.jobsFor === sid;
   const beforeIds = new Set((t.jobs || []).map(j => j.id));
   t.jobsFor = '';
   // 一轮跑完总会多出 token：强刷一次用量（侧栏 chip + 本会话页顶栏的数字）。
   // 不走 20s 缓存 —— 回合结束正是用户去看「这轮花了多少」的时刻，数字必须立刻对。
   if (typeof refreshUsages === 'function') refreshUsages(true);
   refreshTeamwork(e.ws, true).then(jobs => {
+    if (!jobsKnown) return; // 没有基线：只更新面板，不替用户开面板
     if (e.ws === S.active && jobs && jobs.some(j => !beforeIds.has(j.id)) && !S.dockOpen)
       openDock('teamwork');
   });
@@ -910,14 +962,18 @@ function onToolEnd(e) {
   tool.sec = e.sec; tool.chars = e.chars; tool.multimodal = e.multimodal;
   if (window.RT) RT.mark(e.ws);  // 工具跑完通常紧跟下一轮请求：作为 TTFT 的起点兜底
   markChat(e.ws);
-  // LLM 通过 tw 工具建/跑团队任务时没有 SSE 事件：工具一结束就重拉一次，
-  // 新任务出现且右栏关着就自动展开 Teamwork——用户提交后能立刻看到卡片
+  // LLM 通过 tw 工具建/跑团队任务时没有 SSE 事件：工具一结束就重拉一次。
+  // 只有已经读过本会话的任务列表（jobsFor 对齐当前 session）时才认为「diff
+  // 出来的都是新任务」并顺手展开右栏；没有基线时只静默更新数据。
   if (tool.name === 'tw' || tool.name === 'teamwork') {
-    const beforeIds = new Set(((S.tabs.get(e.ws) || {}).jobs || []).map(j => j.id));
     const t2 = S.tabs.get(e.ws);
-    if (t2) t2.jobsFor = '';
+    if (!t2) return;
+    const jobsKnown = !!t2.jobsFor && t2.jobsFor === t2.session;
+    const beforeIds = new Set((t2.jobs || []).map(j => j.id));
+    t2.jobsFor = '';
     refreshTeamwork(e.ws, true).then(jobs => {
       if (e.ws !== S.active || !jobs) return;
+      if (!jobsKnown) return; // 没有基线：不替用户开面板
       const fresh = jobs.filter(j => !beforeIds.has(j.id));
       if (!fresh.length) return;
       if (!S.dockOpen) openDock('teamwork');

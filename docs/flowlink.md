@@ -199,6 +199,26 @@ Conclusion: the fixed rendezvous port must be optional, and the reliable path is
 a random receive port plus **unicast** to local addresses, gateways, discovered
 peers and `extra_targets`. Do not depend on broadcast or on winning `47821`.
 
+### Unicast sweep (the mDNS query path)
+
+Discovery is DNS-SD (`_cell._tcp.local`, PTR browse + SRV/TXT/A answers) on the
+mDNS port. Multicast still does not cross every boundary, so every browse round
+*also* sweeps: one unicast PTR query to **every host of each local IPv4 `/24`**
+(and to each `extra_targets` entry), on the configured discovery port. That is
+~254 small datagrams per interface:
+
+* on service start (`query_loop` runs one round immediately),
+* every `kQueryPeriod` (20 s; well under the 120 s TTL, so a live peer never
+  expires out of our cache),
+* on a manual `flowlink.scan` — which is rate-limited to one sweep per 15 s so
+  the button cannot be used as a packet amplifier.
+
+A peer answers a unicast PTR query exactly like a multicast one, so answers land
+in `present` through the normal response path and emit `discovered`. This is
+what makes a WSL2 ↔ Windows pair show up without anyone typing an address, and
+it is why `flowlink.scan` now waits ~1 s for the slow path before reporting the
+list (the burst itself is 2 queries 250 ms apart; a scan returns in ~1 s).
+
 ### Port policy
 
 * FlowLink TCP: bind the preferred `port`; on failure retry with port 0 (random)
@@ -372,8 +392,11 @@ workspace names).
 |---|---|---|
 | `mail.deliver` | `{id?,from,from_name,subject,note,kind,payload}` | `{ok,id}` |
 | `ws.list` | — | `{ok,workspaces:[{ws,cwd,session,busy,active,open}]}` |
-| `ws.sessions` | `{cwd}` | `{ok,cwd,sessions:[{id,title,mtime,msgs,active,busy}]}` — newest first |
+| `ws.sessions` | `{cwd}` | `{ok,cwd,sessions:[{id,title,mtime,msgs,active,busy}]}` — newest first; `busy` is true only for the session the workspace is actually running |
 | `ws.history` | `{cwd,id}` | `{ok,id,total,entries,archives}` — same entry shape as `session.history` |
+| `ws.config` | — | `{ok,config}` — how a turn runs **here**: `model`, `model_set`, `provider`, `providers`, `sandbox`, `tools`, `settings{think_level,…}` |
+| `ws.config.set` | `{patch:{provider?,model?,think_level?,tools?,sandbox_mode?,autoallow?}}` | `{ok,config}` — writes this machine's turn settings |
+| `ws.models` | — | `{ok,models:[…]}` — this cell's provider model list (a network call) |
 | `fs.ls` | `{path}` | `{path,items:[{name,dir,size}]}` |
 | `fs.read` | `{path}` | `{path,size,text}` (≤ 512 KiB, text only) |
 | `fs.stat` | `{path}` | `{path,dir,size}` |
@@ -390,6 +413,16 @@ peer with **its own** providers and keys; only the report travels back. A
 watched stream is one-way: `agent.event` frames arrive with `watch:true`, and
 there is no method a watcher can use to send anything (that needs
 `accept_workspace`, which is a different switch).
+
+`ws.config*` is behind the same `accept_workspace` grant as `agent.send`: whoever
+may start a turn on this machine may also say **which** model it runs with.
+Without it a remote turn silently inherited whatever this cell happened to have
+selected, and the caller's composer could only show "对端". The desktop app's
+remote tab caches one `ws.config` per peer (`flowlink.ws.config`, optionally with
+`models:true` for one round trip + a model list) and paints the chips from it;
+every change goes out as `flowlink.ws.config.set`, and the peer broadcasts a
+`config` event so its own window follows a change made from elsewhere. A
+`watch`-mode tab is read-only and never writes.
 
 ## 7. Commands
 

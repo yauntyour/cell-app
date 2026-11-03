@@ -419,6 +419,34 @@ term.list     {ws?}                   -> {ok, sessions:[{id, ws, cwd, shell, nam
 - 只改自己拥有的文件（§8）；生成物 `src/ui/index.html`、`src/cell-ui.hpp` 只由 `python build_ui.py` 产出。
 - 新 CSS 走新文件（按文件名排序追加在旧层之后），不要改别人的 CSS 文件。
 
+### 7.1b 流式输出期间不许重建列表（2026-11 修复）
+
+`markChat(ws)` 每条 SSE 事件都会调度一次 `renderSidebar` / `renderTabbar` /
+`renderFoot`。旧实现每次都 `replaceChildren`，于是「按下 ✕ → 松开时节点已被换掉」
+的 click 永远不会发出，用户看到的是**页签关不掉、点另一条会话没反应、分组点不开**。
+两条规矩：
+
+1. **指纹守卫**：`renderSidebar(force)` / `renderTabbar(force)` /
+   `renderFlowWsSidebar(force)` 先算一份内容指纹（`sidebarSig` / `tabbarSig` /
+   `flowWsSig`），不变就直接 return，一个节点都不碰。真正变了（运行态、未读、活动
+   页、标题、条数、折叠状态）才重建 —— 那是 O(回合) 级别，不是 O(事件)。
+   需要无条件重建的调用点显式传 `true`（例：折叠分组的 press 处理里）。
+2. **按下即生效**：列表里的可点元素（页签本体与 ✕、会话行与删除、分组头、FlowLink
+   对端会话行）一律走 `onPress(node, fn)`（`00-core.js`）：`pointerdown` 就执行，
+   随后的 `click` 只作为键盘（Enter/Space 没有 pointerdown）的兜底。子元素要吞掉
+   事件时自己 `stopPropagation`（页签上的 ✕）。
+
+配套的两处「显示的是假的」：
+
+* **运行中的活数据**：`syncLiveTick()` 只在**有工作区忙**的时候起一个 2.5s 的表，
+  补刷 `sessions.list`（侧栏标题/条数）与 `usages.summary`（5s 一次）——新建的会话
+  在第一轮里也能看到真实的条数与用量；全部空闲立刻停表，静态界面没有轮询。
+* **右侧栏不自己弹**：Teamwork 面板只在「本会话的任务列表此前已经读过」
+  （`t.jobsFor === t.session`）时，才因为「出现了新任务」自动展开。没有基线时
+  （刚建的新会话）那一趟拉回来的全部会被判成新任务，面板就会毫无缘由地弹出来。
+* `sessions.list` 的 `busy` 是「当前这条会话在跑」，不是整条工作区：同组其它会话
+  不该跟着亮「运行中」。
+
 ### 7.2 面板注册（T-panels）
 ```js
 // js/08b-panels.js（加载顺序在 08-mock.js 之后、09-boot.js 之前）
