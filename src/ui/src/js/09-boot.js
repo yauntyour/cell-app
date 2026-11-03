@@ -21,7 +21,7 @@ function wireEvents() {
   $('#navRefresh').onclick = () => Nav.refresh();
   $('#navHome').onclick = () => Nav.home();
   $('#navUsage').onclick = () => toggleUsagePop();
-  $('#navTasks').onclick = () => toggleTasksPop();
+  // 后台任务入口不在侧栏了：它在每个会话自己的顶栏（见 08d-tasks.js）
   $('#navUpdate').onclick = () => openReleasePage((S.update || {}).url);
   $('#navDock').onclick = () => toggleDock();
   $('#btnTopDock').onclick = () => toggleDock();
@@ -167,7 +167,7 @@ function enterDemo(reason) {
   if (S.active) { renderChat(S.active); renderChatHead(S.active); }
   renderDock();
   refreshUsages(false); // 侧栏「用量」chip 先显示一个数（演示数据）
-  refreshTasks(true);   // 侧栏「后台任务」chip（演示数据）
+  refreshTasks(true);   // 会话顶栏「后台任务」chip（演示数据）
   setTimeout(() => { refreshSessions(); renderSidebar(); renderDock(); }, 60);
 }
 
@@ -208,7 +208,7 @@ async function boot() {
     Transport.init();
     fetchSkills(); // /skill 的参数补全：后台拉一次，失败就退回空列表（不挡启动）
     refreshUsages(false); // 侧栏「用量」chip 的后台取数（失败就保持「—」）
-    refreshTasks(true);   // 侧栏「后台任务」chip：先显示当前在跑的数量
+    refreshTasks(true);   // 会话顶栏的「后台任务」chip：先显示当前在跑的数量
   } catch (e) {
     enterDemo('无法连接后端：' + (e && e.message ? e.message : e));
   }
@@ -241,6 +241,9 @@ async function setShellPrefs(patch) {
   if (out && out.ok && out.prefs) {
     S.prefs = out.prefs;
     toast('已保存', 'ok');
+  } else {
+    toast((out && out.error) || '保存失败', 'bad');
+    if (S.settingsOpen && typeof renderSettings === 'function') renderSettings();
   }
   renderUpdateChip();
   return out;

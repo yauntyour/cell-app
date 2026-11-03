@@ -7,8 +7,10 @@
      · 任务开始或结束：后端推 tasks 事件（同样带全量列表，见 onTasksEvent）
      · 终止：tasks.kill；看输出：tasks.output（事件里也带一小段 tail）
 
-   浮层挂在侧栏底部的终端 chip（#navTasks）上，与「用量」浮层共用一套位置
-   算法与外壳类名（.usage-pop / .up-head / .up-body），只有正文是本文件的。
+   入口是**每个会话顶栏自己的 chip**（.ch-tasks，摆在「本会话用量」左边）：
+   后台任务本来就属于某个会话，数字只算这个会话在跑的数量。浮层按会话分组
+   收纳 —— 当前会话那组默认展开，其余收起；外壳仍与「用量」浮层共用
+   （.usage-pop / .up-head / .up-body）。
    运行中任务的耗时在本地按「收到列表的时刻 + 已跑时长」推算，不必每秒
    去问后端。                                                            */
 
@@ -30,19 +32,47 @@ function taskDur(sec) {
   return Math.floor(sec / 3600) + 'h' + String(Math.floor((sec % 3600) / 60)).padStart(2, '0') + 'm';
 }
 
-/* chip：图标 + 运行中数量（没有任务时是「—」） */
-function paintTasksChip() {
-  const b = $('#navTasks');
+/* ---- chip：会话顶栏的「后台任务」（用量 chip 左边） ------------------ */
+function tasksOfSession(sid) {
+  const k = sid || '';
+  return tasksAll().filter(t => ((t && t.session) || '') === k);
+}
+function ensureChatTasksBtn(head) {
+  let b = head.querySelector('.ch-tasks');
+  if (b) return b;
+  b = el('button', 'ch-tasks');
+  b.type = 'button';
+  b.setAttribute('aria-haspopup', 'dialog');
+  b.setAttribute('aria-expanded', 'false');
+  b.appendChild(iconEl('squareTerminal', 'sm'));
+  b.appendChild(el('span', 'chu-val', '—'));
+  b.onclick = ev => { ev.stopPropagation(); toggleTasksPop(); };
+  const usage = head.querySelector('.ch-usage');
+  if (usage) usage.insertAdjacentElement('beforebegin', b);
+  else head.appendChild(b);
+  return b;
+}
+function paintChatTasks(ws) {
+  const head = $('#chathead-' + cssId(ws));
+  if (!head) return;
+  const b = head.querySelector('.ch-tasks');
   if (!b) return;
-  const n = tasksRunning();
-  const val = b.querySelector('.sb-uval');
-  b.classList.toggle('has-val', n > 0);
+  const t = S.tabs.get(ws);
+  const mine = tasksOfSession(t && t.session);
+  const run = mine.filter(x => x.running).length;
+  const val = $('.chu-val', b);
+  b.classList.toggle('has-val', mine.length > 0);
+  b.classList.toggle('run', run > 0);
   b.classList.toggle('on', !!S.tasksOpen);
   b.setAttribute('aria-expanded', S.tasksOpen ? 'true' : 'false');
-  if (val) val.textContent = n ? String(n) : '—';
-  b.title = n
-    ? '后台任务 · ' + n + ' 个在运行（点击展开）'
-    : (tasksAll().length ? '后台任务 · 全部已结束（点击展开）' : '后台任务（点击展开）');
+  if (val) val.textContent = run ? String(run) : '—';
+  b.title = run
+    ? '后台任务 · 本会话 ' + run + ' 个在运行（点击展开）'
+    : (mine.length ? '后台任务 · 本会话 ' + mine.length + ' 个已结束（点击展开）' : '后台任务（点击展开）');
+}
+/* chip 的显示口径变了（任务增删、切会话）就整体刷一遍 */
+function paintTasksChip() {
+  for (const ws of S.tabOrder || []) paintChatTasks(ws);
 }
 
 /* 后端推来的列表：任务开始/结束都会来一条（见 app_core::start_task_watcher） */
@@ -80,16 +110,23 @@ function closeTasksPop() {
   paintTasksChip();
 }
 function tasksPopPlace(pop, anchor) {
+  // 入口在会话顶栏：浮层从 chip 下缘往下铺，右缘对齐（顶栏右侧没有多余空间）
   const r = anchor.getBoundingClientRect();
   const w = pop.offsetWidth, h = pop.offsetHeight;
-  pop.style.left = Math.max(8, Math.min(r.left, innerWidth - w - 8)) + 'px';
-  let top = r.top - h - 8;              // 优先贴在 chip 上方
-  if (top < 8) top = r.bottom + 8;      // 上方不够就翻到下方
-  pop.style.top = Math.max(8, Math.min(top, innerHeight - h - 8)) + 'px';
+  pop.style.left = Math.max(8, Math.min(r.right - w, innerWidth - w - 8)) + 'px';
+  let top = r.bottom + 6;
+  if (top + h > innerHeight - 8) top = Math.max(8, innerHeight - h - 8);
+  pop.style.top = top + 'px';
+}
+/* chip 所在位置：当前标签页的会话顶栏；没有（空态 / 演示）就退回标题栏 */
+function tasksPopAnchor() {
+  const head = S.active ? $('#chathead-' + cssId(S.active)) : null;
+  const b = head && head.querySelector('.ch-tasks');
+  return b || $('#btnTopSearch') || $('#titlebar');
 }
 function openTasksPop(force) {
   if (tasksPop) { if (force) refreshTasks(true); return; }
-  const anchor = $('#navTasks');
+  const anchor = tasksPopAnchor();
   if (!anchor) return;
   const pop = el('div', 'usage-pop task-pop');
   pop.setAttribute('role', 'dialog');
@@ -129,6 +166,8 @@ function openTasksPop(force) {
   window.addEventListener('resize', resize);
   tasksPop = { el: pop, anchor: anchor, out: out, key: key, resize: resize };
   S.tasksOpen = true;
+  // 每次打开都从「当前会话」这一组看起，其余会话收起（按会话收纳）
+  S.tasksOpenGroups = new Set([((S.tabs.get(S.active) || {}).session) || '']);
   paintTasksChip();
   paintTasksPop();
   refreshTasks(true);
@@ -138,15 +177,16 @@ function openTasksPop(force) {
 }
 function toggleTasksPop() { S.tasksOpen ? closeTasksPop() : openTasksPop(true); }
 
-/* 每秒的轻量刷新：只改文本，不重建列表 */
+/* 每秒的轻量刷新：只改文本，不重建列表（按 id 对行，分组后 DOM 顺序≠列表顺序） */
 function tickTasks() {
   if (!tasksPop) return;
   const list = tasksAll();
   const items = tasksPop.el.querySelectorAll('.task-item');
-  if (items.length !== list.length) { paintTasksPop(); return; } // 增删了行，整块重画
-  for (let i = 0; i < items.length; i++) {
-    const d = items[i].querySelector('.tk-dur');
-    if (d) d.textContent = taskDur(taskElapsed(list[i]));
+  for (const node of items) {
+    const t = list.find(x => x.id === node.dataset.id);
+    if (!t) { paintTasksPop(); return; } // 任务被回收了，整块重画
+    const d = node.querySelector('.tk-dur');
+    if (d) d.textContent = taskDur(taskElapsed(t));
   }
   const shown = list.find(t => t.id === S.tasksShown);
   if (shown && shown.running) refreshTaskOutput(shown.id);
@@ -170,6 +210,12 @@ async function refreshTaskOutput(id) {
   }
 }
 
+/* 会话名：优先用会话标题（侧栏里显示的那条），否则短 id */
+function taskSessionLabel(sid) {
+  if (!sid) return '未归属会话';
+  const s = (S.sessions || []).find(x => x.id === sid);
+  return (s && s.title) || shortId(sid);
+}
 function paintTasksPop() {
   if (!tasksPop) return;
   const list = tasksAll();
@@ -186,9 +232,44 @@ function paintTasksPop() {
       '让 agent 用 exec(background=true) 起一个进程（开发服务器、watcher、长构建…），它会在自己的线程上跑，不占工具线程池，也不挡当前回合。'));
     body.appendChild(empty);
   } else {
-    for (const t of list) body.appendChild(taskRow(t));
+    const cur = ((S.tabs.get(S.active) || {}).session) || '';
+    const groups = new Map();               // session id -> tasks（保持注册表顺序）
+    for (const t of list) {
+      const k = (t && t.session) || '';
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(t);
+    }
+    // 当前会话排第一，其余保持原顺序（sort 稳定）
+    const keys = Array.from(groups.keys()).sort((a, b) => (b === cur) - (a === cur));
+    for (const k of keys) body.appendChild(taskGroup(k, groups.get(k), cur));
   }
   tasksPopPlace(tasksPop.el, tasksPop.anchor); // 内容高度变了，重新贴边
+}
+
+/* 一个会话一组：标题行（折叠开关 + 会话名 + 计数），展开后才是任务行 */
+function taskGroup(sid, items, curSession) {
+  const open = S.tasksOpenGroups.has(sid);
+  const g = el('div', 'tk-group' + (open ? ' open' : '') + (sid === curSession ? ' cur' : ''));
+  const head = el('button', 'tk-ghead');
+  head.type = 'button';
+  head.setAttribute('aria-expanded', open ? 'true' : 'false');
+  head.appendChild(iconEl('chevronRight', 'sm'));
+  head.appendChild(el('span', 'tk-gname trunc', taskSessionLabel(sid)));
+  const run = items.filter(t => t.running).length;
+  head.appendChild(el('span', 'tk-gcnt', run ? run + ' 运行 / ' + items.length : String(items.length)));
+  head.title = (sid || '未记录会话') + ' —— 点击' + (open ? '收起' : '展开');
+  head.onclick = () => {
+    if (S.tasksOpenGroups.has(sid)) S.tasksOpenGroups.delete(sid);
+    else S.tasksOpenGroups.add(sid);
+    paintTasksPop();
+  };
+  g.appendChild(head);
+  if (open) {
+    const box = el('div', 'tk-gitems');
+    for (const t of items) box.appendChild(taskRow(t));
+    g.appendChild(box);
+  }
+  return g;
 }
 
 function taskRow(t) {
@@ -230,6 +311,7 @@ function taskRow(t) {
   }
 
   const wrap = el('div', 'task-item');
+  wrap.dataset.id = t.id;
   wrap.appendChild(row);
 
   // 展开的输出：先显示事件里带的 tail，再问一次 tasks.output 拿最新的

@@ -1020,12 +1020,22 @@ namespace app
         return failed == 0 ? 0 : 1;
     }
 
+    // 桌面壳默认绑定的回环端口。挑一个高位端口：既不撞常见服务，也避开
+    // FlowLink 的 47821/47822 与本仓的 8787（--headless 的开发口）。
+    constexpr int kDesktopPort = 47900;
+
     int gui_main(int argc, char const *argv[])
     {
         std::string ui_arg; // --ui FILE: serve the page from disk (dev mode)
         std::string root_arg; // --root DIR: use another .cell data root
         int smoke = 0;
-        int serve_port = 0; // 0 = OS-assigned port; >0 = explicit; HTTP is always on
+        // 桌面壳默认绑**固定**回环端口。页面的 localStorage 按来源
+        // （scheme+host+port）分仓，主题 / 动画等级 / 窗口透明度 / 面板比例 /
+        // 侧栏与分组的折叠状态全在里面 —— 端口每次随机，来源就每次不同，
+        // 那些设置等于每次启动都清零（2026-11-03 用户主诉「设置页改完下次
+        // 启动又回去了」）。端口被占时下面会回退到随机端口，只影响那一次运行。
+        // --serve / --headless 不带值时仍按文档绑随机端口（开发/多实例）。
+        int serve_port = kDesktopPort;
         bool headless = false;
         bool update_check = false; // --update-check: probe and print, then leave
         for (int i = 1; i < argc; i++)
@@ -1358,8 +1368,10 @@ namespace app
                 // up without its winsock cleanup racing the acceptor (see the
                 // note above). The window then loads the same page a browser
                 // gets: one page, one transport (HTTP + SSE).
-                // The desktop default is an OS-assigned random port: no fixed
-                // 8787 scan, no collision with a WSL instance or another app.
+                // The desktop default is a fixed loopback port (kDesktopPort):
+                // the page's localStorage is keyed by origin, so a random port
+                // would wipe every UI preference on each launch. A busy port
+                // falls back to a random one for that run only.
                 bool served = start_http(serve_port);
                 if (!served && serve_port > 0)
                 {

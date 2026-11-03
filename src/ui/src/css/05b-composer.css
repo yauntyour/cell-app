@@ -43,11 +43,12 @@
   overflow:hidden;
   isolation:isolate;
   border:1px solid transparent;
-  /* ③ 面（受光）+ ② 底（着色）都只铺 padding-box，④ 边铺 border-box 在最下：
-     三层靠 clip 分工，底色永远盖不住那 1px 的受光描边。 */
+  /* ③ 面（受光）+ ② 底（着色）都只铺 padding-box。
+     ④ 边**不在这里铺**：面与底都是半透明的，铺满 border-box 的渐变描边会从
+     中间整片透出来（顶部 .50 白 → 下方 .05，读作卡片上半部莫名泛白）。描边
+     改由 ::after 只留 1px 环，见 5b.1b。 */
   background:var(--cmp-face) padding-box,
-             var(--cmp-base) padding-box,
-             var(--cmp-rim) border-box;
+             var(--cmp-base) padding-box;
   /* ① 降级路径（滤镜还没建好 / 不支持 url() 的引擎）：纯磨砂 */
   -webkit-backdrop-filter:blur(var(--cmp-blur,2.25px)) saturate(var(--cmp-sat,1.18)) brightness(var(--cmp-bri,1));
   backdrop-filter:blur(var(--cmp-blur,2.25px)) saturate(var(--cmp-sat,1.18)) brightness(var(--cmp-bri,1));
@@ -63,6 +64,23 @@
 #composerInner.glass-lens{
   -webkit-backdrop-filter:url(#cmp-lens);
   backdrop-filter:url(#cmp-lens);
+}
+/* ---------- 5b.1b 受光描边（1px 环） --------------------------------
+   ④ --cmp-rim 是一条竖向渐变（顶部亮、底部回光）。它只能占**一圈 1px**：
+   直接当 background 铺在 border-box 上会因为面/底半透明而漏满整张卡。
+   做法：整块渐变铺满 ::after，再用 mask 把 content-box 抠掉，只留下 1px 边。 */
+#composerInner::after{
+  content:'';
+  position:absolute;
+  inset:0;
+  border-radius:inherit;
+  padding:1px;                       /* 留下的环宽 */
+  background:var(--cmp-rim);
+  pointer-events:none;
+  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+  -webkit-mask-composite:xor;
+  mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+  mask-composite:exclude;
 }
 /* 聚焦：**不加环**。强调色光环会把玻璃变成"输入框"，而它本来就只在聚焦时
    可打字 —— 边界已经由 ③ 交代。只把顶缘受光与远影提一档，读作"抬起来了"。 */

@@ -372,13 +372,14 @@ const S = {
   providers: [], settings: {}, workspaces: [], sessions: [], sessionsTotal: 0, models: [],
   skills: [], skillsRoot: '',   // /skills、/skill 共用（启动时拉一次，/skills 强制刷新）
   usages: null, usagesLoading: false, usagesOpen: false, usagesPending: false, // 用量缓存（usages.summary）+ 左侧栏收纳浮层是否展开 + 加载中又来的强刷
-  tasks: [], tasksAt: 0, tasksOpen: false, tasksShown: null, // 后台任务（tasks.list / tasks 事件）+ 收到列表的时刻 + 浮层是否展开 + 展开输出的任务 id
+  tasks: [], tasksAt: 0, tasksOpen: false, tasksShown: null, tasksOpenGroups: new Set(), // 后台任务（tasks.list / tasks 事件）+ 收到列表的时刻 + 浮层是否展开 + 展开输出的任务 id + 浮层里按会话展开的分组
   connected: true, everConnected: false,
   dock: 'teamwork', dockOpen: false, settingsOpen: false, skillsOpen: false, flowlinkOpen: false,
   flowWorkspaces: [],      // FlowLink 工作区（远程工作区，执行在对端）
   recentCwds: [],
   closedTabs: [], tabMenuNode: null,
   groupsClosed: new Set(),   // 侧栏里被折叠的工作区分组（见 02-render.js）
+  groupsSeeded: false,       // 折叠状态是否已经按「首次运行默认全收」播过种
   pendingApprovals: 0,
   update: null,              // 启动时的更新检查结果（见 09-boot.js），后端只查一次
   prefs: {},                 // 桌面壳偏好：tray / update_check（.cell/cell-app.json）

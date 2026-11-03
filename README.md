@@ -21,7 +21,8 @@ One agent runtime, one web UI, several ways to open it:
   working session at a time (use Teamwork to parallelise inside a directory).
 
 ```
-cell-app.exe                    the desktop app (UI on an OS-assigned random port)
+cell-app.exe                    the desktop app (UI on a fixed loopback port: 47900 —
+                                a stable origin, so UI prefs in localStorage survive restarts)
 cell-app.exe --serve [PORT]     desktop app + HTTP service (random port unless PORT is given)
 cell-app.exe --headless [PORT]  HTTP service only, no window (random port unless PORT is given)
 cell-app.exe --ui FILE          serve the UI page from disk (dev mode, see below)

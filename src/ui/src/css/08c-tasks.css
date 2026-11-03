@@ -1,11 +1,26 @@
-/* ---- 8c 后台任务浮层（侧栏 #navTasks chip 的收纳浮层） ----------------
-   外壳沿用「用量」浮层的 .usage-pop / .up-head / .up-body，这里只加任务行：
-   一行 = 状态点 + id + 命令（省略号）+ 耗时 + 输出/终止按钮，展开后是输出
-   尾巴。状态点只区分「在跑」（强调色呼吸）与「结束」（绿/红），没有彩色块，
-   和黑白灰主题一致。                                                    */
+/* ---- 8c 后台任务浮层（会话顶栏 .ch-tasks chip 的收纳浮层） ------------
+   外壳沿用「用量」浮层的 .usage-pop / .up-head / .up-body，正文按**会话分组**：
+   一组 = 标题行（折叠箭头 + 会话名 + 计数）+ 展开后的任务行。当前会话那组
+   默认展开，其余收起。一行 = 状态点 + id + 命令（省略号）+ 耗时 + 输出/终止
+   按钮，展开后是输出尾巴。状态点只区分「在跑」（强调色呼吸）与「结束」
+   （绿/红），没有彩色块，和黑白灰主题一致。                                */
 
 .task-pop{width:420px}
 .task-pop .up-body{padding:8px 8px 10px}
+
+/* 会话分组 */
+.tk-group + .tk-group{margin-top:2px}
+.tk-ghead{display:flex;align-items:center;gap:6px;width:100%;height:26px;padding:0 6px;
+  border-radius:var(--radius-s);color:var(--fg3);text-align:left;
+  transition:background var(--dur) var(--ease),color var(--dur) var(--ease)}
+.tk-ghead:hover{background:var(--elev-1);color:var(--fg)}
+.tk-ghead .uico{width:12px;height:12px;flex:none;transition:transform var(--dur) var(--ease)}
+.tk-group.open > .tk-ghead .uico{transform:rotate(90deg)}
+.tk-gname{flex:1;min-width:0;font-size:11.5px;font-weight:600}
+.tk-group.cur > .tk-ghead .tk-gname{color:var(--fg2)}
+.tk-gcnt{flex:none;font-family:var(--mono);font-size:10px;color:var(--fg4)}
+.tk-gitems{padding:1px 0 3px 6px}
+
 .task-item{border-radius:var(--radius-s)}
 .task-item + .task-item{margin-top:2px}
 

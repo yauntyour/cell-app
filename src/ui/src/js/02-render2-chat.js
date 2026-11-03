@@ -89,7 +89,10 @@ function ensurePane(ws) {
   const ctitle = el('span', 'cht-title trunc', ''); ctitle.title = ws;
   head.appendChild(ctitle);
   head.appendChild(el('span', 'grow'));
+  // 本会话的「后台任务」chip（08d-tasks.js）排在「用量」左边：两个都是本会话
+  // 的数字，贴在一起读作一组。先建用量，任务 chip 才有位置插到它前面。
   ensureChatUsageBtn(head, ws);
+  if (typeof ensureChatTasksBtn === 'function') ensureChatTasksBtn(head);
   // 会话顶栏快捷动作（与 /export、/save、/compact 同源）：都只作用于本工作区，
   // 危险动作（清空上下文）留在最右边单独一档
   for (const [icon, tip, act] of [
@@ -292,6 +295,8 @@ function renderChatHead(ws) {
   const tt = $('.cht-title', head);
   if (tt) { tt.textContent = title; tt.title = title; }
   paintChatUsage(ws);
+  // 切会话换的是「这一栏属于谁」：任务 chip 的数字也跟着换
+  if (typeof paintChatTasks === 'function') paintChatTasks(ws);
 }
 
 /* ---------- 会话顶栏的「本会话用量」（每个 session 页各一份） ----------

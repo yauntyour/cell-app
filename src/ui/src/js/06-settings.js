@@ -382,12 +382,18 @@ function segRow(label, values, cur, onpick, desc) {
 }
 
 /* ---- settings.set 包装 --------------------------------------------- */
+// 失败必须说出来：后端在回合运行期间会拒绝一切配置写入，那时开关已经先
+// 翻过去了，静默失败看起来就是"改了没保存"（下次打开又变回去）。
 function setPatch(patch) {
   return cmd('settings.set', { patch }).then(out => {
     if (out && out.ok && out.settings) S.settings = Object.assign(S.settings || {}, out.settings);
     if (out && out.ok) toast('已保存', 'ok');
+    else { toast((out && out.error) || '保存失败', 'bad'); if (S.settingsOpen) renderSettings(); }
     setCall('renderStatLine');
     return out;
+  }).catch(e => {
+    toast('保存失败：' + (e && e.message ? e.message : e), 'bad');
+    if (S.settingsOpen) renderSettings();
   });
 }
 

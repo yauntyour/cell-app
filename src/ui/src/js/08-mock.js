@@ -35,12 +35,14 @@ const Mock = {
     system_prompt: 'You are a helpful assistant.', teamwork_max_children: 5, max_threads: 8,
   },
   models: ['gpt-4o', 'gpt-4o-mini', 'o3-mini', 'deepseek-chat', 'deepseek-reasoner'],
-  // 后台任务（exec background=true）的演示数据：一个在跑、一个已结束
+  // 后台任务（exec background=true）的演示数据：一个在跑、一个已结束。
+  // session 必须是本工作区当前会话的 id（sessionOf）：会话顶栏的 chip 与浮层
+  // 的「按会话分组」都靠它认领任务。
   mockTasks: [
-    { id: 't1', tid: '3f9a1c', cmd: 'npm run dev', wd: 'D:\\Projects\\demo-site', session: 'mock0001a',
+    { id: 't1', tid: '3f9a1c', cmd: 'npm run dev', wd: 'D:\\Projects\\demo-site', session: 'sms0001-1-mock',
       running: true, exit: -1, elapsed: 137,
       tail: '> demo-site@0.1.0 dev\n> vite\n\n  VITE v5.4.2  ready in 412 ms\n\n  ➜  Local:   http://localhost:5173/\n  ➜  Network: use --host to expose\n' },
-    { id: 't2', tid: '77c02e', cmd: 'python -m http.server 8000', wd: 'D:\\Developments\\CXX\\cell-app', session: 'mock0001a',
+    { id: 't2', tid: '77c02e', cmd: 'python -m http.server 8000', wd: 'D:\\Developments\\CXX\\cell-app', session: 'sms0001-1-mock',
       running: false, exit: 0, elapsed: 46,
       tail: 'Serving HTTP on 0.0.0.0 port 8000 (http://0.0.0.0:8000/) ...\n127.0.0.1 - - [02/Nov/2026 17:52:31] "GET / HTTP/1.1" 200 -\n' },
   ],

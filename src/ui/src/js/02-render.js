@@ -3,6 +3,17 @@ function cssId(ws) { return String(ws).replace(/[^a-zA-Z0-9_-]/g, '_'); }
 
 // 侧栏工作区分组的折叠状态（localStorage 持久化）
 const GRP_KEY = 'cell.wGroups';
+// 首次运行（本机还没有存过折叠状态）：侧栏本身默认展开，但里面每个工作区
+// 都先收起，只留分组头 —— 会话由用户自己点开。存过之后一律以存下的为准。
+function seedGroupsClosed(groups) {
+  if (S.groupsSeeded || !groups.size) return;
+  S.groupsSeeded = true;
+  let saved = null;
+  try { saved = localStorage.getItem(GRP_KEY); } catch (e) { return; }
+  if (saved != null) return;
+  for (const ws of groups.keys()) S.groupsClosed.add(ws);
+  saveGroupState();
+}
 function loadGroupState() {
   try { return new Set(JSON.parse(localStorage.getItem(GRP_KEY) || '[]')); }
   catch (e) { return new Set(); }
@@ -30,6 +41,7 @@ function renderSidebar() {
     }
     g.items.push(s);
   }
+  seedGroupsClosed(groups);
   for (const [ws, g] of groups) g.open = q ? true : !S.groupsClosed.has(ws);
 
   const nodes = [];
@@ -458,7 +470,9 @@ setInterval(() => {
    右侧 dock 外壳：开合 / 页签 / 派发
    新面板（files/git/terminal）通过 window.Panels 注册（08b-panels.js）
    ===================================================================== */
-const DOCK_KEY = 'cell.dock';
+// 键名升到 .v2：v1 存的是"宽窗口默认打开"那一版的 open:true，换键 = 老配置
+// 也回到「右栏默认收纳」的新起点，之后仍以用户自己的开合为准。
+const DOCK_KEY = 'cell.dock.v2';
 const DOCK_LABEL = { start: '开始', files: '工作区文件', git: 'Git / Worktree', terminal: '终端', teamwork: 'Teamwork', notices: '通知', archives: '存档' };
 function dockRestore() {
   let had = false;
@@ -471,9 +485,9 @@ function dockRestore() {
       if (j && DOCK_LABEL[j.tab]) S.dock = j.tab;
     }
   } catch (e) {}
-  // 首次启动：宽窗口默认打开「开始」，窄窗口（右栏是覆盖式）默认收起，
-  // 否则面板会盖住输入栏与消息区
-  if (!had) { S.dockOpen = window.innerWidth > 980; S.dock = 'start'; }
+  // 首次启动：右栏默认收起。它是按需打开的详情面板（文件 / Git / 终端 / 存档），
+  // 默认占着只会挤掉正文；要看什么点顶栏的按钮或对应快捷键就行。
+  if (!had) { S.dockOpen = false; S.dock = 'start'; }
   if (!DOCK_LABEL[S.dock]) S.dock = 'start';
   const dk = $('#rightdock');
   if (dk) dk.classList.toggle('open', S.dockOpen);
@@ -593,8 +607,9 @@ function paintSidebarToggle() {
   }
 }
 function restoreSidebarState() {
+  // 默认展开（首次运行 / 换了 profile 都是这个起点），收起过才按存下的来
   let col = false;
-  try { col = localStorage.getItem(SIDEBAR_KEY) === '1'; } catch (e) {}
+  try { const v = localStorage.getItem(SIDEBAR_KEY); if (v != null) col = v === '1'; } catch (e) {}
   S.sidebarCollapsed = col;
   const sb = $('#sidebar');
   if (sb) sb.classList.toggle('collapsed', col);

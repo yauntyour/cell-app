@@ -752,17 +752,30 @@ body.locked{overflow:hidden}
 .chathead .cht-title:hover{color:var(--fg)}
 .chathead .icon-btn{color:var(--fg4)}
 .chathead .icon-btn:hover{color:var(--bad);background:color-mix(in srgb,var(--bad) 12%,transparent)}
-/* 会话顶栏的「本会话用量」chip：数字精确到个位（千分位），点开是一个明细浮层。
-   刻意不复用 .icon-btn 的 hover —— 那套是给危险动作（清空）用的红。 */
-.chathead .ch-usage{display:inline-flex;align-items:center;gap:6px;flex:none;height:24px;
+/* 会话顶栏的两个 chip：「后台任务」与「本会话用量」。数字精确到个位
+   （千分位 / 在跑的任务数），点开各自是一个浮层。刻意不复用 .icon-btn 的
+   hover —— 那套是给危险动作（清空）用的红。 */
+.chathead .ch-usage,
+.chathead .ch-tasks{display:inline-flex;align-items:center;gap:6px;flex:none;height:24px;
   padding:0 8px;border-radius:6px;color:var(--fg4);
   transition:background var(--dur) var(--ease),color var(--dur) var(--ease)}
-.chathead .ch-usage .uico{width:13px;height:13px;stroke-width:1.8}
-.chathead .ch-usage .chu-val{font-family:var(--mono);font-size:11px;letter-spacing:-.1px;
+.chathead .ch-usage .uico,
+.chathead .ch-tasks .uico{width:13px;height:13px;stroke-width:1.8}
+.chathead .ch-usage .chu-val,
+.chathead .ch-tasks .chu-val{font-family:var(--mono);font-size:11px;letter-spacing:-.1px;
   font-variant-numeric:tabular-nums;color:var(--fg4)}
-.chathead .ch-usage.has-val .chu-val{color:var(--fg3)}
-.chathead .ch-usage:hover,.chathead .ch-usage.on{background:var(--raise);color:var(--fg2)}
-.chathead .ch-usage:hover .chu-val,.chathead .ch-usage.on .chu-val{color:var(--fg)}
+.chathead .ch-usage.has-val .chu-val,
+.chathead .ch-tasks.has-val .chu-val{color:var(--fg3)}
+/* 有进程在跑：数字染成强调色（不画点 —— 这套 chip 只有数字和图标） */
+.chathead .ch-tasks.run .chu-val{color:var(--accent)}
+.chathead .ch-usage:hover,
+.chathead .ch-usage.on,
+.chathead .ch-tasks:hover,
+.chathead .ch-tasks.on{background:var(--raise);color:var(--fg2)}
+.chathead .ch-usage:hover .chu-val,
+.chathead .ch-usage.on .chu-val,
+.chathead .ch-tasks:hover .chu-val,
+.chathead .ch-tasks.on .chu-val{color:var(--fg)}
 .tabpane.hero .chathead{display:none}
 
 .chat{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;
@@ -1257,11 +1270,12 @@ body.locked{overflow:hidden}
   overflow:hidden;
   isolation:isolate;
   border:1px solid transparent;
-  /* ③ 面（受光）+ ② 底（着色）都只铺 padding-box，④ 边铺 border-box 在最下：
-     三层靠 clip 分工，底色永远盖不住那 1px 的受光描边。 */
+  /* ③ 面（受光）+ ② 底（着色）都只铺 padding-box。
+     ④ 边**不在这里铺**：面与底都是半透明的，铺满 border-box 的渐变描边会从
+     中间整片透出来（顶部 .50 白 → 下方 .05，读作卡片上半部莫名泛白）。描边
+     改由 ::after 只留 1px 环，见 5b.1b。 */
   background:var(--cmp-face) padding-box,
-             var(--cmp-base) padding-box,
-             var(--cmp-rim) border-box;
+             var(--cmp-base) padding-box;
   /* ① 降级路径（滤镜还没建好 / 不支持 url() 的引擎）：纯磨砂 */
   -webkit-backdrop-filter:blur(var(--cmp-blur,2.25px)) saturate(var(--cmp-sat,1.18)) brightness(var(--cmp-bri,1));
   backdrop-filter:blur(var(--cmp-blur,2.25px)) saturate(var(--cmp-sat,1.18)) brightness(var(--cmp-bri,1));
@@ -1277,6 +1291,23 @@ body.locked{overflow:hidden}
 #composerInner.glass-lens{
   -webkit-backdrop-filter:url(#cmp-lens);
   backdrop-filter:url(#cmp-lens);
+}
+/* ---------- 5b.1b 受光描边（1px 环） --------------------------------
+   ④ --cmp-rim 是一条竖向渐变（顶部亮、底部回光）。它只能占**一圈 1px**：
+   直接当 background 铺在 border-box 上会因为面/底半透明而漏满整张卡。
+   做法：整块渐变铺满 ::after，再用 mask 把 content-box 抠掉，只留下 1px 边。 */
+#composerInner::after{
+  content:'';
+  position:absolute;
+  inset:0;
+  border-radius:inherit;
+  padding:1px;                       /* 留下的环宽 */
+  background:var(--cmp-rim);
+  pointer-events:none;
+  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+  -webkit-mask-composite:xor;
+  mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+  mask-composite:exclude;
 }
 /* 聚焦：**不加环**。强调色光环会把玻璃变成"输入框"，而它本来就只在聚焦时
    可打字 —— 边界已经由 ③ 交代。只把顶缘受光与远影提一档，读作"抬起来了"。 */
@@ -3445,14 +3476,29 @@ mark{background:var(--accent-soft);color:var(--accent);border-radius:3px;padding
 
 /* ==== css/08c-tasks.css =============================================== */
 
-/* ---- 8c 后台任务浮层（侧栏 #navTasks chip 的收纳浮层） ----------------
-   外壳沿用「用量」浮层的 .usage-pop / .up-head / .up-body，这里只加任务行：
-   一行 = 状态点 + id + 命令（省略号）+ 耗时 + 输出/终止按钮，展开后是输出
-   尾巴。状态点只区分「在跑」（强调色呼吸）与「结束」（绿/红），没有彩色块，
-   和黑白灰主题一致。                                                    */
+/* ---- 8c 后台任务浮层（会话顶栏 .ch-tasks chip 的收纳浮层） ------------
+   外壳沿用「用量」浮层的 .usage-pop / .up-head / .up-body，正文按**会话分组**：
+   一组 = 标题行（折叠箭头 + 会话名 + 计数）+ 展开后的任务行。当前会话那组
+   默认展开，其余收起。一行 = 状态点 + id + 命令（省略号）+ 耗时 + 输出/终止
+   按钮，展开后是输出尾巴。状态点只区分「在跑」（强调色呼吸）与「结束」
+   （绿/红），没有彩色块，和黑白灰主题一致。                                */
 
 .task-pop{width:420px}
 .task-pop .up-body{padding:8px 8px 10px}
+
+/* 会话分组 */
+.tk-group + .tk-group{margin-top:2px}
+.tk-ghead{display:flex;align-items:center;gap:6px;width:100%;height:26px;padding:0 6px;
+  border-radius:var(--radius-s);color:var(--fg3);text-align:left;
+  transition:background var(--dur) var(--ease),color var(--dur) var(--ease)}
+.tk-ghead:hover{background:var(--elev-1);color:var(--fg)}
+.tk-ghead .uico{width:12px;height:12px;flex:none;transition:transform var(--dur) var(--ease)}
+.tk-group.open > .tk-ghead .uico{transform:rotate(90deg)}
+.tk-gname{flex:1;min-width:0;font-size:11.5px;font-weight:600}
+.tk-group.cur > .tk-ghead .tk-gname{color:var(--fg2)}
+.tk-gcnt{flex:none;font-family:var(--mono);font-size:10px;color:var(--fg4)}
+.tk-gitems{padding:1px 0 3px 6px}
+
 .task-item{border-radius:var(--radius-s)}
 .task-item + .task-item{margin-top:2px}
 
@@ -4232,10 +4278,6 @@ try {
             <svg class="uico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 20V11M9.75 20V5M15 20v-6M20.25 20V8.5"/><path d="M2.5 20h19"/></svg>
             <span class="sb-uval" id="navUsageVal">—</span>
           </button>
-          <button class="icon-btn sm sb-uchip" id="navTasks" title="后台任务" aria-haspopup="dialog" aria-expanded="false" aria-label="后台任务">
-            <svg class="uico" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="m7 9 3 3-3 3M13 15h4"/></svg>
-            <span class="sb-uval" id="navTasksVal">—</span>
-          </button>
           <button class="icon-btn sm sb-uchip" id="navUpdate" title="有新版本" aria-label="有新版本，前往下载">
             <svg class="uico" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5M12 15V3"/></svg>
             <span class="sb-uval">更新</span>
@@ -4725,13 +4767,14 @@ const S = {
   providers: [], settings: {}, workspaces: [], sessions: [], sessionsTotal: 0, models: [],
   skills: [], skillsRoot: '',   // /skills、/skill 共用（启动时拉一次，/skills 强制刷新）
   usages: null, usagesLoading: false, usagesOpen: false, usagesPending: false, // 用量缓存（usages.summary）+ 左侧栏收纳浮层是否展开 + 加载中又来的强刷
-  tasks: [], tasksAt: 0, tasksOpen: false, tasksShown: null, // 后台任务（tasks.list / tasks 事件）+ 收到列表的时刻 + 浮层是否展开 + 展开输出的任务 id
+  tasks: [], tasksAt: 0, tasksOpen: false, tasksShown: null, tasksOpenGroups: new Set(), // 后台任务（tasks.list / tasks 事件）+ 收到列表的时刻 + 浮层是否展开 + 展开输出的任务 id + 浮层里按会话展开的分组
   connected: true, everConnected: false,
   dock: 'teamwork', dockOpen: false, settingsOpen: false, skillsOpen: false, flowlinkOpen: false,
   flowWorkspaces: [],      // FlowLink 工作区（远程工作区，执行在对端）
   recentCwds: [],
   closedTabs: [], tabMenuNode: null,
   groupsClosed: new Set(),   // 侧栏里被折叠的工作区分组（见 02-render.js）
+  groupsSeeded: false,       // 折叠状态是否已经按「首次运行默认全收」播过种
   pendingApprovals: 0,
   update: null,              // 启动时的更新检查结果（见 09-boot.js），后端只查一次
   prefs: {},                 // 桌面壳偏好：tray / update_check（.cell/cell-app.json）
@@ -5740,6 +5783,17 @@ function cssId(ws) { return String(ws).replace(/[^a-zA-Z0-9_-]/g, '_'); }
 
 // 侧栏工作区分组的折叠状态（localStorage 持久化）
 const GRP_KEY = 'cell.wGroups';
+// 首次运行（本机还没有存过折叠状态）：侧栏本身默认展开，但里面每个工作区
+// 都先收起，只留分组头 —— 会话由用户自己点开。存过之后一律以存下的为准。
+function seedGroupsClosed(groups) {
+  if (S.groupsSeeded || !groups.size) return;
+  S.groupsSeeded = true;
+  let saved = null;
+  try { saved = localStorage.getItem(GRP_KEY); } catch (e) { return; }
+  if (saved != null) return;
+  for (const ws of groups.keys()) S.groupsClosed.add(ws);
+  saveGroupState();
+}
 function loadGroupState() {
   try { return new Set(JSON.parse(localStorage.getItem(GRP_KEY) || '[]')); }
   catch (e) { return new Set(); }
@@ -5767,6 +5821,7 @@ function renderSidebar() {
     }
     g.items.push(s);
   }
+  seedGroupsClosed(groups);
   for (const [ws, g] of groups) g.open = q ? true : !S.groupsClosed.has(ws);
 
   const nodes = [];
@@ -6195,7 +6250,9 @@ setInterval(() => {
    右侧 dock 外壳：开合 / 页签 / 派发
    新面板（files/git/terminal）通过 window.Panels 注册（08b-panels.js）
    ===================================================================== */
-const DOCK_KEY = 'cell.dock';
+// 键名升到 .v2：v1 存的是"宽窗口默认打开"那一版的 open:true，换键 = 老配置
+// 也回到「右栏默认收纳」的新起点，之后仍以用户自己的开合为准。
+const DOCK_KEY = 'cell.dock.v2';
 const DOCK_LABEL = { start: '开始', files: '工作区文件', git: 'Git / Worktree', terminal: '终端', teamwork: 'Teamwork', notices: '通知', archives: '存档' };
 function dockRestore() {
   let had = false;
@@ -6208,9 +6265,9 @@ function dockRestore() {
       if (j && DOCK_LABEL[j.tab]) S.dock = j.tab;
     }
   } catch (e) {}
-  // 首次启动：宽窗口默认打开「开始」，窄窗口（右栏是覆盖式）默认收起，
-  // 否则面板会盖住输入栏与消息区
-  if (!had) { S.dockOpen = window.innerWidth > 980; S.dock = 'start'; }
+  // 首次启动：右栏默认收起。它是按需打开的详情面板（文件 / Git / 终端 / 存档），
+  // 默认占着只会挤掉正文；要看什么点顶栏的按钮或对应快捷键就行。
+  if (!had) { S.dockOpen = false; S.dock = 'start'; }
   if (!DOCK_LABEL[S.dock]) S.dock = 'start';
   const dk = $('#rightdock');
   if (dk) dk.classList.toggle('open', S.dockOpen);
@@ -6330,8 +6387,9 @@ function paintSidebarToggle() {
   }
 }
 function restoreSidebarState() {
+  // 默认展开（首次运行 / 换了 profile 都是这个起点），收起过才按存下的来
   let col = false;
-  try { col = localStorage.getItem(SIDEBAR_KEY) === '1'; } catch (e) {}
+  try { const v = localStorage.getItem(SIDEBAR_KEY); if (v != null) col = v === '1'; } catch (e) {}
   S.sidebarCollapsed = col;
   const sb = $('#sidebar');
   if (sb) sb.classList.toggle('collapsed', col);
@@ -6463,7 +6521,10 @@ function ensurePane(ws) {
   const ctitle = el('span', 'cht-title trunc', ''); ctitle.title = ws;
   head.appendChild(ctitle);
   head.appendChild(el('span', 'grow'));
+  // 本会话的「后台任务」chip（08d-tasks.js）排在「用量」左边：两个都是本会话
+  // 的数字，贴在一起读作一组。先建用量，任务 chip 才有位置插到它前面。
   ensureChatUsageBtn(head, ws);
+  if (typeof ensureChatTasksBtn === 'function') ensureChatTasksBtn(head);
   // 会话顶栏快捷动作（与 /export、/save、/compact 同源）：都只作用于本工作区，
   // 危险动作（清空上下文）留在最右边单独一档
   for (const [icon, tip, act] of [
@@ -6666,6 +6727,8 @@ function renderChatHead(ws) {
   const tt = $('.cht-title', head);
   if (tt) { tt.textContent = title; tt.title = title; }
   paintChatUsage(ws);
+  // 切会话换的是「这一栏属于谁」：任务 chip 的数字也跟着换
+  if (typeof paintChatTasks === 'function') paintChatTasks(ws);
 }
 
 /* ---------- 会话顶栏的「本会话用量」（每个 session 页各一份） ----------
@@ -13773,12 +13836,18 @@ function segRow(label, values, cur, onpick, desc) {
 }
 
 /* ---- settings.set 包装 --------------------------------------------- */
+// 失败必须说出来：后端在回合运行期间会拒绝一切配置写入，那时开关已经先
+// 翻过去了，静默失败看起来就是"改了没保存"（下次打开又变回去）。
 function setPatch(patch) {
   return cmd('settings.set', { patch }).then(out => {
     if (out && out.ok && out.settings) S.settings = Object.assign(S.settings || {}, out.settings);
     if (out && out.ok) toast('已保存', 'ok');
+    else { toast((out && out.error) || '保存失败', 'bad'); if (S.settingsOpen) renderSettings(); }
     setCall('renderStatLine');
     return out;
+  }).catch(e => {
+    toast('保存失败：' + (e && e.message ? e.message : e), 'bad');
+    if (S.settingsOpen) renderSettings();
   });
 }
 
@@ -15265,12 +15334,14 @@ const Mock = {
     system_prompt: 'You are a helpful assistant.', teamwork_max_children: 5, max_threads: 8,
   },
   models: ['gpt-4o', 'gpt-4o-mini', 'o3-mini', 'deepseek-chat', 'deepseek-reasoner'],
-  // 后台任务（exec background=true）的演示数据：一个在跑、一个已结束
+  // 后台任务（exec background=true）的演示数据：一个在跑、一个已结束。
+  // session 必须是本工作区当前会话的 id（sessionOf）：会话顶栏的 chip 与浮层
+  // 的「按会话分组」都靠它认领任务。
   mockTasks: [
-    { id: 't1', tid: '3f9a1c', cmd: 'npm run dev', wd: 'D:\\Projects\\demo-site', session: 'mock0001a',
+    { id: 't1', tid: '3f9a1c', cmd: 'npm run dev', wd: 'D:\\Projects\\demo-site', session: 'sms0001-1-mock',
       running: true, exit: -1, elapsed: 137,
       tail: '> demo-site@0.1.0 dev\n> vite\n\n  VITE v5.4.2  ready in 412 ms\n\n  ➜  Local:   http://localhost:5173/\n  ➜  Network: use --host to expose\n' },
-    { id: 't2', tid: '77c02e', cmd: 'python -m http.server 8000', wd: 'D:\\Developments\\CXX\\cell-app', session: 'mock0001a',
+    { id: 't2', tid: '77c02e', cmd: 'python -m http.server 8000', wd: 'D:\\Developments\\CXX\\cell-app', session: 'sms0001-1-mock',
       running: false, exit: 0, elapsed: 46,
       tail: 'Serving HTTP on 0.0.0.0 port 8000 (http://0.0.0.0:8000/) ...\n127.0.0.1 - - [02/Nov/2026 17:52:31] "GET / HTTP/1.1" 200 -\n' },
   ],
@@ -20024,8 +20095,10 @@ window.openDiffPreview = pnlOpenDiffPreview;
      · 任务开始或结束：后端推 tasks 事件（同样带全量列表，见 onTasksEvent）
      · 终止：tasks.kill；看输出：tasks.output（事件里也带一小段 tail）
 
-   浮层挂在侧栏底部的终端 chip（#navTasks）上，与「用量」浮层共用一套位置
-   算法与外壳类名（.usage-pop / .up-head / .up-body），只有正文是本文件的。
+   入口是**每个会话顶栏自己的 chip**（.ch-tasks，摆在「本会话用量」左边）：
+   后台任务本来就属于某个会话，数字只算这个会话在跑的数量。浮层按会话分组
+   收纳 —— 当前会话那组默认展开，其余收起；外壳仍与「用量」浮层共用
+   （.usage-pop / .up-head / .up-body）。
    运行中任务的耗时在本地按「收到列表的时刻 + 已跑时长」推算，不必每秒
    去问后端。                                                            */
 
@@ -20047,19 +20120,47 @@ function taskDur(sec) {
   return Math.floor(sec / 3600) + 'h' + String(Math.floor((sec % 3600) / 60)).padStart(2, '0') + 'm';
 }
 
-/* chip：图标 + 运行中数量（没有任务时是「—」） */
-function paintTasksChip() {
-  const b = $('#navTasks');
+/* ---- chip：会话顶栏的「后台任务」（用量 chip 左边） ------------------ */
+function tasksOfSession(sid) {
+  const k = sid || '';
+  return tasksAll().filter(t => ((t && t.session) || '') === k);
+}
+function ensureChatTasksBtn(head) {
+  let b = head.querySelector('.ch-tasks');
+  if (b) return b;
+  b = el('button', 'ch-tasks');
+  b.type = 'button';
+  b.setAttribute('aria-haspopup', 'dialog');
+  b.setAttribute('aria-expanded', 'false');
+  b.appendChild(iconEl('squareTerminal', 'sm'));
+  b.appendChild(el('span', 'chu-val', '—'));
+  b.onclick = ev => { ev.stopPropagation(); toggleTasksPop(); };
+  const usage = head.querySelector('.ch-usage');
+  if (usage) usage.insertAdjacentElement('beforebegin', b);
+  else head.appendChild(b);
+  return b;
+}
+function paintChatTasks(ws) {
+  const head = $('#chathead-' + cssId(ws));
+  if (!head) return;
+  const b = head.querySelector('.ch-tasks');
   if (!b) return;
-  const n = tasksRunning();
-  const val = b.querySelector('.sb-uval');
-  b.classList.toggle('has-val', n > 0);
+  const t = S.tabs.get(ws);
+  const mine = tasksOfSession(t && t.session);
+  const run = mine.filter(x => x.running).length;
+  const val = $('.chu-val', b);
+  b.classList.toggle('has-val', mine.length > 0);
+  b.classList.toggle('run', run > 0);
   b.classList.toggle('on', !!S.tasksOpen);
   b.setAttribute('aria-expanded', S.tasksOpen ? 'true' : 'false');
-  if (val) val.textContent = n ? String(n) : '—';
-  b.title = n
-    ? '后台任务 · ' + n + ' 个在运行（点击展开）'
-    : (tasksAll().length ? '后台任务 · 全部已结束（点击展开）' : '后台任务（点击展开）');
+  if (val) val.textContent = run ? String(run) : '—';
+  b.title = run
+    ? '后台任务 · 本会话 ' + run + ' 个在运行（点击展开）'
+    : (mine.length ? '后台任务 · 本会话 ' + mine.length + ' 个已结束（点击展开）' : '后台任务（点击展开）');
+}
+/* chip 的显示口径变了（任务增删、切会话）就整体刷一遍 */
+function paintTasksChip() {
+  for (const ws of S.tabOrder || []) paintChatTasks(ws);
 }
 
 /* 后端推来的列表：任务开始/结束都会来一条（见 app_core::start_task_watcher） */
@@ -20097,16 +20198,23 @@ function closeTasksPop() {
   paintTasksChip();
 }
 function tasksPopPlace(pop, anchor) {
+  // 入口在会话顶栏：浮层从 chip 下缘往下铺，右缘对齐（顶栏右侧没有多余空间）
   const r = anchor.getBoundingClientRect();
   const w = pop.offsetWidth, h = pop.offsetHeight;
-  pop.style.left = Math.max(8, Math.min(r.left, innerWidth - w - 8)) + 'px';
-  let top = r.top - h - 8;              // 优先贴在 chip 上方
-  if (top < 8) top = r.bottom + 8;      // 上方不够就翻到下方
-  pop.style.top = Math.max(8, Math.min(top, innerHeight - h - 8)) + 'px';
+  pop.style.left = Math.max(8, Math.min(r.right - w, innerWidth - w - 8)) + 'px';
+  let top = r.bottom + 6;
+  if (top + h > innerHeight - 8) top = Math.max(8, innerHeight - h - 8);
+  pop.style.top = top + 'px';
+}
+/* chip 所在位置：当前标签页的会话顶栏；没有（空态 / 演示）就退回标题栏 */
+function tasksPopAnchor() {
+  const head = S.active ? $('#chathead-' + cssId(S.active)) : null;
+  const b = head && head.querySelector('.ch-tasks');
+  return b || $('#btnTopSearch') || $('#titlebar');
 }
 function openTasksPop(force) {
   if (tasksPop) { if (force) refreshTasks(true); return; }
-  const anchor = $('#navTasks');
+  const anchor = tasksPopAnchor();
   if (!anchor) return;
   const pop = el('div', 'usage-pop task-pop');
   pop.setAttribute('role', 'dialog');
@@ -20146,6 +20254,8 @@ function openTasksPop(force) {
   window.addEventListener('resize', resize);
   tasksPop = { el: pop, anchor: anchor, out: out, key: key, resize: resize };
   S.tasksOpen = true;
+  // 每次打开都从「当前会话」这一组看起，其余会话收起（按会话收纳）
+  S.tasksOpenGroups = new Set([((S.tabs.get(S.active) || {}).session) || '']);
   paintTasksChip();
   paintTasksPop();
   refreshTasks(true);
@@ -20155,15 +20265,16 @@ function openTasksPop(force) {
 }
 function toggleTasksPop() { S.tasksOpen ? closeTasksPop() : openTasksPop(true); }
 
-/* 每秒的轻量刷新：只改文本，不重建列表 */
+/* 每秒的轻量刷新：只改文本，不重建列表（按 id 对行，分组后 DOM 顺序≠列表顺序） */
 function tickTasks() {
   if (!tasksPop) return;
   const list = tasksAll();
   const items = tasksPop.el.querySelectorAll('.task-item');
-  if (items.length !== list.length) { paintTasksPop(); return; } // 增删了行，整块重画
-  for (let i = 0; i < items.length; i++) {
-    const d = items[i].querySelector('.tk-dur');
-    if (d) d.textContent = taskDur(taskElapsed(list[i]));
+  for (const node of items) {
+    const t = list.find(x => x.id === node.dataset.id);
+    if (!t) { paintTasksPop(); return; } // 任务被回收了，整块重画
+    const d = node.querySelector('.tk-dur');
+    if (d) d.textContent = taskDur(taskElapsed(t));
   }
   const shown = list.find(t => t.id === S.tasksShown);
   if (shown && shown.running) refreshTaskOutput(shown.id);
@@ -20187,6 +20298,12 @@ async function refreshTaskOutput(id) {
   }
 }
 
+/* 会话名：优先用会话标题（侧栏里显示的那条），否则短 id */
+function taskSessionLabel(sid) {
+  if (!sid) return '未归属会话';
+  const s = (S.sessions || []).find(x => x.id === sid);
+  return (s && s.title) || shortId(sid);
+}
 function paintTasksPop() {
   if (!tasksPop) return;
   const list = tasksAll();
@@ -20203,9 +20320,44 @@ function paintTasksPop() {
       '让 agent 用 exec(background=true) 起一个进程（开发服务器、watcher、长构建…），它会在自己的线程上跑，不占工具线程池，也不挡当前回合。'));
     body.appendChild(empty);
   } else {
-    for (const t of list) body.appendChild(taskRow(t));
+    const cur = ((S.tabs.get(S.active) || {}).session) || '';
+    const groups = new Map();               // session id -> tasks（保持注册表顺序）
+    for (const t of list) {
+      const k = (t && t.session) || '';
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(t);
+    }
+    // 当前会话排第一，其余保持原顺序（sort 稳定）
+    const keys = Array.from(groups.keys()).sort((a, b) => (b === cur) - (a === cur));
+    for (const k of keys) body.appendChild(taskGroup(k, groups.get(k), cur));
   }
   tasksPopPlace(tasksPop.el, tasksPop.anchor); // 内容高度变了，重新贴边
+}
+
+/* 一个会话一组：标题行（折叠开关 + 会话名 + 计数），展开后才是任务行 */
+function taskGroup(sid, items, curSession) {
+  const open = S.tasksOpenGroups.has(sid);
+  const g = el('div', 'tk-group' + (open ? ' open' : '') + (sid === curSession ? ' cur' : ''));
+  const head = el('button', 'tk-ghead');
+  head.type = 'button';
+  head.setAttribute('aria-expanded', open ? 'true' : 'false');
+  head.appendChild(iconEl('chevronRight', 'sm'));
+  head.appendChild(el('span', 'tk-gname trunc', taskSessionLabel(sid)));
+  const run = items.filter(t => t.running).length;
+  head.appendChild(el('span', 'tk-gcnt', run ? run + ' 运行 / ' + items.length : String(items.length)));
+  head.title = (sid || '未记录会话') + ' —— 点击' + (open ? '收起' : '展开');
+  head.onclick = () => {
+    if (S.tasksOpenGroups.has(sid)) S.tasksOpenGroups.delete(sid);
+    else S.tasksOpenGroups.add(sid);
+    paintTasksPop();
+  };
+  g.appendChild(head);
+  if (open) {
+    const box = el('div', 'tk-gitems');
+    for (const t of items) box.appendChild(taskRow(t));
+    g.appendChild(box);
+  }
+  return g;
 }
 
 function taskRow(t) {
@@ -20247,6 +20399,7 @@ function taskRow(t) {
   }
 
   const wrap = el('div', 'task-item');
+  wrap.dataset.id = t.id;
   wrap.appendChild(row);
 
   // 展开的输出：先显示事件里带的 tail，再问一次 tasks.output 拿最新的
@@ -20297,7 +20450,7 @@ function wireEvents() {
   $('#navRefresh').onclick = () => Nav.refresh();
   $('#navHome').onclick = () => Nav.home();
   $('#navUsage').onclick = () => toggleUsagePop();
-  $('#navTasks').onclick = () => toggleTasksPop();
+  // 后台任务入口不在侧栏了：它在每个会话自己的顶栏（见 08d-tasks.js）
   $('#navUpdate').onclick = () => openReleasePage((S.update || {}).url);
   $('#navDock').onclick = () => toggleDock();
   $('#btnTopDock').onclick = () => toggleDock();
@@ -20443,7 +20596,7 @@ function enterDemo(reason) {
   if (S.active) { renderChat(S.active); renderChatHead(S.active); }
   renderDock();
   refreshUsages(false); // 侧栏「用量」chip 先显示一个数（演示数据）
-  refreshTasks(true);   // 侧栏「后台任务」chip（演示数据）
+  refreshTasks(true);   // 会话顶栏「后台任务」chip（演示数据）
   setTimeout(() => { refreshSessions(); renderSidebar(); renderDock(); }, 60);
 }
 
@@ -20484,7 +20637,7 @@ async function boot() {
     Transport.init();
     fetchSkills(); // /skill 的参数补全：后台拉一次，失败就退回空列表（不挡启动）
     refreshUsages(false); // 侧栏「用量」chip 的后台取数（失败就保持「—」）
-    refreshTasks(true);   // 侧栏「后台任务」chip：先显示当前在跑的数量
+    refreshTasks(true);   // 会话顶栏的「后台任务」chip：先显示当前在跑的数量
   } catch (e) {
     enterDemo('无法连接后端：' + (e && e.message ? e.message : e));
   }
@@ -20517,6 +20670,9 @@ async function setShellPrefs(patch) {
   if (out && out.ok && out.prefs) {
     S.prefs = out.prefs;
     toast('已保存', 'ok');
+  } else {
+    toast((out && out.error) || '保存失败', 'bad');
+    if (S.settingsOpen && typeof renderSettings === 'function') renderSettings();
   }
   renderUpdateChip();
   return out;
