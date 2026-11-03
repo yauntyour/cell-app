@@ -4124,6 +4124,13 @@ html[data-theme="light"] #splash::before{opacity:.5}
 
 /* ---- 侧栏里的 FlowLink 工作区条目 ---------------------------------- */
 #sessionList .fl-sitem .stag.fl-tag{color:var(--accent);border-color:var(--accent)}
+/* 对端工作区与控制台里的分组同一套外观：组头是工作区，组内是它的会话。
+   监视按钮常显（悬停只是加深），否则「只读看对端」这个动作没人找得到。 */
+#flowWsSection .fl-sgroup .gname{max-width:104px}
+#flowWsSection .fl-sgroup .sitem .stag.fl-tag{color:var(--accent);border-color:var(--accent)}
+#flowWsSection .fl-mon{opacity:.55}
+#flowWsSection .sgroup-head:hover .fl-mon{opacity:1}
+#flowWsSection .fl-mon:hover{background:var(--accent-soft);color:var(--accent)}
 
 @media (max-width:980px){
   #flowlinkPage .fl-side{width:200px}
@@ -4445,7 +4452,7 @@ const COMMANDS = [
   { name: '/archive', usage: '/archive', desc: '查看当前会话的历史存档（右侧面板）', run: () => { openDock('archives'); refreshArchives(S.active, true); } },
   { name: '/workspace', usage: '/workspace [path]', desc: '切换或打开工作区', ctx: 'workspaces' },
   { name: '/theme', usage: '/theme [dark|light|名称]', desc: '切换外观（内置深色/浅色 + 第三方主题）', ctx: 'theme' },
-  { name: '/link', usage: '/link [status|peers|pair|join CODE|transfers]', desc: '互联（FlowLink）：发现同网段的 cell、配对、共享会话、远程工作区', run: () => openFlowLinkPage() },
+  { name: '/link', usage: '/link [status|peers|pair|join CODE|approve CODE|transfers]', desc: '互联（FlowLink）：发现同网段的 cell、双向配对、共享会话、远程工作区', run: () => openFlowLinkPage() },
   { name: '/git', usage: '/git', desc: '打开 Git / Worktree 面板', run: () => openDock('git') },
   { name: '/worktree', usage: '/worktree', desc: '管理并行工作树（Git Worktree）', run: () => openDock('git') },
   { name: '/files', usage: '/files [path]', desc: '打开工作区文件面板；Ctrl+P 快速打开', run: () => openDock('files') },
@@ -5947,10 +5954,13 @@ function renderTabbar() {
     const active = ws === S.active;
     const tb = el('div', 'tab' + (active ? ' active' : ''));
     tb.title = t.cwd || ws;
+    const watch = !!(t.remote && t.remote.mode === 'watch');
     if (t.busy) { const p = el('span', 'pulse busy'); tb.appendChild(p); }
-    else tb.appendChild(iconEl('folder', 'sm'));
-    const nm = el('span', 'tname trunc', t.remote ? (t.remote.name || baseName(t.cwd)) : (baseName(t.cwd) || shortId(ws)));
-    if (t.remote) nm.title = 'FlowLink · ' + t.remote.cwd + '（在对端 cell 上执行）';
+    else tb.appendChild(iconEl(watch ? 'eye' : 'folder', 'sm'));
+    const nm = el('span', 'tname trunc', watch
+      ? ('监视 · ' + (t.remote.name || baseName(t.cwd)))
+      : (t.remote ? (t.remote.name || baseName(t.cwd)) : (baseName(t.cwd) || shortId(ws))));
+    if (t.remote) nm.title = (watch ? '监视（只读）· ' : 'FlowLink · ') + t.remote.cwd + '（在对端 cell 上执行）';
     tb.appendChild(nm);
     const badge = t.approval ? 'warn' : '';
     if (t.unread > 0 || t.approval) {
@@ -6131,6 +6141,9 @@ async function closeWorkspace(ws) {
   if (t && t.remote) {
     if (t.busy && t.remote.rid)
       cmd('flowlink.ws.stop', { cell: t.remote.cell, cwd: t.remote.cwd, rid: t.remote.rid });
+    // 监视是订阅：关页签就退订，否则对端会一直往这条链路上推事件
+    if (t.remote.mode === 'watch')
+      cmd('flowlink.ws.unwatch', { cell: t.remote.cell, cwd: t.remote.cwd });
     removeTab(ws);
     if (S.tabOrder.length) activateWs(S.active);
     else renderPanes();
@@ -6322,7 +6335,7 @@ function renderDock() {
   // FlowLink 工作区在执行在对端：本地文件 / Git / 终端面板对它没有意义
   if (t && t.remote && (S.dock === 'files' || S.dock === 'git' || S.dock === 'terminal')) {
     const box = el('div', 'empty');
-    box.appendChild(el('div', null, 'FlowLink 工作区（远程）'));
+    box.appendChild(el('div', null, t.remote.mode === 'watch' ? '监视模式（只读）' : 'FlowLink 工作区（远程）'));
     box.appendChild(el('div', 'tiny dim', t.remote.cwd + ' · 执行在对端 cell 上'));
     body.replaceChildren(box);
     return;
@@ -11799,6 +11812,31 @@ function paintSendState(t) {
   if (!has) send.classList.add('dim');
 }
 
+/* 远程会话：这些设置属于会话所在的那台机器，本机只能看不能改。
+   chip 保留在原来的位置（布局不变），文案换成「对端」并把操作锁死。 */
+function flLockChips(t) {
+  const set = (sel, txt, title) => {
+    const b = $(sel);
+    if (!b) return;
+    b.disabled = true;
+    b.title = title;
+    // 模型 chip 用的是 .cmp-model-name，其余是 .cmp-chip-txt
+    const label = b.querySelector('.cmp-chip-txt') || b.querySelector('.cmp-model-name');
+    if (label) label.textContent = txt;
+    const lv = b.querySelector('.cmp-think-lv'); // 思考强度那一档也是本机的值
+    if (lv) { lv.textContent = ''; lv.classList.remove('on'); }
+  };
+  set('#sandboxChip', '对端', '沙箱与权限边界由会话所在的那台机器决定');
+  set('#toolsChip', '对端', '工具调用开关由会话所在的那台机器决定');
+  set('#providerChip', '对端', '供应商由会话所在的那台机器决定');
+  set('#modelChip', '对端模型', '模型由会话所在的那台机器决定');
+  set('#thinkChip', '对端', '思考强度由会话所在的那台机器决定');
+  ['#modeChip', '#btnAttach'].forEach(sel => {
+    const b = $(sel);
+    if (b) { b.disabled = true; b.title = '远程会话只接受文本输入'; }
+  });
+}
+
 function renderComposer() {
   if (!ensureComposer()) return;
   const t = curTab();
@@ -11865,6 +11903,17 @@ function renderComposer() {
 
   renderChips(t);
   paintSendState(t);
+  // 远程会话：模型 / 供应商 / 沙箱 / 工具 / 思考强度都属于对端；监视模式还没有输入
+  if (t.remote) {
+    flLockChips(t);
+    if (t.remote.mode === 'watch') {
+      ta.disabled = true;
+      ta.value = '';
+      ta.placeholder = '监视模式：只能查看对端活跃会话的输出，无法输入';
+      const sb = $('#sendBtn');
+      if (sb) { sb.disabled = true; sb.classList.remove('stop'); sb.title = '监视模式：不能发送'; }
+    }
+  }
   applyComposerWidthClass(); // 文案变了（换模型 / 换供应商）要重新量一次宽度档位
   if (typeof renderStatLine === 'function') renderStatLine();
   // 卡片高度可能刚被模式切换改掉（Teamwork 是 64vh，不看 --composer-h）：
@@ -12071,6 +12120,7 @@ async function sendCurrent() {
   // FlowLink 工作区：页签、转录、输入都在本机，回合在对端 cell 上跑
   if (t.remote) {
     closeSlash();
+    if (t.remote.mode === 'watch') { toast('监视模式不能输入', 'info'); return; }
     if (t.busy) { cmd('flowlink.ws.stop', { cell: t.remote.cell, cwd: t.remote.cwd, rid: t.remote.rid }); return; }
     await flSendRemote(t);
     focusInput();
@@ -13060,6 +13110,12 @@ function afterSet(out, msg) {
 async function execSlash(t, name, arg) {
   arg = (arg || '').trim();
   name = CMD_ALIAS[name] || name; // /provide、/sessions… 统一成主名再分派
+  // 远程会话的模型 / 供应商 / 沙箱 / 工具 / 思考强度属于对端：命令也必须挡住，
+  // 否则它改的是本机的全局设置，看着生效、实际对那个会话毫无影响
+  if (t && t.remote && ['/model', '/provider', '/sandbox', '/tools', '/think', '/autoallow'].includes(name)) {
+    toast('远程会话：这些设置由对端决定，不能在这里修改', 'info', 2600);
+    return;
+  }
   switch (name) {
     case '/new': return cmd('session.new', { ws: t.ws }).then(resync);
     case '/clear': return cmd('session.clear', { ws: t.ws }).then(resync);
@@ -14703,9 +14759,22 @@ function flFill(body, paint) {
     on && st.discovery_state === 'probe-only'
       ? setNote('发现端口被占用：当前只能主动探测，收不到其他设备的广播。可换一个发现端口，或在 FlowLink 管理页填写「额外发现地址」。', 'warn')
       : null,
-    on ? switchRow('接受远程作业', pf.accept, v =>
-      cmd('flowlink.settings', { accept: v }).then(o => { if (o && o.ok !== false) flMerge(o); paint(); }),
-      '允许已配对的对端在这里运行回合、读取工作区文件（只读，且限制在工作区内）。') : null,
+    // 授权拆成了工作区 / Workflow / 监视三项，各有进出两个方向：这里是总览，
+    // 开关本身在 FlowLink 管理页的「权限」分节（那里的说明更完整）
+    on ? el('div', 'set-divider') : null,
+    on ? el('div', 'set-hint',
+      '对端能用本机什么，以及本机能用对端什么，都在 FlowLink 管理页 →「权限」里逐项开关：'
+      + '工作区访问（' + (pf.accept_workspace ? '开' : '关') + '）、Workflow（' + (pf.accept_workflow ? '开' : '关')
+      + '）、监视（' + (pf.accept_watch ? '开' : '关') + '）；本机使用对端：工作区（' + (pf.access_workspace ? '开' : '关')
+      + '）、Workflow（' + (pf.access_workflow ? '开' : '关') + '）。') : null,
+    on ? flRow([setBtn('打开权限设置', 'ghost', () => {
+      if (typeof closeSettings === 'function') closeSettings();
+      if (typeof openFlowLinkPage === 'function') {
+        openFlowLinkPage();
+        FL.tab = 'perm';
+        flPaint();
+      }
+    }, 'shield')]) : null,
     on ? flRow([el('span', null, '本机标识'), el('code', null, st.client_id || '')], 'fl-ident') : null,
     !on ? setNote('开启后，其他 cell 才能在 FlowLink 管理页的 Scan Links 里看到这台机器。', 'info') : null,
   ]));
@@ -21385,6 +21454,7 @@ const FL_TABS = [
   { id: 'scan', label: 'Scan Links', icon: 'search', sub: '发现与配对' },
   { id: 'links', label: '已配对', icon: 'link', sub: '设备与远程工作区' },
   { id: 'transfers', label: '传输列表', icon: 'download', sub: '收到的会话' },
+  { id: 'perm', label: '权限', icon: 'shield', sub: '工作区 / Workflow / 监视' },
   { id: 'settings', label: '设置', icon: 'sliders', sub: '服务与端口' },
 ];
 
@@ -21517,6 +21587,7 @@ function flPaint() {
   main.replaceChildren();
   if (FL.tab === 'links') flPaintLinks(main);
   else if (FL.tab === 'transfers') flPaintTransfers(main);
+  else if (FL.tab === 'perm') flPaintPerm(main);
   else if (FL.tab === 'settings') flPaintSettings(main);
   else flPaintScan(main);
 }
@@ -21695,12 +21766,17 @@ function flPaintScan(main) {
   self.appendChild(instRow);
 
   const p = flPairing();
+  const reqs = Array.isArray(p.requests) ? p.requests : [];
+  const outs = Array.isArray(p.outgoing) ? p.outgoing : [];
   if (p.open && p.code) {
     const box = el('div', 'fl-codebox');
     box.appendChild(el('code', 'fl-code', p.code));
     const left = Math.max(0, (p.expires || 0) - Math.floor(Date.now() / 1000));
     box.appendChild(el('div', 'fl-hint',
-      '把这段码交给对方输入，' + Math.floor(left / 60) + ' 分 ' + (left % 60) + ' 秒后失效。'));
+      '第一步：把这段码交给对方，让对方在它的 FlowLink 页里输入。'
+      + Math.floor(left / 60) + ' 分 ' + (left % 60) + ' 秒后失效。'));
+    box.appendChild(el('div', 'fl-hint',
+      '第二步：对方输入后会在这里出现一条请求，你再输入对方的配对码 —— 双方都输入过，才算配对完成。'));
     const row = el('div', 'fl-row');
     row.appendChild(flBtn('取消', 'x', () => cmd('flowlink.pair.cancel').then(o => { flMerge(o); flPaint(); }), 'ghost'));
     box.appendChild(row);
@@ -21712,8 +21788,41 @@ function flPaintScan(main) {
         if (o && o.ok !== false) { flMerge(o); toast('配对码已生成', 'ok'); flPaint(); }
       });
     }, 'accent'));
-    row.appendChild(el('span', 'fl-hint', '对方输入这段码即可与本机配对（只需一方输入）。'));
+    row.appendChild(el('span', 'fl-hint', '配对要双方各输入一次对方的码；先亮出自己的，再让对方请求。'));
     self.appendChild(row);
+  }
+  // 进来的请求：对方已经输入了本机的码（握手证明了这一点），本机输入对方的码即完成
+  if (reqs.length) {
+    const box = el('div', 'fl-pairbox');
+    box.appendChild(el('div', 'fl-pair-title', '配对请求 · 等待你输入对方的码'));
+    for (const q of reqs) {
+      const row = el('div', 'fl-wsrow');
+      const col = el('div', 'fl-wsrow-main');
+      col.appendChild(el('span', 'fl-wsrow-name trunc', q.name || String(q.client_id || '').slice(0, 8)));
+      col.appendChild(el('span', 'fl-wsrow-path trunc', '已输入本机的配对码 · ' + flAgo(q.since)));
+      row.appendChild(col);
+      const inCode = flInput('对方的配对码');
+      inCode.style.maxWidth = '220px';
+      row.appendChild(inCode);
+      const go = flBtn('批准', 'check', () => flApprove(q.client_id, inCode.value), 'accent');
+      row.appendChild(go);
+      inCode.onkeydown = ev => { if (ev.key === 'Enter') flApprove(q.client_id, inCode.value); };
+      box.appendChild(row);
+    }
+    self.appendChild(box);
+  }
+  // 发出去的请求：本机已输入对方的码，等对方输入本机的码
+  if (outs.length) {
+    const box = el('div', 'fl-pairbox');
+    box.appendChild(el('div', 'fl-pair-title', '已发出的请求 · 等待对方批准'));
+    for (const q of outs) {
+      const row = el('div', 'fl-row');
+      row.appendChild(flPill('等待中', 'warn'));
+      row.appendChild(el('span', 'fl-hint',
+        (q.name || String(q.client_id || '').slice(0, 8)) + ' 需要输入本机的配对码（见上方）'));
+      box.appendChild(row);
+    }
+    self.appendChild(box);
   }
   body.appendChild(self);
 
@@ -21752,7 +21861,7 @@ function flPaintScan(main) {
     const sel = devs.find(d => d.client_id === FL.sel) || null;
     if (sel) {
       const pair = el('div', 'fl-pairbox');
-      pair.appendChild(el('div', 'fl-pair-title', sel.paired ? '已与这台设备互信' : '与 ' + (sel.name || sel.client_id.slice(0, 8)) + ' 配对'));
+      pair.appendChild(el('div', 'fl-pair-title', sel.paired ? '已与这台设备互信' : '与 ' + (sel.name || sel.client_id.slice(0, 8)) + ' 配对 · 第一步'));
       if (sel.paired) {
         pair.appendChild(el('div', 'fl-hint', '需要更换凭据时，先在「已配对」里断开，再重新配对。'));
         const row = el('div', 'fl-row');
@@ -21763,10 +21872,11 @@ function flPaintScan(main) {
         codeIn.oninput = () => { FL.joinCode = codeIn.value; };
         const addrIn = flInput('可选：对方的 ip[:port]（留空自动发现）', FL.joinAddr);
         addrIn.oninput = () => { FL.joinAddr = addrIn.value; };
-        pair.appendChild(flField('配对码', codeIn));
+        pair.appendChild(flField('对方的配对码', codeIn,
+          '提交后对方会看到一条请求；对方再输入本机的配对码（上方「本机」里那段）即完成。'));
         pair.appendChild(flField('地址', addrIn));
         const row = el('div', 'fl-row');
-        const go = flBtn('配对', 'link', () => flPairJoin(codeIn.value, addrIn.value), 'accent');
+        const go = flBtn('请求配对', 'link', () => flPairJoin(codeIn.value, addrIn.value), 'accent');
         go.disabled = FL.busy;
         row.appendChild(go);
         if (FL.err) row.appendChild(el('span', 'fl-hint bad', FL.err));
@@ -21852,6 +21962,14 @@ async function flPairJoin(code, addr) {
     if (!out || out.ok === false) {
       FL.err = (out && out.error) || '配对失败';
       toast(FL.err, 'bad');
+    } else if (out.pending) {
+      // 双向配对：本机只完成了「输入对方的码」，link 还不存在
+      const p = out.pending || {};
+      toast('请求已发送给 ' + (p.name || p.client_id || '对端') + '，等对方输入本机的配对码', 'info', 3200);
+      FL.joinCode = '';
+      flMerge(out);
+      FL.sel = p.client_id || FL.sel;
+      await refreshFlowlink();
     } else {
       toast('已与 ' + (out.name || out.client_id || '对端') + ' 配对', 'ok');
       FL.joinCode = '';
@@ -21863,6 +21981,22 @@ async function flPairJoin(code, addr) {
     FL.err = e.message || String(e);
   }
   FL.busy = false;
+  flPaint();
+}
+
+/* 完成双向配对的另一半：本机输入发起方（它已输入本机的码）的配对码 */
+async function flApprove(cell, code) {
+  const text = String(code || '').trim();
+  if (!text) { toast('请输入对方的配对码', 'bad'); return; }
+  try {
+    const out = await api('flowlink.pair.approve', { client_id: cell, code: text });
+    if (!out || out.ok === false) { toast((out && out.error) || '批准失败', 'bad'); return; }
+    const r = out.paired || {};
+    toast('已与 ' + (r.name || cell.slice(0, 8)) + ' 完成双向配对', 'ok', 2600);
+    flMerge(out);
+    await refreshFlowlink();
+    if (typeof renderFlowWsSidebar === 'function') renderFlowWsSidebar();
+  } catch (e) { toast(e.message || String(e), 'bad'); }
   flPaint();
 }
 
@@ -21943,6 +22077,14 @@ function flPaintLinks(main) {
 
 function flRemoteBlock(d) {
   const box = el('div', 'fl-remote');
+  // 没有本机授权时连列表都不拉：对端会不会给是另一回事，本机先不该去问
+  if (!flSettings().access_workspace) {
+    box.appendChild(el('div', 'fl-hint bad', '「使用对端工作区」未开启：拿不到对端的工作区列表。'));
+    const row = el('div', 'fl-row');
+    row.appendChild(flBtn('去权限设置', 'shield', () => { FL.tab = 'perm'; flPaint(); }, 'ghost'));
+    box.appendChild(row);
+    return box;
+  }
   if (FL.remoteFor !== d.client_id) {
     box.appendChild(el('div', 'fl-hint', '正在读取 ' + (d.name || d.client_id.slice(0, 8)) + ' 上的工作区…'));
     flLoadRemote(d.client_id);
@@ -21994,6 +22136,7 @@ async function flLoadRemote(cell) {
   FL.remoteFor = cell;
   FL.remote = [];
   FL.err = '';
+  if (!flSettings().access_workspace) { FL.err = '「使用对端工作区」未开启（FlowLink → 权限）'; flPaint(); return; }
   flPaint();
   try {
     const out = await api('flowlink.ws.remote', { cell: cell });
@@ -22175,6 +22318,76 @@ async function flSaveExtra(text) {
   await flPatch({ extra_targets: list });
 }
 
+/* ---------- 权限 ---------------------------------------------------- */
+/* 两个方向是两套开关，缺一不可：
+     对端使用本机（accept_*）：本机愿意开放什么
+     本机使用对端（access_*）：本机愿意去用对端什么
+   关掉任何一侧，对应功能就直接不可用 —— 不是灰掉按钮，而是命令层拒绝
+   （见 cell-app-core 的 fl_serve / fl_can）。 */
+function flSwitchRow(on, title, hint, fn) {
+  const row = el('div', 'fl-row fl-switchrow');
+  const sw = el('button', 'fl-switch' + (on ? ' on' : ''));
+  sw.type = 'button';
+  sw.setAttribute('role', 'switch');
+  sw.setAttribute('aria-checked', on ? 'true' : 'false');
+  sw.onclick = () => fn(!on);
+  row.appendChild(sw);
+  const txt = el('div', 'fl-switch-txt');
+  txt.appendChild(el('div', 'fl-switch-title', title));
+  if (hint) txt.appendChild(el('div', 'fl-hint', hint));
+  row.appendChild(txt);
+  return row;
+}
+
+function flPermCard(title, desc, rows) {
+  const card = el('section', 'fl-card');
+  const head = el('div', 'fl-card-head');
+  head.appendChild(el('span', 'fl-card-title', title));
+  card.appendChild(head);
+  if (desc) card.appendChild(el('p', 'fl-note', desc));
+  for (const r of rows) card.appendChild(r);
+  return card;
+}
+
+function flPaintPerm(main) {
+  const s = flSettings();
+  flHead(main, '权限',
+    '工作区、Workflow、监视是三项独立的授权。开关立刻生效，不需要重启服务；被拒绝的一侧连工作区列表都拿不到。',
+    []);
+
+  const body = el('div', 'fl-content');
+
+  body.appendChild(flPermCard('对端使用本机', '已配对的对端能在这台机器上做什么。全部默认关闭。', [
+    flSwitchRow(!!s.accept_workspace, '允许对端访问本机工作区',
+      '对端可以列出本机的工作区与会话、读取工作区文件、在选中工作区里跑回合。关闭时连工作区列表都不返回。',
+      v => flPatch({ accept_workspace: v })),
+    flSwitchRow(!!s.accept_workflow, '允许对端在本机运行 Workflow',
+      '对端提交的 Teamwork 作业在本机执行（用本机的供应商与密钥），只把报告带回去。',
+      v => flPatch({ accept_workflow: v })),
+    flSwitchRow(!!s.accept_watch, '允许对端监视本机会话',
+      '对端只能看到选中工作区里活跃会话的输出流，不能输入，也不能修改任何会话设置。',
+      v => flPatch({ accept_watch: v })),
+  ]));
+
+  body.appendChild(flPermCard('本机使用对端', '这台机器可以去用对端什么。全部默认关闭。', [
+    flSwitchRow(!!s.access_workspace, '允许使用对端工作区',
+      '侧栏的 FlowLink 工作区、对端会话列表与历史、远程回合都依赖这一项。关闭时侧栏不显示对端工作区，也不拉取列表。',
+      v => { flPatch({ access_workspace: v }); if (typeof renderFlowWsSidebar === 'function') renderFlowWsSidebar(); }),
+    flSwitchRow(!!s.access_workflow, '允许使用对端 Workflow',
+      'tw 工具把作业发到已配对的对端上执行；关闭时 tw 只在本机跑。',
+      v => flPatch({ access_workflow: v })),
+  ]));
+
+  const note = el('section', 'fl-card');
+  note.appendChild(el('div', 'fl-card-head')).appendChild(el('span', 'fl-card-title', '说明'));
+  note.appendChild(el('p', 'fl-note',
+    '配对只负责建立互信（双方各输入一次对方的配对码）；能做什么由这里的开关决定。'
+    + '监视是单向只读：它既不能发消息，也不能改模型、工具或沙箱权限 —— 那些设置始终属于会话所在的那台机器。'));
+  body.appendChild(note);
+
+  main.appendChild(body);
+}
+
 /* ---------- 设置 ---------------------------------------------------- */
 function flPaintSettings(main) {
   const s = flSettings();
@@ -22314,7 +22527,13 @@ async function flPatch(patch) {
 }
 
 /* ---------- 远程工作区（页签 + 回合） -------------------------------- */
-function flTabKey(cell, cwd) { return 'link:' + cell + ':' + cwd; }
+/* 页签按「工作区 + 会话」定位：同一个对端工作区可以同时开多个会话页签。
+   监视页签用 session='watch'，与真实会话 id 不冲突（id 是 16 位十六进制）。 */
+function flTabKey(cell, cwd, session) {
+  let k = 'link:' + cell + ':' + cwd;
+  if (session) k += '#' + session;
+  return k;
+}
 
 function flTabByRid(rid) {
   for (const key of S.tabOrder) {
@@ -22324,14 +22543,26 @@ function flTabByRid(rid) {
   return null;
 }
 
-async function openFlowWorkspace(cell, cwd, name) {
+/* 把对端的历史条目折成消息流：与本地会话同一套 detailEntries，渲染一致 */
+function flRemoteEntries(entries, sid) {
+  const out = [];
+  const list = Array.isArray(entries) ? entries : [];
+  for (let i = 0; i < list.length; i++)
+    for (const m of detailEntries(list[i], i, sid || 'remote')) out.push(m);
+  return out;
+}
+
+/* 打开一个对端工作区（session 为空 = 对端当前的会话）。
+   远程会话的模型 / 工具 / 沙箱由对端决定，输入栏里的这些控件是锁死的。 */
+async function openFlowWorkspace(cell, cwd, name, session) {
   if (!cell || !cwd) return;
   try {
     const out = await api('flowlink.ws.open', { cell: cell, cwd: cwd, name: name || '' });
     if (!out || out.ok === false) { toast((out && out.error) || '无法打开远程工作区', 'bad'); return; }
-    const key = flTabKey(cell, cwd);
+    const sid = String(session || '');
+    const key = flTabKey(cell, cwd, sid);
     const t = tab(key);
-    t.remote = { cell: cell, cwd: cwd, name: name || baseName(cwd) || cwd, rid: '' };
+    t.remote = { cell: cell, cwd: cwd, name: name || baseName(cwd) || cwd, rid: '', mode: 'run', session: sid, err: '' };
     t.cwd = cwd;
     t.session = 'link';
     t.loaded = true;
@@ -22339,14 +22570,63 @@ async function openFlowWorkspace(cell, cwd, name) {
     if (typeof closeFlowLinkPage === 'function') closeFlowLinkPage();
     await activateWs(key);
     renderTabbar();
-    toast('FlowLink 工作区：执行在对端 cell 上', 'info', 2200);
+    if (sid) flLoadRemoteHistory(key, cell, cwd, sid);
+    else toast('FlowLink 工作区：执行在对端 cell 上', 'info', 2200);
   } catch (e) { toast(e.message || String(e), 'bad'); }
+}
+
+/* 监视模式：只读地看一个对端工作区里活跃会话的输出。没有输入框、没有设置。 */
+async function openFlowWatch(cell, cwd, name) {
+  if (!cell || !cwd) return;
+  try {
+    const out = await api('flowlink.ws.watch', { cell: cell, cwd: cwd });
+    if (!out || out.ok === false) { toast((out && out.error) || '无法监视这个工作区', 'bad'); return; }
+    const key = flTabKey(cell, cwd, 'watch');
+    const t = tab(key);
+    t.remote = {
+      cell: cell, cwd: cwd, name: name || baseName(cwd) || cwd, rid: '', mode: 'watch',
+      ws: out.ws || '', session: out.session || '', err: '',
+    };
+    t.cwd = cwd;
+    t.session = 'link';
+    t.loaded = true;
+    t.msgs = flRemoteEntries(out.entries, out.session || 'watch');
+    t.busy = !!out.busy;
+    if (!S.tabOrder.includes(key)) S.tabOrder.push(key);
+    if (typeof closeFlowLinkPage === 'function') closeFlowLinkPage();
+    await activateWs(key);
+    renderTabbar();
+    toast('监视模式：只读，无法输入或修改会话设置', 'info', 2800);
+  } catch (e) { toast(e.message || String(e), 'bad'); }
+}
+
+/* 拉一条对端会话的历史，替换页签里的消息（附到已存在会话时用） */
+async function flLoadRemoteHistory(key, cell, cwd, sid) {
+  const t = S.tabs.get(key);
+  if (!t || !t.remote) return;
+  try {
+    const out = await api('flowlink.ws.history', { cell: cell, cwd: cwd, session: sid });
+    if (S.tabs.get(key) !== t) return;
+    if (!out || out.ok === false) {
+      t.remote.err = (out && out.error) || '读取对端会话历史失败';
+      markChat(key);
+      return;
+    }
+    t.msgs = flRemoteEntries(out.entries, sid);
+    t.remote.err = '';
+    t._stick = true;
+    markChat(key);
+  } catch (e) {
+    t.remote.err = e.message || String(e);
+    markChat(key);
+  }
 }
 
 /* 输入框里的发送：远程工作区走 flowlink.ws.send，回合在对端跑 */
 async function flSendRemote(t) {
   const text = (t.composer.text || '').trim();
   if (!text) return;
+  if (t.remote && t.remote.mode === 'watch') { toast('监视模式不能输入', 'info'); return; }
   if (t.busy) {
     cmd('flowlink.ws.stop', { cell: t.remote.cell, cwd: t.remote.cwd, rid: t.remote.rid });
     return;
@@ -22366,6 +22646,7 @@ async function flSendRemote(t) {
   schedule('tabbar', renderTabbar);
   const out = await cmd('flowlink.ws.send', {
     cell: t.remote.cell, cwd: t.remote.cwd, text: text, rid: t.remote.rid,
+    session: t.remote.session || '',
   });
   if (out && out.ok === false) {
     t.busy = false;
@@ -22386,6 +22667,7 @@ function flOnPeerEvent(ev) {
     return;
   }
   if ((ev && ev.method) !== 'agent.event') return;
+  if (params.watch) { flOnWatchEvent(ev, params); return; }
   const rid = params.rid || '';
   const t = flTabByRid(rid);
   if (!t) return;
@@ -22410,39 +22692,158 @@ function flOnPeerEvent(ev) {
   }
 }
 
-/* ---------- 侧栏的 FlowLink 工作区列表 ------------------------------- */
+/* 监视事件：按 client_id + 对端 ws 找页签（监视是订阅，没有 rid） */
+function flOnWatchEvent(ev, params) {
+  const cell = (ev && ev.client_id) || '';
+  const ws = params.ws || '';
+  let t = null;
+  for (const key of S.tabOrder) {
+    const x = S.tabs.get(key);
+    if (x && x.remote && x.remote.mode === 'watch' && x.remote.cell === cell && x.remote.ws === ws) { t = x; break; }
+  }
+  if (!t) return;
+  const e = params.ev || {};
+  if (e.t === 'answer') {
+    if (!t._stream) {
+      t._stream = { id: uid(), role: 'assistant', text: '' };
+      t.msgs.push(t._stream);
+    }
+    t._stream.text += (e.d || '');
+    t.busy = true;
+    markChat(t.ws);
+    schedule('tabbar', renderTabbar);
+    return;
+  }
+  if (e.t === 'turn_end') {
+    t._stream = null;
+    t.busy = false;
+    t.thinkingSince = 0;
+    markChat(t.ws);
+    schedule('tabbar', renderTabbar);
+  }
+  // tool_begin / tool_end / status 在监视视图里不展示：只保留正文
+}
+
+/* ---------- 侧栏的 FlowLink 工作区列表 -------------------------------
+   一个对端工作区一组：组头是工作区（可折叠、可直接开监视），组内是对端
+   这个工作区的 session —— 点一条就附到那条会话上。
+   会话列表按需拉取（展开时），30 秒内复用缓存；对端没开工作区访问时命令
+   本身就会被拒绝，这里把错误原样显示，不假装「暂无会话」。 */
+const FL_SESS = new Map();       // "cell\0cwd" -> {items, at, loading, err}
+const FL_SESS_TTL = 30;          // seconds
+function flSessKey(cell, cwd) { return cell + '\u0000' + cwd; }
+function flGroupKey(cell, cwd) { return 'link:' + cell + ':' + cwd; }
+function flSessions(cell, cwd) {
+  const c = FL_SESS.get(flSessKey(cell, cwd));
+  return c && Array.isArray(c.items) ? c.items : [];
+}
+function flSessState(cell, cwd) { return FL_SESS.get(flSessKey(cell, cwd)) || null; }
+async function flLoadSessions(cell, cwd, force) {
+  const key = flSessKey(cell, cwd);
+  const cur = FL_SESS.get(key) || { items: [], at: 0, loading: false, err: '' };
+  if (cur.loading) return;
+  if (!force && cur.at && (Date.now() / 1000 - cur.at) < FL_SESS_TTL) return;
+  cur.loading = true;
+  FL_SESS.set(key, cur);
+  try {
+    const out = await api('flowlink.ws.sessions', { cell: cell, cwd: cwd });
+    if (out && out.ok !== false) {
+      cur.items = Array.isArray(out.sessions) ? out.sessions : [];
+      cur.err = '';
+    } else {
+      cur.err = (out && out.error) || '读取会话失败';
+    }
+  } catch (e) {
+    cur.err = e.message || String(e);
+  }
+  cur.loading = false;
+  cur.at = Date.now() / 1000;
+  renderFlowWsSidebar();
+}
+/* 对端该工作区的会话按「工作区即分组」列出来 —— 与本地工作区分组同一套外观 */
 function renderFlowWsSidebar() {
   const sec = $('#flowWsSection');
   const list = $('#flowWsList');
   if (!sec || !list) return;
-  const items = flWorkspaces();
+  // 未开启「使用对端工作区」时，整段不显示 —— 也不去拉对端的会话列表
+  const items = flSettings().access_workspace ? flWorkspaces() : [];
   sec.hidden = !items.length;           // 无内容时整段不显示
   if (!items.length) { list.replaceChildren(); return; }
-  const nodes = [];
+
+  const groups = new Map();
   for (const w of items) {
-    const key = flTabKey(w.cell, w.cwd);
-    const active = key === S.active;
-    const row = el('div', 'sitem fl-sitem' + (active ? ' active' : ''));
-    const title = el('div', 'stitle trunc', w.name || baseName(w.cwd) || w.cwd);
-    title.title = w.cwd;
-    row.appendChild(title);
-    const meta = el('div', 'smeta');
-    const peer = flDevices().find(d => d.client_id === w.cell);
-    meta.appendChild(el('span', 'stag fl-tag', 'FlowLink'));
-    meta.appendChild(el('span', null, peer ? (peer.name || w.cell.slice(0, 8)) : w.cell.slice(0, 8)));
-    row.appendChild(meta);
-    const del = el('button', 'idel');
-    del.appendChild(iconEl('x', 'sm'));
-    del.title = '从 FlowLink 工作区列表移除';
-    del.onclick = ev => {
-      ev.stopPropagation();
-      cmd('flowlink.ws.remove', { cell: w.cell, cwd: w.cwd }).then(o => {
-        if (o && o.ok !== false) { flMerge(o); refreshFlowlink(); renderFlowWsSidebar(); }
-      });
+    const k = flGroupKey(w.cell, w.cwd);
+    if (!groups.has(k)) groups.set(k, { key: k, cell: w.cell, cwd: w.cwd, name: w.name || '' });
+  }
+
+  const nodes = [];
+  for (const g of groups.values()) {
+    const collapsed = S.groupsClosed.has(g.key);
+    const peer = flDevices().find(d => d.client_id === g.cell);
+    const sessions = flSessions(g.cell, g.cwd);
+    const st = flSessState(g.cell, g.cwd);
+    const busy = sessions.some(s => s.busy);
+
+    const gEl = el('div', 'sgroup fl-sgroup');
+    const head = el('div', 'sgroup-head');
+    head.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    const gico = el('span', 'gico');
+    gico.appendChild(iconEl('folder', 'sm'));
+    head.appendChild(gico);
+    const gname = el('span', 'gname trunc', g.name || baseName(g.cwd) || g.cwd);
+    gname.title = g.cwd;
+    head.appendChild(gname);
+    head.appendChild(el('span', 'cnt', String(sessions.length)));
+    if (!peer || !peer.online) head.appendChild(el('span', 'cnt', '离线'));
+    const pulse = el('span', 'pulse' + (busy ? ' busy' : ''));
+    pulse.title = busy ? '对端正在运行回合' : (collapsed ? '已折叠' : '已展开');
+    if (!busy) pulse.style.background = collapsed ? 'var(--fg4)' : 'var(--ok)';
+    head.appendChild(pulse);
+    head.title = g.cwd + ' | 对端 ' + (peer ? (peer.name || g.cell.slice(0, 8)) : g.cell.slice(0, 8));
+    head.onclick = () => {
+      if (S.groupsClosed.has(g.key)) S.groupsClosed.delete(g.key);
+      else S.groupsClosed.add(g.key);
+      saveGroupState();
+      renderFlowWsSidebar();
     };
-    row.appendChild(del);
-    row.onclick = () => openFlowWorkspace(w.cell, w.cwd, w.name);
-    nodes.push(row);
+    // 监视：只看这条工作区里活跃会话的输出，不能输入
+    const mon = el('button', 'gdel fl-mon');
+    mon.appendChild(iconEl('eye', 'sm'));
+    mon.title = '监视这个工作区（只读，无法输入）';
+    mon.onclick = ev => {
+      ev.stopPropagation();
+      openFlowWatch(g.cell, g.cwd, g.name);
+    };
+    head.appendChild(mon);
+    gEl.appendChild(head);
+
+    const box = el('div', 'sgroup-items');
+    box.hidden = collapsed;
+    if (!sessions.length) {
+      const msg = (st && st.loading) ? '读取对端会话…'
+        : (st && st.err) ? st.err
+        : '（对端没有会话）';
+      box.appendChild(el('div', 'dim tiny', msg)).style.padding = '2px 10px 6px';
+    }
+    for (const s of sessions) {
+      const key = flTabKey(g.cell, g.cwd, s.id);
+      const it = el('div', 'sitem' + (S.active === key ? ' active' : ''));
+      const title = el('div', 'stitle trunc', s.title || shortId(s.id));
+      title.title = (s.title || s.id) + ' · ' + s.id;
+      it.appendChild(title);
+      const meta = el('div', 'smeta');
+      meta.appendChild(el('span', 'stag fl-tag', '对端'));
+      meta.appendChild(el('span', null, relTime(s.mtime)));
+      meta.appendChild(el('span', null, (s.msgs || 0) + ' 条'));
+      if (s.active) meta.appendChild(el('span', 'stag', '当前'));
+      if (s.busy) { const d = el('span', 'dot run'); d.style.marginLeft = 'auto'; meta.appendChild(d); }
+      it.appendChild(meta);
+      it.onclick = () => openFlowWorkspace(g.cell, g.cwd, g.name, s.id);
+      box.appendChild(it);
+    }
+    gEl.appendChild(box);
+    nodes.push(gEl);
+    if (!collapsed) flLoadSessions(g.cell, g.cwd);
   }
   list.replaceChildren(...nodes);
 }
@@ -22452,7 +22853,15 @@ function onFlowlinkEvent(ev) {
   if (!ev) return;
   const type = ev.type || '';
   if (type === 'paired') {
-    toast('已与 ' + (ev.name || ev.client_id || '对端') + ' 配对', 'ok');
+    toast('已与 ' + (ev.name || ev.client_id || '对端') + ' 完成双向配对', 'ok');
+    refreshFlowlink();
+    renderFlowWsSidebar();
+  } else if (type === 'pair_request') {
+    // 对方输入了本机的配对码；本机还要输入对方的码才算完成
+    toast((ev.name || String(ev.client_id || '').slice(0, 8)) + ' 请求配对 —— 在 Scan Links 里输入它的配对码', 'info', 4200);
+    refreshFlowlink();
+  } else if (type === 'pair_request_expired') {
+    toast('配对请求已过期', 'info');
     refreshFlowlink();
   } else if (type === 'pairing_expired') {
     toast('配对码已过期', 'info');

@@ -756,6 +756,7 @@ namespace app
         auto check = [&](bool cond, const std::string &what)
         {
             printf("  %-4s %s\n", cond ? "ok" : "FAIL", what.c_str());
+            fflush(stdout); // a crash further down must not swallow the log
             cond ? ++passed : ++failed;
         };
         const auto base = std::filesystem::temp_directory_path() / "cell-flowlink-smoke";
@@ -858,17 +859,59 @@ namespace app
                     found_a = true;
         }
         check(found_a, "B discovers A through mDNS (client id + SRV port)");
-        // ---- the right code pairs, once, and stores the link key ---------
+        // ---- mutual pairing: one code each, then a link exists ------------
         {
-            auto code = a.pair_begin(120);
-            check(code.value("ok", false), "cell A opens a pairing window");
-            check(code.value("code", "").find(' ') != std::string::npos, "the code is shown in readable groups");
+            auto code_a = a.pair_begin(120);
+            check(code_a.value("ok", false), "cell A opens a pairing window");
+            check(code_a.value("code", "").find(' ') != std::string::npos, "the code is shown in readable groups");
             std::string why;
             // no address when discovery worked: exactly the "type their code and
             // nothing else" flow
-            auto r = b.pair_join(code.value("raw", ""), found_a ? std::string{} : addr_a, why);
-            check(why.empty() && r.value("ok", false), "pairing with the right code" + (why.empty() ? "" : ": " + why));
-            check(r.value("client_id", "") == a.client_id(), "B learned A's client id");
+            auto r = b.pair_join(code_a.value("raw", ""), found_a ? std::string{} : addr_a, why);
+            check(why.empty() && r.is_object() && r.value("ok", false), "B proves A's code (pairing request)" + (why.empty() ? "" : ": " + why));
+            const bool pending = r.is_object() && r.value("pending", false);
+            check(pending, "the request stays pending until A types B's code");
+            if (r.is_object())
+                check(r.value("client_id", "") == a.client_id(), "B learned A's client id");
+            const std::string b_code = r.is_object() ? r.value("code", "") : std::string{};
+            check(!b_code.empty(), "B has a code of its own to give A");
+            // A only lists the request after B proved knowledge of A's code
+            bool listed = false;
+            for (int i = 0; i < 60 && !listed; i++)
+            {
+                const auto st = a.status();
+                for (const auto &q : st["pairing"].value("requests", nlohmann::json::array()))
+                    if (q.value("client_id", "") == b.client_id())
+                        listed = true;
+                if (!listed)
+                    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            }
+            check(listed, "A lists B's request (B proved A's code)");
+            check(!std::filesystem::exists(base / "a" / "links" / b.client_id() / ".key") &&
+                      !std::filesystem::exists(base / "b" / "links" / a.client_id() / ".key"),
+                  "no link key exists while only one code has been exchanged");
+            if (!b_code.empty())
+            {
+                std::string bad = b_code;
+                for (auto &ch : bad)
+                    if (ch != ' ')
+                    {
+                        ch = (ch == 'A') ? 'B' : 'A';
+                        break;
+                    }
+                std::string berr;
+                auto br = a.pair_approve(bad, b.client_id(), berr);
+                check(!berr.empty() && !(br.is_object() && br.value("paired", false)),
+                      "a wrong code does not approve the request (" + berr + ")");
+                std::string aerr;
+                auto ok = a.pair_approve(b_code, b.client_id(), aerr);
+                check(aerr.empty() && ok.is_object() && ok.value("paired", false),
+                      "A approves with B's code" + (aerr.empty() ? "" : ": " + aerr));
+                for (int i = 0; i < 80 && !std::filesystem::exists(base / "b" / "links" / a.client_id() / ".key"); i++)
+                    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                check(std::filesystem::exists(base / "b" / "links" / a.client_id() / ".key"),
+                      "B stored its link key once both codes were exchanged");
+            }
         }
         check(std::filesystem::exists(base / "a" / "links" / b.client_id() / ".key"),
               "A stored the link key in .cell/links/<client_id>/.key");

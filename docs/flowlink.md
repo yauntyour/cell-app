@@ -42,9 +42,12 @@ networking) still works.
 * **Discovery** — a beacon reveals only `client_id`, display name, the
   transport port, the sender's receive/rendezvous UDP ports and whether a
   pairing window is open. No payload, no key material.
-* **Pairing** — a 512-bit code, typed once by one side, is the only credential.
-  There is no PKI and no signature: whoever can prove knowledge of the code is
-  the peer (TLS-like handshake, but the PSK *is* the trust anchor).
+* **Pairing** — *mutual*: each cell shows its own 512-bit code, and each side
+  types the other's. Phase 1 proves knowledge of the responder's code (that is
+  what shows up as a request on the responder), and the link key is only handed
+  over sealed with a key derived from **both** codes — so a peer that knows just
+  one code ends up with nothing. There is no PKI and no signature: the two codes
+  together are the trust anchor.
 * **Link key** — 32 random bytes handed over inside the encrypted handshake.
   Both sides store it sealed and use it as the PSK of every later session, so
   pairing happens once per pair of cells.
@@ -256,7 +259,7 @@ Before the handshake:
 
 | frame | contents |
 |---|---|
-| `hello` | `{m,v,id,name,eph,port,mode,ts}` — `eph` = ephemeral X25519 public key, `mode` = `pair` \| `resume` |
+| `hello` | `{m,v,id,name,eph,port,mode,pm,ts}` — `eph` = ephemeral X25519 public key, `mode` = `pair` \| `resume`, `pm` = `mutual` for the two-code flow (absent = the older one-code flow) |
 | `hello_ack` | `{m,v,id,name,eph,port,mode,mac}` |
 | `enc` (CONFIRM) | `{n,c}` — AEAD of `{t:"confirm",th[,link]}` under the handshake key |
 
@@ -270,6 +273,8 @@ plaintext control channel to spoof. Inside, the payload is one of:
 | `{t:"evt",m,p}` | one-way event from the peer |
 | `{t:"hello",name,port,accept_remote}` | post-handshake identity refresh |
 | `{t:"ping"}` / `{t:"pong"}` | keepalive |
+| `{t:"pair_offer",offer}` | pairing channel only: the initiator's link key, sealed with a key that needs both codes |
+| `{t:"pair_done",proof}` | pairing channel only: the responder proved it typed the initiator's code |
 
 ## 5. Handshake
 
@@ -303,6 +308,39 @@ A wrong code fails at `verify mac` — before any data is exchanged. The pairing
 window closes on success, on `/link cancel`, or after its TTL (5 min default),
 and a peer may only pair while a window is open.
 
+### Mutual pairing (both sides type a code)
+
+`pm: mutual` switches the handshake into the two-code flow. Phase 1 is the
+diagram above with `PSK = Argon2id(B's code)`: it proves the initiator knows the
+**responder's** code, and that is exactly what makes a request appear on the
+responder. The connection is then kept as a *pairing channel* — not a session:
+it accepts nothing but the two frames below, and no RPC.
+
+```
+A (initiator)                                  B (responder)
+  ── HELLO {pm:mutual} ─────────────────────────────►   (B's window must be open)
+  ◄── HELLO_ACK + MAC(PSK_B) ─────────────────────────   A learns it typed the right code
+  ── CONFIRM ────────────────────────────────────────►
+  ◄── CONFIRM ────────────────────────────────────────   B: "a request is waiting"
+  ── pair_offer { aead(K_mutual, link_key) } ─────────►   K_mutual = HKDF-Extract(PSK_A, PSK_B)
+                                                         B cannot open it yet → shows the request
+        B's user types A's code
+                                                         B opens the offer → stores the link key
+  ◄── pair_done { HMAC(K_mutual, "fl pair done") } ────  A verifies, stores the same key
+       both sides: paired, window closed, channel closed
+```
+
+`PSK_A` is Argon2id over **A's** code, `PSK_B` over **B's**, both with the same
+`pair_salt`. A knows both (it typed B's and shows its own); B only learns `PSK_A`
+when its user types A's code — which is the moment a link key can exist. A peer
+that only knows one code can complete phase 1 but never produces a key the other
+side accepts.
+
+The pending request lives as long as the pairing window (≤ 5 min). A typo in the
+approval keeps it (each attempt costs one Argon2id derivation); three wrong codes
+close the window, exactly like a wrong code did before. The channel also closes
+on `/link cancel`, when the request expires, or when either side goes away.
+
 ### If an existing pairing stops reconnecting
 
 An older build wrote the sealed `<client_id>/.key` with `nonce`/`ct` under the
@@ -316,21 +354,42 @@ readable keys on every CPU. New key files are always validated by
 
 ## 6. What a peer can do
 
-Both directions use the same RPC surface; the responder answers only if its
-owner enabled *accept remote work*.
+Both directions use the same RPC surface. Pairing only establishes trust; what a
+paired peer may actually do is three separate grants on the owner's **权限**
+page — all default **off**:
+
+| grant | covers |
+|---|---|
+| `accept_workspace` | `ws.list`, `ws.sessions`, `ws.history`, `fs.*`, `agent.send`, `agent.stop` |
+| `accept_workflow` | `tw.new`, `tw.run` |
+| `accept_watch` | `ws.watch`, `ws.unwatch` |
+
+A refused call answers with `<method>: this cell does not allow <grant>
+(FlowLink → 权限)`; nothing about the machine leaks first (not even the
+workspace names).
 
 | method | params | returns |
 |---|---|---|
 | `mail.deliver` | `{id?,from,from_name,subject,note,kind,payload}` | `{ok,id}` |
+| `ws.list` | — | `{ok,workspaces:[{ws,cwd,session,busy,active,open}]}` |
+| `ws.sessions` | `{cwd}` | `{ok,cwd,sessions:[{id,title,mtime,msgs,active,busy}]}` — newest first |
+| `ws.history` | `{cwd,id}` | `{ok,id,total,entries,archives}` — same entry shape as `session.history` |
 | `fs.ls` | `{path}` | `{path,items:[{name,dir,size}]}` |
 | `fs.read` | `{path}` | `{path,size,text}` (≤ 512 KiB, text only) |
 | `fs.stat` | `{path}` | `{path,dir,size}` |
+| `agent.send` | `{cwd,text,rid,session?}` | `{ok,ws,session}` — queues a turn (optionally in a named session) |
+| `agent.stop` | `{rid}` | `{ok}` |
+| `ws.watch` | `{cwd}` | `{ok,ws,session,busy,entries}` — subscribes to that workspace's `agent.event` stream |
+| `ws.unwatch` | `{cwd}` | `{ok}` |
 | `tw.new` | `{config}` | `{ok,id,text}` — creates a job, does not run it |
 | `tw.run` | `{id}` or `{config}` | `{ok,id,text}` — runs it, returns the report |
 
 `fs.*` is read-only and confined to the shared workspace: the canonical path
 must stay inside it, so `../` and symlinks cannot escape. `tw.*` runs on the
-peer with **its own** providers and keys; only the report travels back.
+peer with **its own** providers and keys; only the report travels back. A
+watched stream is one-way: `agent.event` frames arrive with `watch:true`, and
+there is no method a watcher can use to send anything (that needs
+`accept_workspace`, which is a different switch).
 
 ## 7. Commands
 
@@ -340,9 +399,10 @@ peer with **its own** providers and keys; only the report travels back.
 /link                     status: id, ports, pairing window, peers, inbox
 /link on | off            mount / unmount the service (persisted in links/links.json)
 /link peers               paired + discovered cells
-/link pair [TTL]          open a pairing window, print the code
-/link join CODE [IP[:PORT]]  pair with the cell that shows CODE
-/link cancel              close the pairing window
+/link pair [TTL]          open a pairing window, print YOUR code
+/link join CODE [IP[:PORT]]  type the other cell's code (also opens your window)
+/link approve CODE [CELL] approve a waiting request with the requester's code
+/link cancel              close the pairing window and drop pending requests
 /link share CELL [SID]    send a session's conversation to a paired cell
 /link send CELL TEXT...   send a short message
 /link inbox               list the mailbox
@@ -358,8 +418,10 @@ The same operations, JSON-shaped:
 * **Service** — `flowlink.status` (includes the peer list, so there is no
   separate `flowlink.peers`), `flowlink.settings` (alias `flowlink.prefs`),
   `flowlink.enable`, `flowlink.disable`, `flowlink.scan`, `flowlink.probe`.
-* **Pairing** — `flowlink.pair.begin`, `flowlink.pair.join`,
-  `flowlink.pair.cancel`, `flowlink.forget`, `flowlink.disconnect`.
+* **Pairing** — `flowlink.pair.begin` (show a code), `flowlink.pair.join`
+  (type theirs; answers `pending` until they approve), `flowlink.pair.approve`
+  (type the requester's code), `flowlink.pair.cancel`, `flowlink.forget`,
+  `flowlink.disconnect`.
 * **Transfers** — `flowlink.transfers`, `flowlink.transfer.read`,
   `flowlink.transfer.drop`, `flowlink.transfer.mark`. These are what
   `/link inbox` and `/link read` drive; the older `flowlink.inbox` /
@@ -368,7 +430,8 @@ The same operations, JSON-shaped:
   `flowlink.remote.ls`, `flowlink.remote.read`.
 * **Workspaces** — `flowlink.ws.remote`, `flowlink.ws.add`,
   `flowlink.ws.remove`, `flowlink.ws.open`, `flowlink.ws.send`,
-  `flowlink.ws.stop`.
+  `flowlink.ws.stop`, `flowlink.ws.sessions`, `flowlink.ws.history`.
+* **Monitor** — `flowlink.ws.watch`, `flowlink.ws.unwatch` (read-only stream).
 * **Escape hatch** — `flowlink.exec {line}` runs any `/link …` line and returns
   its text.
 
@@ -396,8 +459,18 @@ latter also carries `extra_targets`).
 | `discovery` | `47821` | first of the rendezvous UDP slots (`47821`..`47824`); all busy = `probe-only` |
 | `extra_targets` | `[]` | extra unicast discovery targets, one `ip[:port]` per entry (max 16; port defaults to `discovery`) |
 | `announce` | `true` | open the discovery sockets and send beacons/probes (off = no discovery sockets, so not discoverable and cannot probe) |
-| `accept` | `false` | accept `fs.*` / `tw.*` from paired peers |
+| `accept_workspace` | `false` | paired peers may list workspaces and sessions, read files and run turns here |
+| `accept_workflow` | `false` | paired peers may run `tw.*` jobs here |
+| `accept_watch` | `false` | paired peers may watch one workspace's live output (read-only) |
+| `access_workspace` | `false` | this cell may browse/use a peer's workspaces, sessions and remote turns |
+| `access_workflow` | `false` | this cell may ship `tw.*` jobs to a peer |
 | `workspace` | `""` | directory remote work lands in (empty = active workspace / cwd) |
+
+`accept` was one switch for *everything a peer may do here*. It still reads as
+the fallback for `accept_workspace` and `accept_workflow` until the file is
+rewritten (the first settings write pins the split), but the page and the CLI
+only use the five keys above. Toggling any of them does **not** remount the
+service — a grant change must not interrupt a remote turn.
 
 The older `config.json` keys (`link_enabled`, `link_name`, `link_port`,
 `link_discovery`, `link_announce`, `link_accept`, `link_workspace`) are migrated
@@ -414,6 +487,12 @@ Covered:
   beacons carry no payload.
 * **Wrong pairing code / impostor** — the handshake MAC and the CONFIRM frames
   fail without the code; no data frame is ever accepted.
+* **Knowing only one code** — phase 1 completes (the peer sees a request), but
+  the link key is sealed with a key that needs both codes, so the offer never
+  opens and no link is stored on either side.
+* **A watcher overreaching** — monitor mode is a one-way subscription: the
+  watcher only receives `agent.event` frames, and every sending method sits
+  behind `accept_workspace`, which is a different grant.
 * **Replay** — every frame carries a fresh 192-bit nonce; a replayed frame does
   not decrypt under a different session key, and each session has new keys.
 * **Stolen key file on a backup** — the link key is sealed with Argon2id over

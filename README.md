@@ -295,10 +295,11 @@ It is **opt-in and off by default**: while it is off nothing is constructed —
 no thread, no socket, no allocation.
 
 ```bash
-# CLI: mount it, then pair (one side shows a code, the other types it)
+# CLI: mount it, then pair — BOTH sides type the other's code
 /link on
 /link pair            # prints a 512-bit code (single use, 5 minutes)
-/link join CODE       # on the other cell — no address needed, discovery finds it
+/link join CODE       # on the other cell: types A's code, gets its own code back
+/link approve CODE    # back on the first cell: type B's code — now both are paired
 /link peers
 /link share <cell>    # send this session's conversation
 /link transfers       # list what the other side sent
@@ -307,8 +308,9 @@ no thread, no socket, no allocation.
 
 In the desktop app the whole feature lives on the **FlowLink** page (sidebar,
 right under Skills — `Ctrl+Shift+L`): *Scan Links* (discovery + pairing),
-*已配对* (paired devices and their workspaces), *传输列表* (transfers) and
-*设置*. **Settings → 互联** keeps only the service switch and the connected
+*已配对* (paired devices and their workspaces), *传输列表* (transfers),
+*权限* (workspace / workflow / watch, in both directions) and *设置*.
+**Settings → 互联** keeps only the service switch and the connected
 devices (where a link can be disconnected). The agent gets the same capability
 through the `fl` tool and through `tw`'s `cell` field (`tw operation=cells`
 lists the peers).
@@ -318,11 +320,13 @@ lists the peers).
 | discovery | JSON beacons every 5 s; a random UDP receive port plus an optional well-known listener (47821) and unicast keepalives to known peers — so two instances on one machine (Windows host + WSL cell, mirrored networking) still find each other |
 | transport | TCP preferred 47822, automatic random port when busy (the real port is advertised in the beacon), length-prefixed frames, XChaCha20-Poly1305 on every frame |
 | identity | `client_id` = 16 random bytes from libsodium (32 hex chars) |
-| pairing | 512-bit base62 code → Argon2id PSK + ephemeral X25519 handshake |
-| link key | 32 random bytes, sealed like the API-key vault, in `.cell/links/<client_id>/.key` |
+| pairing | **mutual**: each side shows a 512-bit base62 code, types the other's; the link key is sealed with a key derived from *both* codes, so neither side can finish alone |
+| link key | 32 random bytes, sealed like the API-key vault, in `.cell/links/<client_id>/.key`; it only exists after both codes have been exchanged |
+| sessions | a peer's workspaces are browsable per workspace → its sessions; a session opens as a tab whose turn runs there (model / tools / sandbox stay theirs) |
+| watch | monitor mode: a read-only subscription to one workspace's live output — no input, no settings |
 | transfers | one JSONL file per transfer in `.cell/links/<client_id>/`, indexed by `.cell/links/transmission.json` (time, bytes, sender, subject) |
 | identity | `.cell/links/identity.json` (`client_id` + display name) |
-| settings | `.cell/links/links.json` — service switch, name, ports, `announce`, `accept`, the paired links and the pinned FlowLink workspaces |
+| settings | `.cell/links/links.json` — service switch, name, ports, `announce`, the three `accept_*` grants (what peers may do here), the two `access_*` grants (what this cell may use), the paired links and the pinned FlowLink workspaces |
 | disconnect | deleting `<client_id>/.key` (the record and every received file stay; re-pair to use it again) |
 
 Full protocol, threat model and every command: [`docs/flowlink.md`](docs/flowlink.md).

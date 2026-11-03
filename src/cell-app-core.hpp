@@ -471,6 +471,20 @@ namespace app
         // event/command surface the UI talks to.
         bool fl_on() { return cell::flowlink::running(); }
 
+        // The 权限 page has two sides: what this cell serves (accept_*) and what
+        // it may use (access_*). Using a peer's workspace or workflow is a
+        // separate, opt-in decision — the command surface checks it here so no
+        // frontend has to remember.
+        bool fl_can(const char *key, std::string &err)
+        {
+            if (cell::flowlink::settings().value(key, false))
+                return true;
+            err = std::string(key) == "access_workflow"
+                      ? "workflow access is off — enable it in FlowLink → 权限"
+                      : "workspace access is off — enable it in FlowLink → 权限";
+            return false;
+        }
+
         // Everything the management page draws: the running service (if any),
         // the settings, the paired links, the pinned workspaces and the
         // transfer index — all of it readable while the service is off.
@@ -546,7 +560,21 @@ namespace app
             return out;
         }
 
-        void fl_publish(const nlohmann::json &ev) { bus.post({{"t", "flowlink"}, {"ev", ev}}); }
+        void fl_publish(const nlohmann::json &ev)
+        {
+            // a peer that went away is no longer watching anything here
+            if (ev.value("type", "") == "offline")
+            {
+                const std::string gone = ev.value("client_id", "");
+                std::lock_guard<std::mutex> lk(rt_mx);
+                for (auto it = fl_watched.begin(); it != fl_watched.end();)
+                {
+                    it->second.erase(gone);
+                    it = it->second.empty() ? fl_watched.erase(it) : std::next(it);
+                }
+            }
+            bus.post({{"t", "flowlink"}, {"ev", ev}});
+        }
 
         // ---- remote turn relay --------------------------------------------
         // A FlowLink workspace runs its turns on the peer. The peer's shell
@@ -560,6 +588,10 @@ namespace app
         };
         std::mutex rt_mx;
         std::map<std::string, remote_turn> remote_turns; // rid -> where to send
+        // Monitor mode: a peer may subscribe to one workspace's event stream
+        // (ws -> peer -> since). It never gets a channel to send anything —
+        // agent.send is behind the workspace gate, this is behind its own.
+        std::map<std::string, std::map<std::string, long long>> fl_watched;
         int fl_sink = 0;
 
         void fl_relay_start()
@@ -579,6 +611,7 @@ namespace app
                 if (ws.empty())
                     return;
                 std::string rid, peer;
+                std::vector<std::string> watchers;
                 {
                     std::lock_guard<std::mutex> lk(rt_mx);
                     const auto it = std::ranges::find_if(remote_turns, [&](const auto &kv)
@@ -588,12 +621,18 @@ namespace app
                         rid = it->first;
                         peer = it->second.peer;
                     }
+                    if (const auto w = fl_watched.find(ws); w != fl_watched.end())
+                        for (const auto &[id, since] : w->second)
+                            watchers.push_back(id);
                 }
-                if (rid.empty())
-                    return;
                 auto svc = cell::flowlink::service_instance();
-                if (svc)
-                    svc->notify(peer, "agent.event", {{"rid", rid}, {"ev", ev}}); });
+                if (!svc)
+                    return;
+                if (!rid.empty())
+                    svc->notify(peer, "agent.event", {{"rid", rid}, {"ev", ev}});
+                // monitor mode gets the same stream, marked as read-only
+                for (const auto &watcher : watchers)
+                    svc->notify(watcher, "agent.event", {{"watch", true}, {"ws", ws}, {"ev", ev}}); });
         }
         void fl_relay_stop()
         {
@@ -625,7 +664,9 @@ namespace app
             o.port = (std::uint16_t)std::clamp(set.value("port", 47822), 0, 65535);
             o.discovery = (std::uint16_t)std::clamp(set.value("discovery", 47821), 0, 65535);
             o.announce = set.value("announce", true);
-            o.accept_remote = set.value("accept", false);
+            // the console is the CLI's remote channel: either gate may open it,
+            // the per-method checks in fl_serve decide what it can actually do
+            o.accept_remote = set.value("accept_workspace", false) || set.value("accept_workflow", false);
             if (set.contains("extra_targets") && set["extra_targets"].is_array())
                 for (const auto &e : set["extra_targets"])
                     if (e.is_string() && !e.get_ref<const std::string &>().empty())
@@ -687,22 +728,133 @@ namespace app
         // ---- FlowLink: what this cell serves to a paired peer --------------
         // Runs on a FlowLink handler thread (never the UI/command thread), so it
         // takes cmd_mx only to read a preference and lets go before any work.
+        // Three separate grants, all default closed (权限 page):
+        //   accept_workspace — workspace list, transcripts, files, remote turns
+        //   accept_workflow  — teamwork jobs
+        //   accept_watch     — live view of one workspace's event stream
         nlohmann::json fl_serve(const std::string &method_in, const nlohmann::json &params, std::string &err)
         {
             using namespace std::string_view_literals;
             const std::string_view method = method_in;
-            const bool accept = cell::flowlink::settings().value("accept", false);
-            // the device list of this cell: harmless, and the pairing page
-            // needs it before the user has granted anything else
-            if (method == "ws.list"sv)
-                return {{"ok", true}, {"workspaces", known_workspaces()}};
-            if (!accept)
+            const nlohmann::json set = cell::flowlink::settings();
+            const bool acc_ws = set.value("accept_workspace", false);
+            const bool acc_wf = set.value("accept_workflow", false);
+            const bool acc_watch = set.value("accept_watch", false);
+            auto denied = [&err](const char *what)
             {
-                err = "this cell does not accept remote work (FlowLink settings)";
+                err = std::string("this cell does not allow ") + what + " (FlowLink → 权限)";
                 return nlohmann::json{};
+            };
+            // the workspace list is behind the workspace gate: a peer that may
+            // not see the workspaces must not see their names either
+            if (method == "ws.list"sv)
+                return acc_ws ? nlohmann::json{{"ok", true}, {"workspaces", known_workspaces()}}
+                              : denied("workspace access");
+            if (method == "ws.sessions"sv)
+            {
+                if (!acc_ws)
+                    return denied("workspace access");
+                const std::string cwd = cell::text::trim(params.value("cwd", ""));
+                if (cwd.empty())
+                {
+                    err = "cwd is required";
+                    return nlohmann::json{};
+                }
+                nlohmann::json list = nlohmann::json::array();
+                // compare workspace keys, not path strings: the stored cwd and the
+                // one a peer passes may differ in separators or case
+                const std::string key = cell::cwd_id_of(cwd);
+                for (const auto &s : sessions_list(400))
+                    if (s.value("ws", "") == key)
+                        list.push_back({{"id", s.value("id", "")},
+                                        {"title", s.value("title", "")},
+                                        {"mtime", s.value("mtime", 0LL)},
+                                        {"msgs", s.value("msgs", 0LL)},
+                                        {"active", s.value("active", false)},
+                                        {"busy", s.value("busy", false)}});
+                return {{"ok", true}, {"cwd", cwd}, {"sessions", list}};
+            }
+            if (method == "ws.history"sv)
+            {
+                if (!acc_ws)
+                    return denied("workspace access");
+                const std::string cwd = cell::text::trim(params.value("cwd", ""));
+                const std::string id = params.value("id", "");
+                if (cwd.empty() || !cell::is_valid_session_id(id))
+                {
+                    err = "ws.history needs cwd and a session id";
+                    return nlohmann::json{};
+                }
+                if (cell::session_prefix(id) != cell::cwd_id_of(cwd))
+                {
+                    err = "that session does not belong to this workspace";
+                    return nlohmann::json{};
+                }
+                cell::async_io::flush(); // the file must reflect queued writes
+                nlohmann::json messages = nlohmann::json::array(), archives = nlohmann::json::array();
+                read_session_files(id, messages, archives);
+                return {{"ok", true}, {"id", id}, {"total", messages.size()},
+                        {"entries", history_entries(messages)}, {"archives", std::move(archives)}};
+            }
+            if (method == "ws.watch"sv || method == "ws.unwatch"sv)
+            {
+                if (!acc_watch)
+                    return denied("watching its sessions");
+                const std::string cwd = cell::text::trim(params.value("cwd", ""));
+                const std::string peer = params.value("_from", "");
+                if (cwd.empty() || peer.empty())
+                {
+                    err = "a watch needs a workspace directory";
+                    return nlohmann::json{};
+                }
+                const std::string key = cell::cwd_id_of(cwd);
+                if (method == "ws.unwatch"sv)
+                {
+                    std::lock_guard<std::mutex> lk(rt_mx);
+                    if (auto it = fl_watched.find(key); it != fl_watched.end())
+                    {
+                        it->second.erase(peer);
+                        if (it->second.empty())
+                            fl_watched.erase(it);
+                    }
+                    return {{"ok", true}};
+                }
+                {
+                    std::lock_guard<std::mutex> lk(rt_mx);
+                    fl_watched[key][peer] = (long long)std::time(nullptr);
+                }
+                // what a watcher sees before the next event: the active session
+                // and the tail of its transcript
+                std::string sid, title;
+                bool busy = false;
+                if (workspace_ctx *c = find_ws(key))
+                {
+                    std::lock_guard<std::mutex> hlk(c->hmx);
+                    // reading the live transcript while a turn mutates it is a
+                    // race; the file on disk is the snapshot for a busy workspace
+                    if (!c->busy.load())
+                        sid = c->h.now().id();
+                    busy = c->busy.load();
+                }
+                if (sid.empty())
+                    sid = cell::chat::latest_session_id_for_cwd(key);
+                nlohmann::json entries = nlohmann::json::array();
+                if (cell::is_valid_session_id(sid))
+                {
+                    nlohmann::json messages = nlohmann::json::array(), archives = nlohmann::json::array();
+                    read_session_files(sid, messages, archives);
+                    entries = history_entries(messages);
+                    constexpr std::size_t kTail = 40;
+                    if (entries.size() > kTail)
+                        entries.erase(entries.begin(), entries.end() - kTail);
+                }
+                return {{"ok", true}, {"ws", key}, {"cwd", cwd}, {"session", sid},
+                        {"busy", busy}, {"entries", std::move(entries)}};
             }
             if (method == "fs.ls"sv || method == "fs.read"sv || method == "fs.stat"sv)
             {
+                if (!acc_ws)
+                    return denied("workspace access");
                 std::string why;
                 workspace_ctx *ctx = fl_pick_workspace(why);
                 if (!ctx)
@@ -713,11 +865,18 @@ namespace app
                 return cell::flowlink::serve_files(ctx->cwd, method_in, params, err);
             }
             if (method == "tw.new"sv || method == "tw.run"sv)
+            {
+                if (!acc_wf)
+                    return denied("workflow jobs");
                 return fl_serve_tw(method_in, params, err);
-            if (method == "agent.send"sv)
-                return fl_serve_agent(params, err);
-            if (method == "agent.stop"sv)
-                return fl_serve_agent_stop(params, err);
+            }
+            if (method == "agent.send"sv || method == "agent.stop"sv)
+            {
+                if (!acc_ws)
+                    return denied("workspace access");
+                return method == "agent.send"sv ? fl_serve_agent(params, err)
+                                                : fl_serve_agent_stop(params, err);
+            }
             err = "unknown method: " + method_in;
             return nlohmann::json{};
         }
@@ -731,6 +890,7 @@ namespace app
             const std::string text = params.value("text", "");
             const std::string rid = params.value("rid", "");
             const std::string peer = params.value("_from", "");
+            const std::string want = params.value("session", "");
             if (cwd.empty())
             {
                 err = "a remote turn needs a workspace directory";
@@ -755,6 +915,21 @@ namespace app
                 {
                     err = why.empty() ? "could not open the workspace" : why;
                     return nlohmann::json{};
+                }
+                // a tab pinned to one session: switch first, exactly like
+                // session.select does (only when no turn is running)
+                if (cell::is_valid_session_id(want) && cell::session_prefix(want) == ctx->cwd_key)
+                {
+                    if (ctx->busy.load())
+                        return {{"ok", false}, {"error", "a turn is running in that workspace - try again"}};
+                    if (ctx->h.now().id() != want)
+                    {
+                        ctx->h.now().unload();
+                        cell::async_io::flush();
+                        ctx->h.use(want);
+                        ctx->eng->ensure_prompt();
+                        cfg.active_sessions[ctx->cwd_key] = want;
+                    }
                 }
                 if (!cfg.current_provider_entry())
                 {
@@ -886,6 +1061,9 @@ namespace app
         {
             if (!fl_on())
                 return {{"ok", false}, {"text", "FlowLink is off — enable it on the FlowLink page"}};
+            std::string gate;
+            if (!fl_can("access_workflow", gate))
+                return {{"ok", false}, {"text", gate}};
             const std::string id = cell::flowlink::resolve_cell(cell_ref);
             if (id.empty())
                 return {{"ok", false}, {"text", std::format("unknown cell '{}' — tw operation=cells lists them", cell_ref)}};
@@ -925,14 +1103,17 @@ namespace app
                 "  ls — list a directory of a paired cell's workspace (requires cell; optional path).\n"
                 "  read_file — read a text file from a paired cell's workspace (requires cell, path).\n"
                 "  status — this cell's FlowLink identity, ports and peers.\n"
-                "  pair — join a pairing window with the code the other user read out (requires code; optional addr).\n"
+                "  pair — type the code the other user read out (requires code; optional addr). Pairing is\n"
+                "         mutual: this only sends the request and returns the code THEY must type here.\n"
+                "  approve — finish a request waiting here with that cell's code (requires code; optional cell).\n"
                 "Rules:\n"
-                "  1. Only paired cells can be addressed; the user pairs them (this tool can join a pairing window when the user hands over the code).\n"
-                "  2. share/send/pair move data off this machine and are confirmed with the user first.\n"
-                "  3. A remote cell only answers when its owner enabled remote access; ls/read_file are read-only and confined to its shared workspace.\n"
+                "  1. Only paired cells can be addressed; the user pairs them (this tool can start or finish a pairing when the user hands over the code).\n"
+                "  2. share/send/pair/approve move data off this machine and are confirmed with the user first.\n"
+                "  3. A remote cell only answers for the grants its owner switched on (workspace / workflow / watch);\n"
+                "     ls/read_file are read-only and confined to its shared workspace.\n"
                 "  4. Remote teamwork is started through the tw tool's 'cell' field, not here.";
             t.properties = {
-                {"operation", {{"type", "string"}, {"description", "cells | transfers | read | share | send | ls | read_file | status | pair"}}},
+                {"operation", {{"type", "string"}, {"description", "cells | transfers | read | share | send | ls | read_file | status | pair | approve"}}},
                 {"cell", {{"type", "string"}, {"description", "target cell: client_id or display name"}}},
                 {"id", {{"type", "string"}, {"description", "read: transfer id"}}},
                 {"session", {{"type", "string"}, {"description", "share: session id (default: the current session)"}}},
@@ -940,7 +1121,7 @@ namespace app
                 {"note", {{"type", "string"}, {"description", "share: a note to prepend to the shared conversation"}}},
                 {"body", {{"type", "string"}, {"description", "send: message text"}}},
                 {"path", {{"type", "string"}, {"description", "ls/read_file: path inside the remote workspace (default .)"}}},
-                {"code", {{"type", "string"}, {"description", "pair: the 512-bit pairing code the other user shows"}}},
+                {"code", {{"type", "string"}, {"description", "pair/approve: the 512-bit pairing code the other user shows"}}},
                 {"addr", {{"type", "string"}, {"description", "pair: optional ip[:port] of the other cell"}}}};
             t.required = {"operation"};
             t.policy = cell::tools::Policy::Allow;
@@ -1171,10 +1352,39 @@ namespace app
                             out.text = err;
                             return false;
                         }
+                        if (r.value("pending", false))
+                        {
+                            // 双向配对：这一步只是「输入了对方的码」，对方还要输入本机的
+                            out.text = std::format(
+                                "pairing request sent to {} ({}) — tell them your code: {}",
+                                r.value("name", ""), r.value("client_id", ""), r.value("code", ""));
+                            return true;
+                        }
                         out.text = std::format("paired with {} ({})", r.value("name", ""), r.value("client_id", ""));
                         return true;
                     }
-                    out.text = "operation must be cells, transfers, read, share, send, ls, read_file, status, or pair";
+                    if (op == "approve")
+                    {
+                        const std::string code = j.value("code", "");
+                        if (code.empty())
+                        {
+                            out.text = "approve requires 'code' (the code of the cell that asked to pair)";
+                            return false;
+                        }
+                        if (!gate("finishing a pairing request"))
+                            return false;
+                        std::string err;
+                        nlohmann::json r = svc->pair_approve(code, j.value("cell", ""), err);
+                        if (!err.empty())
+                        {
+                            out.text = err;
+                            return false;
+                        }
+                        out.text = std::format("paired with {} ({}) — both codes exchanged",
+                                               r.value("name", ""), r.value("client_id", ""));
+                        return true;
+                    }
+                    out.text = "operation must be cells, transfers, read, share, send, ls, read_file, status, pair, or approve";
                     return false;
                 }
                 catch (const std::exception &e)
@@ -3208,13 +3418,36 @@ namespace app
                 {
                     nlohmann::json patch = nlohmann::json::object();
                     for (const char *k : {"name", "port", "discovery", "announce", "accept", "workspace",
-                                          "extra_targets"})
+                                          "extra_targets", "accept_workspace", "accept_workflow",
+                                          "accept_watch", "access_workspace", "access_workflow"})
                         if (args.contains(k) && !args[k].is_null())
                             patch[k] = args[k];
                     if (name == "flowlink.enable")
                         patch["enabled"] = true;
                     if (!patch.empty() && !cell::flowlink::patch_settings(patch))
                         return ok_error("could not write links.json");
+                    // 权限开关只改变「谁可以做什么」，不碰 socket：重建服务会断掉
+                    // 正在跑的远程回合，也会让已配对设备重连一次
+                    bool perm_only = !patch.empty();
+                    for (auto it = patch.begin(); it != patch.end(); ++it)
+                    {
+                        const std::string &k = it.key();
+                        if (k != "accept_workspace" && k != "accept_workflow" && k != "accept_watch" &&
+                            k != "access_workspace" && k != "access_workflow")
+                            perm_only = false;
+                    }
+                    // 撤销工作区访问时顺手把对端缓存的列表清空：对端不该在
+                    // 授权被收回后还看得见这台机器的目录名
+                    if (patch.contains("accept_workspace"))
+                    {
+                        auto svc0 = cell::flowlink::service_instance();
+                        if (svc0)
+                            svc0->publish_workspaces(patch["accept_workspace"].get<bool>()
+                                                         ? known_workspaces()
+                                                         : nlohmann::json::array());
+                    }
+                    if (perm_only)
+                        return ok_with(fl_status());
                     const bool want = cell::flowlink::settings().value("enabled", false);
                     if (!want)
                     {
@@ -3300,6 +3533,7 @@ namespace app
                     return st;
                 }
                 if (name == "flowlink.pair.begin" || name == "flowlink.pair.join" ||
+                    name == "flowlink.pair.approve" ||
                     name == "flowlink.pair.cancel" || name == "flowlink.forget" ||
                     name == "flowlink.disconnect" || name == "flowlink.share" || name == "flowlink.send")
                 {
@@ -3342,7 +3576,27 @@ namespace app
                             if (!err.empty())
                                 return ok_error(err);
                             r["ok"] = true;
+                            // mutual pairing: the link exists only after the other
+                            // side types OUR code — `pending` says so
+                            if (r.value("pending", false))
+                            {
+                                nlohmann::json st = fl_status();
+                                st["pending"] = r;
+                                return ok_with(st);
+                            }
                             return ok_with(r);
+                        }
+                        // the other half: we typed the requester's code
+                        if (name == "flowlink.pair.approve")
+                        {
+                            std::string err;
+                            nlohmann::json r = svc->pair_approve(args.value("code", ""),
+                                                                 args.value("client_id", ""), err);
+                            if (!err.empty())
+                                return ok_error(err);
+                            nlohmann::json st = fl_status();
+                            st["paired"] = r;
+                            return ok_with(st);
                         }
                         const std::string id = cell::flowlink::resolve_cell(args.value("client_id", ""));
                         if (name == "flowlink.disconnect" || name == "flowlink.forget")
@@ -3439,6 +3693,19 @@ namespace app
                 // A pinned remote workspace behaves like a local one, except the
                 // turn runs on the peer: the sidebar entry, the tab and the
                 // transcript are local, the work is not.
+                // Every command below reads the peer's workspaces, its sessions
+                // or its transcripts: none of them may run while workspace access
+                // is off on this side (权限 page).
+                if (name == "flowlink.ws.remote" || name == "flowlink.ws.sessions" ||
+                    name == "flowlink.ws.history" || name == "flowlink.ws.open" ||
+                    name == "flowlink.ws.add" || name == "flowlink.ws.remove" ||
+                    name == "flowlink.ws.send" || name == "flowlink.ws.stop" ||
+                    name == "flowlink.ws.watch" || name == "flowlink.ws.unwatch")
+                {
+                    std::string gerr;
+                    if (!fl_can("access_workspace", gerr))
+                        return ok_error(gerr);
+                }
                 if (name == "flowlink.ws.remote")
                 {
                     if (!fl_on())
@@ -3464,6 +3731,47 @@ namespace app
                     nlohmann::json out = ok();
                     out["workspaces"] = cached;
                     return out;
+                }
+                if (name == "flowlink.ws.sessions" || name == "flowlink.ws.history")
+                {
+                    if (!fl_on())
+                        return ok_error("FlowLink is off — enable it first");
+                    auto svc = cell::flowlink::service_instance();
+                    const std::string peer = cell::flowlink::resolve_cell(args.value("cell", ""));
+                    const std::string cwd = args.value("cwd", "");
+                    if (!svc || peer.empty())
+                        return ok_error("unknown cell");
+                    if (cwd.empty())
+                        return ok_error("cwd is required");
+                    std::string err;
+                    nlohmann::json p{{"cwd", cwd}};
+                    if (name == "flowlink.ws.history")
+                    {
+                        p["id"] = args.value("session", args.value("id", ""));
+                        if (!cell::is_valid_session_id(p.value("id", "")))
+                            return ok_error("a valid session id is required");
+                    }
+                    nlohmann::json r = svc->call(peer, name == "flowlink.ws.sessions" ? "ws.sessions" : "ws.history",
+                                                 p, 20000, err);
+                    if (!err.empty())
+                        return ok_error(err);
+                    return ok_with(r);
+                }
+                if (name == "flowlink.ws.watch" || name == "flowlink.ws.unwatch")
+                {
+                    if (!fl_on())
+                        return ok_error("FlowLink is off — enable it first");
+                    auto svc = cell::flowlink::service_instance();
+                    const std::string peer = cell::flowlink::resolve_cell(args.value("cell", ""));
+                    const std::string cwd = args.value("cwd", "");
+                    if (!svc || peer.empty() || cwd.empty())
+                        return ok_error("cell and cwd are required");
+                    std::string err;
+                    nlohmann::json r = svc->call(peer, name == "flowlink.ws.watch" ? "ws.watch" : "ws.unwatch",
+                                                 {{"cwd", cwd}}, 15000, err);
+                    if (!err.empty())
+                        return ok_error(err);
+                    return ok_with(r);
                 }
                 if (name == "flowlink.ws.add" || name == "flowlink.ws.remove")
                 {
@@ -3532,7 +3840,8 @@ namespace app
                     nlohmann::json r = svc->call(peer, "agent.send",
                                                  {{"cwd", args.value("cwd", "")},
                                                   {"text", args.value("text", "")},
-                                                  {"rid", rid}},
+                                                  {"rid", rid},
+                                                  {"session", args.value("session", "")}},
                                                  20000, err);
                     if (!err.empty())
                         return ok_error(err);
