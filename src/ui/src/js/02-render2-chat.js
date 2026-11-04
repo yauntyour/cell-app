@@ -738,6 +738,11 @@ function renderChat(ws) {
   else if (!t.busy && t._turnSnap) { try { ChatTurns.end({ ws: ws }); } catch (e) {} }
 
   let items = t.msgs.slice();
+  // 空正文不占一行：没有文本的 assistant / reason 消息只会渲染成「只有头像、
+  // 没有内容」的空行。历史转录、对端回放、空增量都可能留下这种条目——它紧挨
+  // 着等待指示器时，看上去就是两个 cell 图标并排、什么也没显示。
+  items = items.filter(m => !((m.role === 'assistant' || m.role === 'reason')
+    && !String(m.text == null ? '' : m.text).trim()));
   const isEmpty = !items.length && !t.busy;
   restickOnNewUser(t);
 
@@ -1273,21 +1278,32 @@ function rtOf(t) {
   return t._rt;
 }
 // 新一轮请求：只清本轮计时，保留校准系数与缓存命中率
-function rtReset(t) { const rt = rtOf(t); if (rt) { rt.reqAt = 0; rt.firstAt = 0; rt.chars = 0; } }
+function rtReset(t) { const rt = rtOf(t); if (rt) { rt.reqAt = 0; rt.firstAt = 0; rt.chars = 0; rt.srvWait = 0; } }
 // 本轮可能发出请求的时刻（回合开始 / 工具跑完 / 上一轮结束）：无 progress 时的兜底
 function rtMark(ws) { const rt = rtOf(ensureTab(ws)); if (rt) rt.mark = Date.now(); }
 function rtBegin(ws) { rtReset(ensureTab(ws)); rtMark(ws); }
 function rtProgress(ws, ms) {
   const rt = rtOf(ensureTab(ws));
   if (!rt || rt.firstAt) return;
-  rt.reqAt = Date.now() - Math.max(0, Number(ms) || 0);
+  rt.srvWait = Math.max(0, Number(ms) || 0); // 引擎自报的「已等首字」毫秒数
+  rt.reqAt = Date.now() - rt.srvWait;
 }
 function rtDelta(ws, role, n) {
   if (role === 'summary') return;   // 上下文摘要不是模型输出
   const rt = rtOf(ensureTab(ws));
   if (!rt) return;
   const now = Date.now();
-  if (!rt.firstAt) { rt.firstAt = now; if (!rt.reqAt) rt.reqAt = rt.mark || now; }
+  if (!rt.firstAt) {
+    rt.firstAt = now;
+    if (!rt.reqAt) rt.reqAt = rt.mark || now;
+    // 引擎的心跳说「才等了 0.4s」，客户端却量到 4.2s：差值就是传输 + 排队
+    // 的时间（SSE 被缓冲、主线程被上一次渲染占住…）。只在明显时记一条，
+    // 让「感觉慢」变成一个能定位的数字。
+    const gap = now - rt.reqAt - (rt.srvWait || 0);
+    if (rt.srvWait > 0 && gap > 400)
+      console.warn('[latency] 首字到达比引擎自报晚 ' + Math.round(gap) + 'ms'
+        + '（引擎 ' + Math.round(rt.srvWait) + 'ms / 客户端 ' + (now - rt.reqAt) + 'ms）');
+  }
   rt.chars += Math.max(0, n || 0);
 }
 function rtRound(ws, e) {

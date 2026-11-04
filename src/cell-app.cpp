@@ -1259,6 +1259,9 @@ namespace app
         // live notice delivery: idle sessions see cross-session notices the
         // moment they land (peek-only, ~0.7s cadence; see app_core)
         core.start_notice_watcher();
+        // keep paired links warm: a peer whose address changed (DHCP) is
+        // re-discovered and re-dialed instead of reading "offline" forever
+        core.start_fl_probe();
         // background exec tasks (exec background=true) push their list to the
         // page whenever one starts or finishes
         core.start_task_watcher();

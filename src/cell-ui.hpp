@@ -4945,12 +4945,17 @@ async function compactRemote(t) {
     return;
   }
   toast('已让对端压缩上下文', 'ok');
-  // 压缩在对端的 worker 里跑，几百毫秒到几秒；之后把重写后的转录取回来
-  setTimeout(() => {
+  // 压缩在对端的 worker 里跑，几百毫秒到几秒；之后把重写后的转录取回来。
+  // 压缩期间页签是忙态（忙态下不重拉，否则会把正在流的正文冲掉），所以等它
+  // 空下来再取，最多等六轮。
+  let tries = 0;
+  const pull = () => {
     if (S.tabs.get(t.ws) !== t) return;
+    if (t.busy && ++tries < 6) { setTimeout(pull, 2500); return; }
     const sid = (typeof flRemoteSessionId === 'function') ? flRemoteSessionId(t) : '';
     if (sid) flLoadRemoteHistory(t.ws, t.remote.cell, t.remote.cwd, sid);
-  }, 2500);
+  };
+  setTimeout(pull, 2500);
 }
 function resumeTurn(t) {
   const ws = (t && t.ws) || S.active;
@@ -5123,6 +5128,12 @@ function markChat(ws) {
   schedule('tabbar', renderTabbar);
   schedule('foot', renderFoot); // 品牌标识的运行态（忙碌 ⇄ 静止）随回合切换
   syncLiveTick();               // 有工作区在跑就开始补刷侧栏数字 / 用量
+}
+/* 流式增量只重画消息流本身：侧栏条数 / 页签忙闲 / 品牌运行态都由
+   turn_begin / turn_end 决定，每个 delta 重画一遍纯属白烧主线程
+   （token 一多就把帧时间耗在跟正文无关的 DOM 上，看起来就是「卡、慢」）。 */
+function markStream(ws) {
+  schedule('chat:' + ws, () => renderChat(ws));
 }
 
 /* ---------- 运行中的「活数据」补刷 ----------------------------------
@@ -5394,7 +5405,7 @@ function onStream(ws, role, d) {
   }
   streamAppend(ws, msg, d || '');
   if (window.RT) RT.delta(ws, role, (d || '').length);  // 运行时指标：首个 token 时刻 / 字符数
-  markChat(ws);
+  markStream(ws);
 }
 function streamAppend(ws, msg, d) {
   if (!d) return;
@@ -7413,6 +7424,11 @@ function renderChat(ws) {
   else if (!t.busy && t._turnSnap) { try { ChatTurns.end({ ws: ws }); } catch (e) {} }
 
   let items = t.msgs.slice();
+  // 空正文不占一行：没有文本的 assistant / reason 消息只会渲染成「只有头像、
+  // 没有内容」的空行。历史转录、对端回放、空增量都可能留下这种条目——它紧挨
+  // 着等待指示器时，看上去就是两个 cell 图标并排、什么也没显示。
+  items = items.filter(m => !((m.role === 'assistant' || m.role === 'reason')
+    && !String(m.text == null ? '' : m.text).trim()));
   const isEmpty = !items.length && !t.busy;
   restickOnNewUser(t);
 
@@ -7948,21 +7964,32 @@ function rtOf(t) {
   return t._rt;
 }
 // 新一轮请求：只清本轮计时，保留校准系数与缓存命中率
-function rtReset(t) { const rt = rtOf(t); if (rt) { rt.reqAt = 0; rt.firstAt = 0; rt.chars = 0; } }
+function rtReset(t) { const rt = rtOf(t); if (rt) { rt.reqAt = 0; rt.firstAt = 0; rt.chars = 0; rt.srvWait = 0; } }
 // 本轮可能发出请求的时刻（回合开始 / 工具跑完 / 上一轮结束）：无 progress 时的兜底
 function rtMark(ws) { const rt = rtOf(ensureTab(ws)); if (rt) rt.mark = Date.now(); }
 function rtBegin(ws) { rtReset(ensureTab(ws)); rtMark(ws); }
 function rtProgress(ws, ms) {
   const rt = rtOf(ensureTab(ws));
   if (!rt || rt.firstAt) return;
-  rt.reqAt = Date.now() - Math.max(0, Number(ms) || 0);
+  rt.srvWait = Math.max(0, Number(ms) || 0); // 引擎自报的「已等首字」毫秒数
+  rt.reqAt = Date.now() - rt.srvWait;
 }
 function rtDelta(ws, role, n) {
   if (role === 'summary') return;   // 上下文摘要不是模型输出
   const rt = rtOf(ensureTab(ws));
   if (!rt) return;
   const now = Date.now();
-  if (!rt.firstAt) { rt.firstAt = now; if (!rt.reqAt) rt.reqAt = rt.mark || now; }
+  if (!rt.firstAt) {
+    rt.firstAt = now;
+    if (!rt.reqAt) rt.reqAt = rt.mark || now;
+    // 引擎的心跳说「才等了 0.4s」，客户端却量到 4.2s：差值就是传输 + 排队
+    // 的时间（SSE 被缓冲、主线程被上一次渲染占住…）。只在明显时记一条，
+    // 让「感觉慢」变成一个能定位的数字。
+    const gap = now - rt.reqAt - (rt.srvWait || 0);
+    if (rt.srvWait > 0 && gap > 400)
+      console.warn('[latency] 首字到达比引擎自报晚 ' + Math.round(gap) + 'ms'
+        + '（引擎 ' + Math.round(rt.srvWait) + 'ms / 客户端 ' + (now - rt.reqAt) + 'ms）');
+  }
   rt.chars += Math.max(0, n || 0);
 }
 function rtRound(ws, e) {
@@ -21968,8 +21995,12 @@ function flDevices() {
       name: p.name || '',
       os: p.os || '', tz: p.tz || '', lang: p.lang || '',
       addr: p.addr || '', port: p.port || 0,
+      // 对端发布的主机名（cell-xxxx.local）：DHCP 换地址后仍然能解析的那个句柄
+      host: p.host || '',
       paired: !!p.trusted || !!p.paired,
       online: !!p.online,
+      // present = mDNS 还看得见它（只是还没连上）—— 三态里「重连中」的依据
+      present: !!(p.present || p.discovered),
       pairing: !!p.pairing,
       discovered: !!p.discovered,
       last_seen: p.last_seen || 0,
@@ -21983,6 +22014,17 @@ function flDevices() {
   }
   return out;
 }
+
+/* 对端的三态：
+     online —— 有一条已握手的会话
+     retry  —— mDNS 还看得见它，但还没连上；探活线程每 15s 拨一次
+     off    —— 发现不到；只有慢车道每 60s 拿记住的地址试一次 */
+function flPeerState(p) {
+  if (!p) return 'off';
+  if (p.online) return 'online';
+  return p.present ? 'retry' : 'off';
+}
+const FL_PEER_LABEL = { online: '在线', retry: '重连中', off: '离线' };
 
 function flMerge(out) {
   if (!out || typeof out !== 'object') return;
@@ -22629,19 +22671,25 @@ function flPaintLinks(main) {
     const head = el('div', 'fl-card-head');
     head.appendChild(el('span', 'fl-card-title', d.name || d.client_id.slice(0, 8)));
     head.appendChild(el('span', 'grow'));
-    head.appendChild(flPill(d.online ? '在线' : '离线', d.online ? 'ok' : ''));
+    const pstate = flPeerState(d);
+    head.appendChild(flPill(FL_PEER_LABEL[pstate], pstate === 'online' ? 'ok' : pstate === 'retry' ? 'warn' : ''));
     head.appendChild(flPill(d.os || '未知系统'));
     head.onclick = () => { FL.sel = d.client_id; flPaint(); flLoadRemote(d.client_id); };
     card.appendChild(head);
 
     const meta = el('div', 'fl-dev-meta');
-    meta.textContent = [d.tz || '本地时区', d.lang || '—', d.addr ? d.addr + (d.port ? ':' + d.port : '') : '地址未知']
-      .join(' · ');
+    const bits = [d.tz || '本地时区', d.lang || '—',
+      d.addr ? d.addr + (d.port ? ':' + d.port : '') : '地址未知'];
+    // 在线时 last_seen 是最后一次心跳（~10s），离线时是最后一次真正联系上
+    if (d.last_seen) bits.push('最后联系 ' + relTime(d.last_seen));
+    meta.textContent = bits.join(' · ');
     card.appendChild(meta);
     card.appendChild(el('div', 'fl-dev-id', d.client_id));
 
     const acts = el('div', 'fl-row');
     acts.appendChild(flBtn('远程工作区', 'folder', () => { FL.sel = d.client_id; flLoadRemote(d.client_id); }, 'ghost'));
+    // 发现不到（跨网段 / VPN / DHCP 换了地址）时，地址只能手填
+    acts.appendChild(flBtn('地址', 'link', () => flEditPeerAddr(d), 'ghost'));
     acts.appendChild(flBtn('断开连接', 'x', () => flDisconnect(d), 'ghost'));
     acts.appendChild(flBtn('移除', 'trash', () => flForget(d), 'ghost'));
     card.appendChild(acts);
@@ -22678,6 +22726,43 @@ function flPaintLinks(main) {
   }
   body.appendChild(card);
   main.appendChild(body);
+}
+
+/* 手填对端地址：跨网段 / VPN / DHCP 换了地址又发现不到时的最后一招。
+   写进配对记录（身份仍是 link key，地址只是拨号提示），立刻拨一次并回报结果。 */
+function flEditPeerAddr(d) {
+  if (!d) return;
+  const name = d.name || d.client_id.slice(0, 8);
+  const box = el('div', 'fl-addr-edit');
+  box.appendChild(el('div', 'fl-hint',
+    '对端地址或主机名。IP 变了（DHCP）、跨网段、VPN 里发现不到时填这里；'
+    + '端口可以省略，默认沿用上次的。主机名由系统解析（cell-xxxx.local、Tailscale MagicDNS、DNS）。'));
+  const input = el('input');
+  input.type = 'text';
+  input.spellcheck = false;
+  input.placeholder = '192.168.1.23:47822 或 cell-ab12.local:47822';
+  // 优先预填主机名：IP 变了以后它才是还有效的那个
+  const pre = d.host || d.addr;
+  input.value = pre ? (pre + (d.port ? ':' + d.port : '')) : '';
+  box.appendChild(input);
+  const save = () => {
+    const text = String(input.value || '').trim();
+    if (!text) { toast('填一个地址', 'info'); return; }
+    closeModal();
+    cmd('flowlink.peer.addr', { cell: d.client_id, addr: text }).then(o => {
+      if (!o || o.ok === false) { toast((o && o.error) || '设置地址失败', 'bad', 4200); return; }
+      flMerge(o);
+      refreshFlowlink();
+      if (o.reachable === false) toast('地址已保存，但仍连不上：' + (o.dial_error || '对端无响应'), 'bad', 6000);
+      else toast('已连上 ' + name, 'ok');
+    });
+  };
+  input.onkeydown = ev => {
+    if (ev.key === 'Enter') { ev.preventDefault(); save(); }
+  };
+  showModal('对端地址 · ' + name, null,
+    [{ label: '保存并重连', cls: 'primary', fn: save }, { label: '取消', fn: closeModal }],
+    body => body.appendChild(box));
 }
 
 function flRemoteBlock(d) {
@@ -23172,7 +23257,17 @@ async function openFlowWorkspace(cell, cwd, name, session) {
     const sid = String(session || '');
     const key = flTabKey(cell, cwd, sid);
     const t = tab(key);
-    t.remote = { cell: cell, cwd: cwd, name: name || baseName(cwd) || cwd, rid: '', mode: 'run', session: sid, err: '' };
+    const prev = t.remote;
+    if (prev && prev.cell === cell && prev.cwd === cwd && t.busy) {
+      // 同一个对端工作区、回合正在跑：**不能**重建 remote 状态。
+      // 重建会把 rid 清空，之后所有 agent.event（增量、turn_end）都对不上
+      // 这个页签 —— 回答还在流，界面却永远停在「等待模型响应」。
+      prev.name = name || prev.name;
+      prev.mode = 'run';
+      if (sid) prev.session = sid;
+    } else {
+      t.remote = { cell: cell, cwd: cwd, name: name || baseName(cwd) || cwd, rid: '', mode: 'run', session: sid, err: '' };
+    }
     t.cwd = cwd;
     t.session = 'link';
     t.loaded = true;
@@ -23182,6 +23277,8 @@ async function openFlowWorkspace(cell, cwd, name, session) {
     renderTabbar();
     if (sid) flLoadRemoteHistory(key, cell, cwd, sid);
     else toast('FlowLink 工作区：执行在对端 cell 上', 'info', 2200);
+    // 对端可能正在这个工作区里跑回合：对一下忙态，页签才不会假装空闲
+    flSyncRemoteBusy(t);
     // the turn settings belong to the peer: read them once so the composer
     // paints its real model / thinking / sandbox instead of a placeholder
     flLoadRemoteConf(t);
@@ -23212,6 +23309,7 @@ async function openFlowWatch(cell, cwd, name) {
     t.loaded = true;
     t.msgs = flRemoteEntries(out.entries, out.session || 'watch');
     t.busy = !!out.busy;
+    flArmRemoteWatch(t); // 监视也是事件流：同样要有人兜底收尾
     if (!S.tabOrder.includes(key)) S.tabOrder.push(key);
     if (typeof closeFlowLinkPage === 'function') closeFlowLinkPage();
     await activateWs(key);
@@ -23220,13 +23318,17 @@ async function openFlowWatch(cell, cwd, name) {
   } catch (e) { toast(e.message || String(e), 'bad'); }
 }
 
-/* 拉一条对端会话的历史，替换页签里的消息（附到已存在会话时用） */
-async function flLoadRemoteHistory(key, cell, cwd, sid) {
+/* 拉一条对端会话的历史，替换页签里的消息（附到已存在会话时用）。
+   opts.keepStick：回合结束后的重拉保留用户当前的滚动位置。
+   忙态下不重拉：正文正在按增量追加，整块替换会把那条流式消息连同
+   t._stream 一起丢掉（后续增量就写进一个已经不在列表里的对象）。 */
+async function flLoadRemoteHistory(key, cell, cwd, sid, opts) {
   const t = S.tabs.get(key);
   if (!t || !t.remote) return;
+  if (t.busy) return;
   try {
     const out = await api('flowlink.ws.history', { cell: cell, cwd: cwd, session: sid });
-    if (S.tabs.get(key) !== t) return;
+    if (S.tabs.get(key) !== t || t.busy) return;
     if (!out || out.ok === false) {
       t.remote.err = (out && out.error) || '读取对端会话历史失败';
       markChat(key);
@@ -23234,12 +23336,105 @@ async function flLoadRemoteHistory(key, cell, cwd, sid) {
     }
     t.msgs = flRemoteEntries(out.entries, sid);
     t.remote.err = '';
-    t._stick = true;
+    if (!(opts && opts.keepStick)) { t._stick = true; t._userSig = null; }
     markChat(key);
   } catch (e) {
     t.remote.err = e.message || String(e);
     markChat(key);
   }
+}
+
+/* ---------- 远程回合的收尾与看门狗 ------------------------------------
+   远程回合的「结束了没有」不能只由事件流决定：agent.event 是尽力而为的
+   （重连、丢帧、对端慢都会让 turn_end 迟到或丢失），一旦丢了，页面就永远
+   停在「等待模型响应」，计时器一直涨 —— 用户看到的就是「回答完了还在等」。
+   所以：忙态下静默 8s 就问一次对端（ws.state 只读两个原子），它已经空闲就
+   就地收尾并按转录重画；还在跑就再等 8s。连续问不通（对端失联）三次也收尾，
+   状态写清楚，不假装还在跑。 */
+const FL_REMOTE_IDLE_MS = 8000;
+const FL_REMOTE_IDLE_FAILS = 3;
+function flArmRemoteWatch(t) {
+  if (!t || !t.remote) return;
+  if (t._idleTimer) { clearTimeout(t._idleTimer); t._idleTimer = 0; }
+  if (!t.busy) return;
+  t._idleTimer = setTimeout(() => { t._idleTimer = 0; flCheckRemoteTurn(t); }, FL_REMOTE_IDLE_MS);
+}
+async function flCheckRemoteTurn(t) {
+  if (!t || !t.remote || !t.busy || S.tabs.get(t.ws) !== t) return;
+  let out = null;
+  try { out = await api('flowlink.ws.state', { cell: t.remote.cell, cwd: t.remote.cwd }); }
+  catch (e) { out = null; }
+  if (S.tabs.get(t.ws) !== t || !t.busy) return;
+  if (!out || out.ok === false) {
+    // 对端不可达：也许只是链路抖了一下，问三次再下结论
+    t._idleFails = (t._idleFails || 0) + 1;
+    if (t._idleFails < FL_REMOTE_IDLE_FAILS) { flArmRemoteWatch(t); return; }
+    t._idleFails = 0;
+    flFinishRemoteTurn(t, '', { note: '与对端的连接已断开，这一回合的结果未能确认' });
+    return;
+  }
+  t._idleFails = 0;
+  if (out.busy) { flArmRemoteWatch(t); return; } // 还在跑（长工具 / 长思考）
+  flFinishRemoteTurn(t, out.session || '');
+}
+
+/* 收尾：清忙态 + 按对端落盘的转录重画一次。
+   转录里才有工具卡、轮次条、思考块（流里只有正文），所以远程回合结束后
+   和本地一样以转录为准；turn_end 与看门狗都走这里，重复调用无害。 */
+function flFinishRemoteTurn(t, session, opts) {
+  if (!t || !t.remote) return;
+  const keepStick = t.busy;
+  const streamed = t._stream;
+  t.busy = false;
+  t.thinkingSince = 0;
+  if (streamed) streamed.streaming = false;
+  t._stream = null;
+  t._live = { assistant: null, reason: null, summary: null };
+  t.remote.rid = '';
+  t._idleFails = 0;
+  flArmRemoteWatch(t); // busy=false → 清掉定时器
+  if (opts && opts.note) t.msgs.push({ id: uid(), role: 'status', text: opts.note });
+  markChat(t.ws);
+  markComposer(t.ws);
+  schedule('tabbar', renderTabbar);
+  const sid = session || t.remote.session || '';
+  if (sid && sid !== t.remote.session) t.remote.session = sid;
+  if (sid) {
+    // 流式正文已经在了，但工具卡只在对端转录里：重拉一次。
+    // 对端还没把最后一段落盘时，重拉回来的会比手上的短 —— 那种情况保留
+    // 已经流出来的正文，别把用户的回答弄丢。
+    const key = t.ws;
+    const had = t.msgs.slice();
+    const textLen = list => list.reduce(
+      (n, m) => n + (m.role === 'assistant' ? String(m.text == null ? '' : m.text).length : 0), 0);
+    flLoadRemoteHistory(key, t.remote.cell, t.remote.cwd, sid, { keepStick: keepStick })
+      .then(() => {
+        const cur = S.tabs.get(key);
+        if (!cur || textLen(cur.msgs) >= textLen(had)) return;
+        cur.msgs = had;
+        markChat(key);
+      });
+  }
+}
+
+/* 打开/切到一个远程页签时对一下忙态：对端可能正在跑（或在后台跑完了），
+   光看事件流是看不到「现在就在跑」的 —— 页签会假装空闲。 */
+async function flSyncRemoteBusy(t) {
+  if (!t || !t.remote) return;
+  let out = null;
+  try { out = await api('flowlink.ws.state', { cell: t.remote.cell, cwd: t.remote.cwd }); }
+  catch (e) { out = null; }
+  if (!out || out.ok === false || S.tabs.get(t.ws) !== t) return;
+  if (out.session && !t.remote.session) t.remote.session = out.session;
+  if (out.busy && !t.busy) {
+    t.busy = true;
+    t.thinkingSince = Date.now();
+    if (!t._live) t._live = { assistant: null, reason: null, summary: null };
+    markChat(t.ws);
+    schedule('tabbar', renderTabbar);
+    markComposer(t.ws);
+  }
+  flArmRemoteWatch(t);
 }
 
 /* ---------- 对端的回合设置（模型 / 供应商 / 思考强度 / 沙箱 / 工具） ----
@@ -23477,12 +23672,17 @@ async function flSendRemote(t) {
   const ta = $('#ta');
   if (ta) ta.value = '';
   t.msgs.push({ id: uid(), role: 'user', text: text, ts: nowSec() });
-  const stream = { id: uid(), role: 'assistant', text: '' };
-  t.msgs.push(stream);
-  t._stream = stream;
+  // 正文占位**不预建**：一条空 assistant 消息会渲染成「只有头像、没有内容」的
+  // 空行，紧挨着等待指示器就成了两个 cell 图标并排（用户看到的就是这个）。
+  // 首个增量到达时再建（flRemoteDelta），与本地回合同一套时序。
+  t._stream = null;
+  t._live = { assistant: null, reason: null, summary: null };
   t.busy = true;
   t.thinkingSince = Date.now();
   t.remote.rid = 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+  if (window.RT) { try { RT.begin(t.ws); RT.mark(t.ws); } catch (e) {} }
+  t._idleFails = 0;
+  flArmRemoteWatch(t); // 事件流万一断在中间，由看门狗负责收尾
   markChat(t.ws);
   markComposer(t.ws);
   schedule('tabbar', renderTabbar);
@@ -23492,7 +23692,9 @@ async function flSendRemote(t) {
   });
   if (out && out.ok === false) {
     t.busy = false;
+    t.thinkingSince = 0;
     t._stream = null;
+    t._live = { assistant: null, reason: null, summary: null };
     t.msgs.push({ id: uid(), role: 'assistant', text: '⚠ ' + ((out && out.error) || '远程回合启动失败') });
     markChat(t.ws);
     markComposer(t.ws);
@@ -23505,6 +23707,32 @@ async function flSendRemote(t) {
     if (out.session) t.remote.session = out.session;
     if (out.ws) t.remote.peerWs = out.ws;
   }
+}
+
+/* 对端正文增量：走本地回合同一条流式路径。
+   以前这里只是 `t._stream.text += d` + 整块重渲染，代价有两层：
+     · 每个 delta 都重解析整段 markdown（长回答下 O(n²)）；
+     · t._live 没接上，等待指示器永远停在「正在准备上下文 / 等待首字」，
+       计时器一直往上涨 —— 明明已经在出字了，界面还在说「等首字 4.26s」。
+   接上 _live + RT 之后：首字一到就切「正在输出」，正文按文本节点追加。 */
+function flRemoteDelta(t, d) {
+  if (!t || !t.remote) return;
+  d = d || '';
+  if (!t._live) t._live = { assistant: null, reason: null, summary: null };
+  let msg = t._stream;
+  if (!msg) {
+    if (!d) return; // 空增量不建消息：空 assistant 消息就是一个只有头像的空行
+    msg = { id: uid(), role: 'assistant', text: '', ts: nowSec(), streaming: true };
+    t._stream = msg;
+    t._live.assistant = msg;
+    t.msgs.push(msg);
+  }
+  if (!d) return;
+  if (typeof streamAppend === 'function') streamAppend(t.ws, msg, d);
+  else msg.text += d;
+  if (window.RT) { try { RT.delta(t.ws, 'assistant', d.length); } catch (e) {} }
+  flArmRemoteWatch(t); // 有增量就重置「静默」计时
+  if (typeof markStream === 'function') markStream(t.ws); else markChat(t.ws);
 }
 
 /* 对端推回来的回合事件（agent.event） */
@@ -23521,9 +23749,14 @@ function flOnPeerEvent(ev) {
   const t = flTabByRid(rid);
   if (!t) return;
   const e = params.ev || {};
+  flArmRemoteWatch(t); // 任何对端事件都算「链路还活着」，重置静默计时
+  if (e.t === 'progress') {
+    // 对端引擎自报的「已等首字 Xms」：用它校准等待计时，而不是从发送时刻硬猜
+    if (window.RT) { try { RT.progress(t.ws, e.ms); } catch (err) {} }
+    return;
+  }
   if (e.t === 'answer') {
-    if (t._stream) t._stream.text += (e.d || '');
-    markChat(t.ws);
+    flRemoteDelta(t, e.d);
     return;
   }
   if (e.t === 'error') {
@@ -23532,12 +23765,7 @@ function flOnPeerEvent(ev) {
     return;
   }
   if (e.t === 'turn_end') {
-    t.busy = false;
-    t._stream = null;
-    t.remote.rid = '';
-    markChat(t.ws);
-    markComposer(t.ws);
-    schedule('tabbar', renderTabbar);
+    flFinishRemoteTurn(t, e.session || '');
   }
 }
 
@@ -23553,22 +23781,13 @@ function flOnWatchEvent(ev, params) {
   if (!t) return;
   const e = params.ev || {};
   if (e.t === 'answer') {
-    if (!t._stream) {
-      t._stream = { id: uid(), role: 'assistant', text: '' };
-      t.msgs.push(t._stream);
-    }
-    t._stream.text += (e.d || '');
-    t.busy = true;
-    markChat(t.ws);
+    if (!t.busy) { t.busy = true; t.thinkingSince = Date.now(); }
+    flRemoteDelta(t, e.d);
     schedule('tabbar', renderTabbar);
     return;
   }
   if (e.t === 'turn_end') {
-    t._stream = null;
-    t.busy = false;
-    t.thinkingSince = 0;
-    markChat(t.ws);
-    schedule('tabbar', renderTabbar);
+    flFinishRemoteTurn(t, '');
   }
   // tool_begin / tool_end / status 在监视视图里不展示：只保留正文
 }
@@ -23668,7 +23887,12 @@ function renderFlowWsSidebar(force) {
     gname.title = g.cwd;
     head.appendChild(gname);
     head.appendChild(el('span', 'cnt', String(sessions.length)));
-    if (!peer || !peer.online) head.appendChild(el('span', 'cnt', '离线'));
+    const pstate = flPeerState(peer);
+    if (pstate !== 'online') {
+      const tag = el('span', 'cnt', pstate === 'retry' ? '重连中' : '离线');
+      if (pstate === 'retry') tag.style.color = 'var(--warn)';
+      head.appendChild(tag);
+    }
     const pulse = el('span', 'pulse' + (busy ? ' busy' : ''));
     pulse.title = busy ? '对端正在运行回合' : (collapsed ? '已折叠' : '已展开');
     if (!busy) pulse.style.background = collapsed ? 'var(--fg4)' : 'var(--ok)';
@@ -23744,6 +23968,10 @@ function onFlowlinkEvent(ev) {
     toast('收到传输：' + (ev.subject || ''), 'ok', 2600);
     refreshFlowlink();
   } else if (type === 'online' || type === 'offline' || type === 'discovered') {
+    refreshFlowlink();
+  } else if (type === 'lost') {
+    // 对端从发现列表里消失了（TTL 到期 / 发了 goodbye）：地址没了，列表与
+    // 侧栏的在线点都要跟着退回去，不能停在上一次的「在线」
     refreshFlowlink();
   } else if (type === 'workspaces') {
     refreshFlowlink();

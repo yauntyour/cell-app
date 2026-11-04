@@ -653,7 +653,10 @@ namespace app
                     return;
                 }
                 if (t != "answer" && t != "reason" && t != "status" && t != "error" &&
-                    t != "tool_begin" && t != "tool_end" && t != "turn_end")
+                    t != "tool_begin" && t != "tool_end" && t != "turn_end" &&
+                    // 等首个 token 时引擎每 ~500ms 一次的心跳：转给远程视端，
+                    // 「等待首字」才是引擎实测的数字，而不是从本机发送时刻硬猜
+                    t != "progress")
                     return;
                 const std::string ws = ev.value("ws", "");
                 if (ws.empty())
@@ -843,6 +846,35 @@ namespace app
                 read_session_files(id, messages, archives);
                 return {{"ok", true}, {"id", id}, {"total", messages.size()},
                         {"entries", history_entries(messages)}, {"archives", std::move(archives)}};
+            }
+            if (method == "ws.state"sv)
+            {
+                if (!acc_ws)
+                    return denied("workspace access");
+                const std::string cwd = cell::text::trim(params.value("cwd", ""));
+                if (cwd.empty())
+                {
+                    err = "cwd is required";
+                    return nlohmann::json{};
+                }
+                // A remote tab has to know whether the peer's turn is still
+                // running. The event stream is best-effort by design (a
+                // reconnect, a dropped frame or a slow link can lose turn_end),
+                // and without a cheap way to ask, the viewer would sit on
+                // 「等待模型响应」forever. Reading two atomics is enough.
+                const std::string key = cell::cwd_id_of(cwd);
+                std::string sid;
+                bool busy = false;
+                if (workspace_ctx *c = find_ws(key))
+                {
+                    std::lock_guard<std::mutex> lk(c->hmx);
+                    busy = c->busy.load();
+                    if (!busy)
+                        sid = c->h.now().id();
+                }
+                if (sid.empty())
+                    sid = cell::chat::latest_session_id_for_cwd(key);
+                return {{"ok", true}, {"ws", key}, {"busy", busy}, {"session", sid}};
             }
             if (method == "ws.watch"sv || method == "ws.unwatch"sv)
             {
@@ -1888,6 +1920,104 @@ namespace app
             return payload;
         }
 
+        // ---- FlowLink presence keeper -------------------------------------
+        // A paired peer keeps its identity (client_id) but not its address:
+        // DHCP hands out a new one after a reboot or a lease change, and the
+        // session that was open is gone with the old address. The link is
+        // dialed on demand only (session_for runs when a command needs the
+        // peer), so without this the peer would read 「离线」 for as long as
+        // the user does not happen to touch it — while it is sitting right
+        // there on the network.
+        //
+        // Every kFlProbePeriod: for each paired link that mDNS still reports
+        // as present but that has no live session, dial once. The handshake
+        // is the whole point — it re-resolves the address through discovery,
+        // writes the new addr/port back to the pairing record
+        // (conn::handshake_done) and emits `online`, so the UI flips back by
+        // itself. The RPC's answer is irrelevant: a peer that grants nothing
+        // still answers (or refuses) over a working session.
+        static constexpr int kFlProbePeriodMs = 15000;
+        std::thread fl_probe;
+        std::mutex fl_probe_mx;
+        std::condition_variable fl_probe_cv;
+        std::atomic<bool> fl_probe_quit{false};
+        int fl_probe_cycle = 0; // probe thread only
+
+        void start_fl_probe()
+        {
+            std::lock_guard<std::mutex> lk(fl_probe_mx);
+            if (fl_probe.joinable())
+                return;
+            fl_probe_quit = false;
+            fl_probe = std::thread([this]
+                                   { fl_probe_loop(); });
+        }
+        void stop_fl_probe()
+        {
+            {
+                std::lock_guard<std::mutex> lk(fl_probe_mx);
+                fl_probe_quit = true;
+            }
+            fl_probe_cv.notify_all();
+            if (fl_probe.joinable())
+                fl_probe.join();
+        }
+        void fl_probe_loop()
+        {
+            for (;;)
+            {
+                {
+                    std::unique_lock<std::mutex> lk(fl_probe_mx);
+                    fl_probe_cv.wait_for(lk, std::chrono::milliseconds(kFlProbePeriodMs),
+                                         [&]
+                                         { return fl_probe_quit.load(); });
+                    if (fl_probe_quit)
+                        return;
+                }
+                if (shutting_down.load() || !fl_on())
+                    continue;
+                auto svc = cell::flowlink::service_instance();
+                if (!svc || !svc->running())
+                    continue;
+                std::vector<std::string> cold;
+                // Discovery cannot see a peer behind a VPN/Tailscale or on a
+                // segment that drops multicast: those links are dialed on the
+                // remembered address, but only every 4th round (~60s) — often
+                // enough to keep the dot honest, rare enough not to hammer a
+                // peer that is simply gone.
+                const bool slow_lane = (++fl_probe_cycle % 4) == 0;
+                try
+                {
+                    for (auto &p : svc->peers())
+                    {
+                        if (!p.value("paired", false) || p.value("online", false))
+                            continue;
+                        if (!p.value("present", false) && !slow_lane)
+                            continue;
+                        cold.push_back(p.value("client_id", ""));
+                    }
+                }
+                catch (...)
+                {
+                    continue; // a status read must never kill the loop
+                }
+                for (auto &id : cold)
+                {
+                    if (fl_probe_quit.load() || shutting_down.load() || !fl_on())
+                        break;
+                    // 4s is enough for a LAN handshake; the answer is dropped
+                    std::string err;
+                    try
+                    {
+                        svc->call(id, "ws.list", nlohmann::json::object(), 4000, err);
+                    }
+                    catch (...)
+                    {
+                    }
+                }
+            }
+        }
+
         // ---- update check (desktop shell: once per process, at startup) ---
         // Off the UI thread on purpose: the release page is remote, and a slow
         // or blocked link must never delay the window. The answer reaches the
@@ -1941,6 +2071,7 @@ namespace app
                 return;
             stop_task_watcher(); // no more "tasks" events once the page is going away
             stop_notice_watcher();
+            stop_fl_probe();
             // FlowLink joins its own threads before anything else is torn down:
             // a remote handler thread may still be reading the workspace registry
             fl_stop();
@@ -3971,6 +4102,7 @@ namespace app
                     name == "flowlink.ws.history" || name == "flowlink.ws.open" ||
                     name == "flowlink.ws.add" || name == "flowlink.ws.remove" ||
                     name == "flowlink.ws.send" || name == "flowlink.ws.stop" ||
+                    name == "flowlink.ws.state" ||
                     name == "flowlink.ws.watch" || name == "flowlink.ws.unwatch" ||
                     name == "flowlink.ws.config" || name == "flowlink.ws.config.set" ||
                     name == "flowlink.ws.call")
@@ -4005,7 +4137,38 @@ namespace app
                     out["workspaces"] = cached;
                     return out;
                 }
-                if (name == "flowlink.ws.sessions" || name == "flowlink.ws.history")
+                // Pin a paired cell's address by hand. Discovery is link-local
+                // (mDNS) and a DHCP change moves the address, so a peer on
+                // another subnet can drop out of reach with no way back short of
+                // re-pairing. This writes the address the dialer uses and tries
+                // it immediately — identity is still the link key.
+                if (name == "flowlink.peer.addr")
+                {
+                    if (!fl_on())
+                        return ok_error("FlowLink is off — enable it first");
+                    auto svc = cell::flowlink::service_instance();
+                    if (!svc)
+                        return ok_error("FlowLink is off");
+                    const std::string peer = cell::flowlink::resolve_cell(args.value("cell", ""));
+                    if (peer.empty())
+                        return ok_error("unknown cell");
+                    const std::string addr = args.value("addr", "");
+                    const int port = (int)std::clamp(args.value("port", 0LL), 0LL, 65535LL);
+                    std::string err;
+                    if (!svc->set_peer_addr(peer, addr, (std::uint16_t)port, err))
+                        return ok_error(err);
+                    // dial right away: the point of pinning an address is to get
+                    // the link back now, not at the next probe round
+                    std::string dial_err;
+                    (void)svc->call(peer, "ws.list", nlohmann::json::object(), 6000, dial_err);
+                    nlohmann::json out = ok_with(fl_status());
+                    out["reachable"] = dial_err.empty();
+                    if (!dial_err.empty())
+                        out["dial_error"] = dial_err;
+                    return out;
+                }
+                if (name == "flowlink.ws.sessions" || name == "flowlink.ws.history" ||
+                    name == "flowlink.ws.state")
                 {
                     if (!fl_on())
                         return ok_error("FlowLink is off — enable it first");
@@ -4024,8 +4187,10 @@ namespace app
                         if (!cell::is_valid_session_id(p.value("id", "")))
                             return ok_error("a valid session id is required");
                     }
-                    nlohmann::json r = svc->call(peer, name == "flowlink.ws.sessions" ? "ws.sessions" : "ws.history",
-                                                 p, 20000, err);
+                    const char *peer_method = name == "flowlink.ws.sessions" ? "ws.sessions"
+                                              : name == "flowlink.ws.state"  ? "ws.state"
+                                                                             : "ws.history";
+                    nlohmann::json r = svc->call(peer, peer_method, p, 20000, err);
                     if (!err.empty())
                         return ok_error(err);
                     return ok_with(r);

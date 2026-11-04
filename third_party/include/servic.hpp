@@ -451,6 +451,15 @@ namespace servic
                         co_return;
                     continue;
                 }
+                // Streaming responses (SSE) are a long run of small writes. With
+                // Nagle enabled each chunk can wait behind an unacknowledged
+                // segment, so the page sees the stream arrive in delayed bursts
+                // instead of token by token — the exact "end-to-end latency"
+                // symptom, worst on a forwarded/proxied loopback (WSL2, a
+                // preview proxy). One option on the accepted socket fixes it;
+                // the page's request traffic is tiny and unaffected.
+                ec.clear();
+                socket.set_option(asio::ip::tcp::no_delay(true), ec);
                 co_spawn(socket.get_executor(),
                          std::make_shared<Session>(std::move(socket), max_buf_, registry_)->start(ros),
                          asio::detached);

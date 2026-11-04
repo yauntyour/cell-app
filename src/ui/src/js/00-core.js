@@ -525,12 +525,17 @@ async function compactRemote(t) {
     return;
   }
   toast('已让对端压缩上下文', 'ok');
-  // 压缩在对端的 worker 里跑，几百毫秒到几秒；之后把重写后的转录取回来
-  setTimeout(() => {
+  // 压缩在对端的 worker 里跑，几百毫秒到几秒；之后把重写后的转录取回来。
+  // 压缩期间页签是忙态（忙态下不重拉，否则会把正在流的正文冲掉），所以等它
+  // 空下来再取，最多等六轮。
+  let tries = 0;
+  const pull = () => {
     if (S.tabs.get(t.ws) !== t) return;
+    if (t.busy && ++tries < 6) { setTimeout(pull, 2500); return; }
     const sid = (typeof flRemoteSessionId === 'function') ? flRemoteSessionId(t) : '';
     if (sid) flLoadRemoteHistory(t.ws, t.remote.cell, t.remote.cwd, sid);
-  }, 2500);
+  };
+  setTimeout(pull, 2500);
 }
 function resumeTurn(t) {
   const ws = (t && t.ws) || S.active;
@@ -703,6 +708,12 @@ function markChat(ws) {
   schedule('tabbar', renderTabbar);
   schedule('foot', renderFoot); // 品牌标识的运行态（忙碌 ⇄ 静止）随回合切换
   syncLiveTick();               // 有工作区在跑就开始补刷侧栏数字 / 用量
+}
+/* 流式增量只重画消息流本身：侧栏条数 / 页签忙闲 / 品牌运行态都由
+   turn_begin / turn_end 决定，每个 delta 重画一遍纯属白烧主线程
+   （token 一多就把帧时间耗在跟正文无关的 DOM 上，看起来就是「卡、慢」）。 */
+function markStream(ws) {
+  schedule('chat:' + ws, () => renderChat(ws));
 }
 
 /* ---------- 运行中的「活数据」补刷 ----------------------------------
@@ -974,7 +985,7 @@ function onStream(ws, role, d) {
   }
   streamAppend(ws, msg, d || '');
   if (window.RT) RT.delta(ws, role, (d || '').length);  // 运行时指标：首个 token 时刻 / 字符数
-  markChat(ws);
+  markStream(ws);
 }
 function streamAppend(ws, msg, d) {
   if (!d) return;
