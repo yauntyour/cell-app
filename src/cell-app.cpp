@@ -849,11 +849,18 @@ namespace app
                     found_a = true;
         }
         if (!found_a)
-            // the two ways this fails are very different: an ephemeral bound4
-            // means the second cell never shared the DNS-SD port at all, while
-            // bound4=47851 with no peers means the packets did not loop back
-            printf("     discovery detail: A bound4=%d B bound4=%d B saw %zu peer(s)\n",
-                   md_a.value("bound4", 0), st_b["mdns"].value("bound4", 0), b.discovered().size());
+        {
+            // three different failures look the same from here: a bound4 that is
+            // not the shared port, a shared port whose multicast reaches only one
+            // of the sockets (A's rx_query stays 0), or a query arriving with no
+            // answer coming back
+            const auto sa = a.status()["mdns"], sb = b.status()["mdns"];
+            printf("     discovery detail: A bound4=%d rx_q=%lld rx_r=%lld | "
+                   "B bound4=%d rx_q=%lld rx_r=%lld | B saw %zu peer(s)\n",
+                   sa.value("bound4", 0), sa.value("rx_query", 0LL), sa.value("rx_response", 0LL),
+                   sb.value("bound4", 0), sb.value("rx_query", 0LL), sb.value("rx_response", 0LL),
+                   b.discovered().size());
+        }
         check(found_a, "B discovers A through mDNS (client id + SRV port)");
         // ---- mutual pairing: one code each, then a link exists ------------
         {
