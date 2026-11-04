@@ -194,7 +194,8 @@ function toggleFlowLinkPage() {
   else openFlowLinkPage();
 }
 
-/* 状态同步：打开时全量拉一次；事件到达时只并进 S.flowlink 再重画 */
+/* 状态同步：打开时全量拉一次；事件到达时只并进 S.flowlink 再重画。
+   返回拿到的状态，失败返回 null —— 侧栏的显式刷新要把失败说出来。 */
 async function refreshFlowlink() {
   try {
     const out = await api('flowlink.status', {});
@@ -203,8 +204,10 @@ async function refreshFlowlink() {
       if (!FL.sel && flDevices().length) FL.sel = flDevices()[0].client_id;
       flPaint();
       if (typeof renderFlowWsSidebar === 'function') renderFlowWsSidebar();
+      return out;
     }
   } catch (e) { /* 状态由下一次 state 广播补上 */ }
+  return null;
 }
 
 /* ---------- 骨架 ---------------------------------------------------- */
@@ -2702,6 +2705,30 @@ function renderFlowWsSidebar(force) {
     if (!collapsed) flLoadSessions(g.cell, g.cwd);
   }
   list.replaceChildren(...nodes);
+}
+
+/* 侧栏「FlowLink 工作区」的显式刷新 ----------------------------------
+   自动刷新只在事件到达时发生（设备上下线、对端的 workspaces 变化），而对端
+   的会话列表另有 30 秒 TTL：对端刚开的一条会话不会推事件过来，本机就停在
+   旧列表上。这个按钮把两样都作废重拉 —— 先问本机要一份最新的 FlowLink 状态
+   （谁在线、对端工作区有没有增删），再把每个对端工作区的会话强制拉一遍。
+   失败要说出来：静默刷新会让人以为「对端真的没会话」。 */
+async function refreshFlowWsNow(btn) {
+  const spin = btn || $('#btnFlowWsRefresh');
+  if (spin) spin.classList.add('spin');
+  try {
+    const st = await refreshFlowlink();
+    if (!st) { toast('刷新失败：读不到 FlowLink 状态', 'bad', 3200); return; }
+    const items = flSettings().access_workspace ? flWorkspaces() : [];
+    if (!items.length) { toast('还没有加入任何对端工作区', 'info', 2400); return; }
+    await Promise.all(items.map(w => flLoadSessions(w.cell, w.cwd, true)));
+    const bad = items.filter(w => (flSessState(w.cell, w.cwd) || {}).err).length;
+    if (bad) toast(bad + ' 个对端工作区没读成会话（原因见列表）', 'bad', 3600);
+    else toast('已刷新 ' + items.length + ' 个对端工作区', 'ok', 1800);
+  } finally {
+    if (spin) spin.classList.remove('spin');
+    renderFlowWsSidebar(true);
+  }
 }
 
 /* FlowLink 事件（00-core 分发到这里）：配对完成、设备上线、收到传输、工作区变化 */

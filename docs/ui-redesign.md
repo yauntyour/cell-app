@@ -71,7 +71,8 @@
   │  ├ .sb-head：logo + "cell" 字标 + PREVIEW 徽标
   │  ├ #btnNewSession（主按钮，整行「＋ 新会话」）
   │  ├ .sb-nav：会话搜索 / 工作区文件 / Git Worktree / 终端（图标+标签+右侧快捷键，hover 显示）
-  │  ├ .sb-section：「工作区」标题行（筛选/新建图标）+ #sessionList（分组会话列表）
+  │  ├ #flowWsSection：「FlowLink 工作区」段（.sb-sec-toggle 折叠 + #btnFlowWsRefresh 刷新 + #btnFlowWsManage 管理）+ #flowWsList
+  │  ├ #wsSection：「工作区」段（.sb-sec-toggle 折叠 + #btnWsFilter 筛选 + #btnOpenWs 新建）+ #sessionList
   │  └ .sb-foot：导航行（#navBack #navFwd #navRefresh #navHome #navUsage + #navDock）+ 账户行（#btnSettings）
   ├ #rzSidebar（拖拽）
   └ #main
@@ -118,6 +119,8 @@
 - 工具类沿用：`.row .grow .dim .mut .small .tiny .trunc .uico .pulse` 等（旧 JS 大量使用，必须保留）。
 
 **侧栏会话列表**：工作区分组头（folder 图标 + 目录 basename + 数量 + 悬浮操作：新会话/更多）；会话行（h 46、radius 9、px 9）：标题 13.5 单行省略；副行 11.5 fg3（相对时间 · N 条消息 · 分支/Worktree 徽标）；选中行 `--raise2`；运行中标题右侧 6px accent 呼吸点；未读 badge。分组折叠状态沿用 `S.groupsClosed` / localStorage。
+
+**侧栏两段**（`#flowWsSection` / `#wsSection`，2026-11 增补）：两段列表抢同一块高度，所以每段段头左侧有一个折叠三角 `.sb-sec-toggle`（点标题即可折叠；三角朝下=展开、朝右=收起）。折叠后这一段 `flex:none`、只留 26px 段头，高度让给另一段；列表 DOM 不重建，展开时滚动位置与分组折叠状态都还在。状态记在 localStorage `cell.sbSecClosed`（`{flowWsSection:bool,wsSection:bool}`），默认两段都展开。点「工作区」段的筛选时会先把这一段展开，否则筛选框会插进一段看不见的容器里。FlowLink 段的段头另有 `#btnFlowWsRefresh`：对端新开的会话不会推事件过来、对端会话缓存又有 30s TTL，这个按钮强制重拉 `flowlink.status` + 每个对端工作区的 `flowlink.ws.sessions`；转圈用 `.icon-btn.spin`，结果用 toast 说明（「已刷新 N 个对端工作区」/ 失败原样报出，不假装对端没有会话）。
 
 **空态（hero）**：垂直居中，logo 40px（灰阶描边）+「构建未至之境」28px/600 + `预览版` 胶囊徽标；下方一行两个 chip：工作区（folder + 目录名 + chevron）、模式（shield + 当前沙箱模式 + chevron）；再下方为悬浮输入卡；无工作区时改为「打开一个工作区开始」+ 打开按钮。
 
@@ -193,6 +196,7 @@ Ctrl+N 新会话、Ctrl+, 设置、Ctrl+Shift+F 会话搜索、Ctrl+P 快速打�
 - **滚动跟底**：贴底阈值 28px；流式期间向上滚动/滚轮立即脱离自动跟底，显示「回到底部」悬浮按钮；新用户消息或点击按钮恢复贴底；回合结束的转录重载保留用户阅读位置。
 - **等待阶段**：等待指示器改为「标题 + 副标题 + 秒表」，按 等待审批 → 正在推理 → 正在输出 → 正在执行 <工具中文名> → 最近 status → 等待模型响应（第 N 轮）→ 准备上下文 排序，busy 期间常驻。
 - **Teamwork 刷新**：create/run/resume/stop 后立即刷新；tw 工具结束与 gate/job/stage/worker 进度 notice 都会防抖触发刷新；面板打开即拉取；刷新保持滚动位置与卡片展开状态。
+- **Teamwork 删除 / 清空**：任务卡操作行最右的「删除」，以及标题栏垃圾桶（清空本会话的任务记录）。两者都先弹 `confirmDlg`，再走 `teamwork.delete` / `teamwork.clear`——后端落到同一份 `cell::teamwork::remove_job`（store 记录 + 任务目录里的子代理对话 + 文件租约 + 停止标志），所以删完不会留下孤儿对话或残留的停止请求。运行中的任务不允许删除（后台 runner 还在往任务目录里写）：单删给一句提示不弹框，清空跳过它们并在返回里报 `removed` / `skipped`，面板据此提示「已删除 X 个，Y 个运行中的已跳过」。被删任务的子代理浮窗随命令一起关掉，存档浮窗（`arch|…`）与还在跑的任务窗口不动。
 - **子代理浮窗**：显示任务 works、状态/阶段/轮次/工具数、notice 进度时间线；首轮 transcript 未落盘时显示带秒表的等待卡；transcript 到达无缝替换；失败显示完整 job.error+最后进度并停止轮询。
 - **tw 工具结果**：create/config 渲染为结构化「团队任务已创建」卡（阶段/子代理 works/模型/思考/gate/跳转面板），其他动作给紧凑摘要卡。
 

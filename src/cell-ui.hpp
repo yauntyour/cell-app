@@ -390,6 +390,22 @@ select{appearance:none;background-image:url("data:image/svg+xml;charset=utf-8,%3
 .sb-section{flex:1;min-height:0;display:flex;flex-direction:column;padding-top:10px}
 .sb-section-head{display:flex;align-items:center;gap:2px;height:26px;padding:0 4px 0 6px;flex:none}
 .sb-section-title{font-size:11.5px;font-weight:600;letter-spacing:.06em;color:var(--fg3)}
+/* 段头是按钮：点标题就折叠这一段（三角朝下=展开、朝右=收起）。
+   折叠只切 class，列表 DOM 留着 —— 展开时滚动位置与分组状态都还在。 */
+.sb-sec-toggle{display:flex;align-items:center;gap:5px;min-width:0;padding:2px 2px 2px 0;
+  background:none;border:0;cursor:pointer;color:var(--fg3);border-radius:6px;
+  transition:color var(--dur) var(--ease)}
+.sb-sec-toggle:hover{color:var(--fg)}
+.sec-chev{display:flex;align-items:center;color:var(--fg4);flex:none;
+  transition:transform var(--dur) var(--ease)}
+.sec-chev .uico{width:12px;height:12px;stroke-width:2.2}
+/* 侧栏被拖窄时标题让位给右边的图标按钮，不撑破段头 */
+.sb-sec-toggle .sb-section-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sb-section.collapsed{flex:none}
+.sb-section.collapsed .sec-chev{transform:rotate(-90deg)}
+.sb-section.collapsed .sb-section-title{color:var(--fg4)}
+/* 收起后只留段头：列表、筛选框、空态全部让位（同时也把高度还给另一段） */
+.sb-section.collapsed > :not(.sb-section-head){display:none}
 .sb-section-head .icon-btn{color:var(--fg3);opacity:.8}
 .sb-section-head .icon-btn:hover{opacity:1}
 .sb-list{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;padding:2px 0 8px;scrollbar-width:thin}
@@ -1830,6 +1846,8 @@ body.locked{overflow:hidden}
 .tw-meta-i{font-family:var(--mono)}
 .tw-ctl{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:10px;
   padding-top:10px;border-top:1px solid var(--line)}
+/* 删除：靠右单列，和运行/恢复/刷新拉开距离（误点代价大）；配色走 .btn.danger */
+.tw-ctl .tw-del{margin-left:auto}
 
 /* ---- 6.2 工作流图 -------------------------------------------------- */
 .flowwrap{margin:2px -2px 0;overflow-x:auto;padding:2px 2px 4px}
@@ -2331,6 +2349,11 @@ body.locked{overflow:hidden}
 .pnl-sub{font-size:11.5px;color:var(--fg4);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .pnl-head .grow{flex:1;min-width:0}
 .pnl-acts{display:flex;align-items:center;gap:2px;flex:none}
+/* 面板头部的破坏性操作（Teamwork 的「清空」）：往右隔开一点，平时与普通图标一致，
+   hover 才染红（与 #settings 的 .icon-btn.danger 同一套语义） */
+.pnl-acts .icon-btn.danger{margin-left:2px}
+.pnl-acts .icon-btn.danger:hover{background:color-mix(in srgb,var(--bad) 12%,transparent);
+  color:var(--bad)}
 .pnl-scroll{flex:1;min-height:0;overflow-y:auto;padding:10px 12px 16px;display:flex;flex-direction:column}
 .pnl-empty{display:flex;flex-direction:column;align-items:center;gap:9px;padding:36px 20px;
   color:var(--fg3);text-align:center;font-size:12.5px;line-height:1.7}
@@ -4441,11 +4464,21 @@ try {
         </button>
       </nav>
 
-      <!-- FlowLink 工作区：远程工作区（执行在对端 cell 上）。无内容时整段隐藏。 -->
+      <!-- FlowLink 工作区：远程工作区（执行在对端 cell 上）。无内容时整段隐藏。
+           段头左边的三角是这一段的折叠开关（两段列表抢同一块高度，用户可以只
+           看其中一段）；右边除了「管理」，还有一个显式的「刷新」—— 对端新开的
+           会话不会推事件过来，会话缓存又有 30 秒 TTL，只有按钮能让它立刻去问。 -->
       <div class="sb-section" id="flowWsSection" hidden>
         <div class="sb-section-head">
-          <span class="sb-section-title">FlowLink 工作区</span>
+          <button class="sb-sec-toggle" id="btnFlowWsToggle" data-sec-label="FlowLink 工作区"
+                  aria-expanded="true" aria-controls="flowWsList" title="折叠 FlowLink 工作区">
+            <span class="sec-chev"><svg class="uico" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></span>
+            <span class="sb-section-title">FlowLink 工作区</span>
+          </button>
           <span class="grow"></span>
+          <button class="icon-btn sm" id="btnFlowWsRefresh" title="刷新对端工作区与对端会话列表">
+            <svg class="uico" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a8 8 0 1 1-2.34-5.66M21 4v4h-4"/></svg>
+          </button>
           <button class="icon-btn sm" id="btnFlowWsManage" title="管理 FlowLink 工作区">
             <svg class="uico" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.5.5l2-2a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7.5-.5l-2 2a5 5 0 0 0 7 7l1-1"/></svg>
           </button>
@@ -4453,9 +4486,13 @@ try {
         <div id="flowWsList" class="sb-list"></div>
       </div>
 
-      <div class="sb-section">
+      <div class="sb-section" id="wsSection">
         <div class="sb-section-head">
-          <span class="sb-section-title">工作区</span>
+          <button class="sb-sec-toggle" id="btnWsToggle" data-sec-label="工作区"
+                  aria-expanded="true" aria-controls="sessionList" title="折叠工作区">
+            <span class="sec-chev"><svg class="uico" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></span>
+            <span class="sb-section-title">工作区</span>
+          </button>
           <span class="grow"></span>
           <button class="icon-btn sm" id="btnWsFilter" title="筛选会话">
             <svg class="uico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h18l-7 8v6l-4 2v-8L3 5Z"/></svg>
@@ -6829,6 +6866,42 @@ function restoreSidebarState() {
   const sb = $('#sidebar');
   if (sb) sb.classList.toggle('collapsed', col);
   paintSidebarToggle();
+  restoreSbSections();
+}
+
+/* ---- 侧栏：两段的折叠（FlowLink 工作区 / 工作区）-------------------
+   两段列表抢同一块高度：只想看对端工作区时，本机工作区那一段就是纯噪声。
+   段头左边的三角（.sb-sec-toggle）折叠这一段，状态和侧栏整体收起一样记在
+   localStorage 里。折叠只切 class —— 列表 DOM 不动，展开时不重建，滚动位置
+   与分组折叠状态都还在，也不会多打一次接口。 */
+const SB_SEC_KEY = 'cell.sbSecClosed';
+function loadSbSecState() {
+  try {
+    const v = JSON.parse(localStorage.getItem(SB_SEC_KEY) || '{}');
+    return (v && typeof v === 'object') ? v : {};
+  } catch (e) { return {}; }
+}
+function paintSbSection(sec, closed) {
+  if (!sec) return;
+  sec.classList.toggle('collapsed', !!closed);
+  const btn = sec.querySelector('.sb-sec-toggle');
+  if (!btn) return;
+  btn.setAttribute('aria-expanded', closed ? 'false' : 'true');
+  btn.title = (closed ? '展开' : '折叠') + (btn.dataset.secLabel || '');
+}
+function toggleSbSection(sec) {
+  if (!sec) return;
+  const closed = !sec.classList.contains('collapsed');
+  paintSbSection(sec, closed);
+  const st = loadSbSecState();
+  st[sec.id] = closed;
+  try { localStorage.setItem(SB_SEC_KEY, JSON.stringify(st)); } catch (e) {}
+  // 可用高度变了：侧栏里自适应的东西（贴底元素、滚动区）跟着算一次
+  if (typeof Layout !== 'undefined' && Layout.apply) setTimeout(() => Layout.apply(), 180);
+}
+function restoreSbSections() {
+  const st = loadSbSecState();
+  $$('.sb-section').forEach(sec => paintSbSection(sec, !!st[sec.id]));
 }
 function toggleSidebar() {
   const sb = $('#sidebar');
@@ -6858,8 +6931,12 @@ function toggleSidebarFilter() {
   inp.oninput = () => { S.sbFilter = inp.value; renderSidebar(); };
   inp.onkeydown = ev => { if (ev.key === 'Escape') { ev.stopPropagation(); toggleSidebarFilter(); } };
   wrap.appendChild(inp);
-  const sidebar = $('#sidebar');
-  sidebar.insertBefore(wrap, $('#sessionList'));
+  // 这一段折叠着就先把段头展开：否则筛选框会插进一段看不见的容器里
+  const sec = $('#sessionList') ? $('#sessionList').closest('.sb-section') : null;
+  if (sec && sec.classList.contains('collapsed')) toggleSbSection(sec);
+  // 插在列表自己的容器里：列表住在 .sb-section 内，不再是 #sidebar 的直接子节点
+  const list = $('#sessionList');
+  if (list) list.parentNode.insertBefore(wrap, list);
   inp.focus();
 }
 
@@ -9779,10 +9856,11 @@ function pnlHead(title, sub, actions) {
   head.appendChild(el('span', 'grow'));
   const bar = el('div', 'pnl-acts');
   for (const a of (actions || [])) {
-    const b = el('button', a.btnCls || 'icon-btn sm', a.label || '');
+    const b = el('button', (a.btnCls || 'icon-btn sm') + (a.cls ? ' ' + a.cls : ''), a.label || '');
     if (a.icon) b.appendChild(iconEl(a.icon, 'sm'));
     if (a.text) b.appendChild(el('span', null, a.text));
     b.title = a.title || '';
+    if (a.disabled) b.disabled = true;
     b.onclick = a.on;
     bar.appendChild(b);
   }
@@ -9829,6 +9907,12 @@ function renderDockTeamwork(body, t) {
     {
       icon: 'plus', title: '新建团队任务（切到输入栏 Teamwork 模式）',
       on: () => { setComposerMode('team'); focusInput(); },
+    },
+    // 破坏性操作放最后（与通知面板「刷新 … 清空」同一顺序）：平时是普通图标，
+    // hover 才染红；列表为空时置灰
+    {
+      icon: 'trash', cls: 'danger', title: n ? '清空本会话的 ' + n + ' 条团队任务记录（运行中的会跳过）' : '没有可清空的团队任务',
+      disabled: !n, on: () => twClearAll(t),
     },
   ]);
   body.replaceChildren(head);
@@ -10115,7 +10199,70 @@ function renderJobControls(t, job, ck, waitKind) {
   const rr = el('button', 'btn ghost sm', '刷新');
   rr.onclick = () => twRefresh(t.ws, false, true);
   ctl.appendChild(rr);
+  // 删除（危险操作）：靠 margin-left:auto 推到最右，和运行/恢复拉开距离。
+  // 运行中的任务后端会拒绝（后台 runner 还在写任务目录），按钮仍可点 —— 点一下
+  // 给一句提示，比灰掉（disabled 的按钮连 tooltip 都不出）更好解释。
+  const del = el('button', 'btn danger sm tw-del');
+  del.appendChild(iconEl('trash', 'sm'));
+  del.appendChild(el('span', null, '删除'));
+  del.title = ck === 'run' ? '任务正在运行：先「停止」再删除' : '删除这条任务记录（含子代理对话，不可恢复）';
+  del.onclick = ev => { if (ev && ev.stopPropagation) ev.stopPropagation(); twDeleteJob(t, job); };
+  ctl.appendChild(del);
   return ctl;
+}
+
+/* ---------- 删除 / 清空 ----------------------------------------------
+   两个入口都落在后端的 teamwork.delete / teamwork.clear（同一个 remove_job，
+   与 CLI 的 /teamwork remove 一致：store 记录 + 任务目录 + 文件租约 + 停止标志
+   一起收），完成后立刻重拉列表 —— 删掉的卡片不会等到下一次轮询才消失。   */
+async function twDeleteJob(t, job) {
+  const id = (job && job.id) || '';
+  if (!id) return;
+  if (jobStatusClass(job.status) === 'run') {
+    toast('任务正在运行：先「停止」，再删除', 'warn', 2400);
+    return;
+  }
+  const ask = await confirmDlg('删除团队任务 ' + id + '？\n\n它的子代理对话记录会一起删掉，无法恢复。',
+    { title: '删除团队任务', ok: '删除' });
+  if (!ask) return;
+  const out = await cmd('teamwork.delete', { ws: t.ws, id: id });
+  if (!out || out.ok === false) { twRefresh(t.ws, false, true); return; } // 可能已被别处删掉：对齐磁盘
+  twCloseJobWins(t, id);
+  if (t._twOpen) delete t._twOpen[id];
+  toast('已删除 ' + id, 'ok', 1800);
+  await twRefresh(t.ws, false, true);
+}
+
+async function twClearAll(t) {
+  const jobs = Array.isArray(t.jobs) ? t.jobs : [];
+  if (!jobs.length) return;
+  const runningN = jobs.filter(j => jobStatusClass(j.status) === 'run').length;
+  const ask = await confirmDlg('清空本会话的 ' + jobs.length + ' 条团队任务记录？\n\n'
+    + '子代理对话记录会一起删掉，无法恢复。'
+    + (runningN ? '\n\n其中 ' + runningN + ' 个任务正在运行，会被跳过（先停止，再清空）。' : ''),
+    { title: '清空团队任务', ok: '清空' });
+  if (!ask) return;
+  const out = await cmd('teamwork.clear', { ws: t.ws });
+  if (!out || out.ok === false) { twRefresh(t.ws, false, true); return; }
+  const removed = Number(out.removed || 0), skipped = Number(out.skipped || 0);
+  // 只关被删掉的那些任务的浮窗：运行中被跳过的、以及存档浮窗（key 是 arch|…）
+  // 都留着 —— 关掉一个还在跑的任务的对话窗口是纯粹的打扰
+  for (const j of jobs) if (jobStatusClass(j.status) !== 'run') twCloseJobWins(t, j.id);
+  t._twOpen = {};
+  toast(skipped
+    ? '已删除 ' + removed + ' 个任务，' + skipped + ' 个运行中的已跳过（先停止再清空）'
+    : '已清空 ' + removed + ' 个任务',
+    skipped ? 'warn' : 'ok', 2600);
+  await twRefresh(t.ws, false, true);
+}
+
+/* 任务被删掉后，它的子代理浮窗还开着就成了孤儿（轮询会一直问一个不存在的
+   任务）：按浮窗 key「<jobId>|<worker>」前缀关掉那个任务的全部子代理窗口。 */
+function twCloseJobWins(t, jobId) {
+  if (!t || !t.wins || !jobId) return;
+  for (const key of [...t.wins.keys()]) {
+    if (String(key).indexOf(jobId + '|') === 0) closeFloatWin(t, key);
+  }
 }
 // 任务操作：命令成功后立刻重拉（并打时间戳），不再 setTimeout(400) 猜落盘时间
 function jobActionBtn(t, job, label, cls, name) {
@@ -16673,6 +16820,28 @@ const Mock = {
         return Promise.resolve({ ok: true, message: 'started' });
       }
       case 'teamwork.stop': { const j = this.jobs[args.id]; if (j) j.status = 'pending'; setTimeout(() => this.emit({ t: 'teamwork_changed', ws: ws }), 30); return Promise.resolve({ ok: true, message: 'stop requested' }); }
+      case 'teamwork.delete': {
+        const j = this.jobs[args.id];
+        if (!j) return Promise.resolve({ ok: false, error: 'teamwork ' + args.id + ' not found' });
+        // 与真实后端同一规则：运行中的任务必须先停止才能删除
+        if (j.status === 'running') return Promise.resolve({ ok: false, error: 'teamwork ' + args.id + ' is running and cannot be deleted' });
+        delete this.jobs[args.id];
+        setTimeout(() => this.emit({ t: 'teamwork_changed', ws: ws }), 30);
+        return Promise.resolve({ ok: true, message: 'teamwork ' + args.id + ' removed', removed: 1, skipped: 0 });
+      }
+      case 'teamwork.clear': {
+        let removed = 0, skipped = 0;
+        for (const id of Object.keys(this.jobs)) {
+          if (this.jobs[id].status === 'running') { skipped++; continue; }
+          delete this.jobs[id]; removed++;
+        }
+        setTimeout(() => this.emit({ t: 'teamwork_changed', ws: ws }), 30);
+        return Promise.resolve({
+          ok: true, removed, skipped,
+          message: 'removed ' + removed + ' teamwork job(s)' + (skipped ? ', skipped ' + skipped + ' running' : ''),
+          ...(skipped && !removed ? { error: 'teamwork is running and cannot be deleted' } : {}),
+        });
+      }
       case 'notice.list': return Promise.resolve({ ok: true, notices: this.notices });
       case 'notice.clear': { const n = this.notices.length; this.notices = []; return Promise.resolve({ ok: true, dropped: n, seen: 0 }); }
       case 'notice.send': {
@@ -21302,6 +21471,10 @@ function wireEvents() {
   // FlowLink 管理页：Skills 入口下面那一条（配对 / 远程工作区 / 传输列表）
   if ($('#btnFlowLink')) $('#btnFlowLink').onclick = () => openFlowLinkPage();
   if ($('#btnFlowWsManage')) $('#btnFlowWsManage').onclick = () => openFlowLinkPage();
+  // FlowLink 工作区段头的显式刷新：重拉对端状态 + 对端会话列表（见 12-flowlink.js）
+  if ($('#btnFlowWsRefresh')) $('#btnFlowWsRefresh').onclick = ev => { ev.stopPropagation(); refreshFlowWsNow($('#btnFlowWsRefresh')); };
+  // 段头的折叠开关：FlowLink 工作区 / 工作区 两段各自折叠（状态记在 localStorage）
+  $$('.sb-sec-toggle').forEach(b => onPress(b, () => toggleSbSection(b.closest('.sb-section'))));
   $('#btnWsFilter').onclick = () => toggleSidebarFilter();
   $('#btnSidebarToggle').onclick = () => toggleSidebar();
   if ($('#btnSidebarTop')) $('#btnSidebarTop').onclick = () => toggleSidebar();
@@ -22254,7 +22427,8 @@ function toggleFlowLinkPage() {
   else openFlowLinkPage();
 }
 
-/* 状态同步：打开时全量拉一次；事件到达时只并进 S.flowlink 再重画 */
+/* 状态同步：打开时全量拉一次；事件到达时只并进 S.flowlink 再重画。
+   返回拿到的状态，失败返回 null —— 侧栏的显式刷新要把失败说出来。 */
 async function refreshFlowlink() {
   try {
     const out = await api('flowlink.status', {});
@@ -22263,8 +22437,10 @@ async function refreshFlowlink() {
       if (!FL.sel && flDevices().length) FL.sel = flDevices()[0].client_id;
       flPaint();
       if (typeof renderFlowWsSidebar === 'function') renderFlowWsSidebar();
+      return out;
     }
   } catch (e) { /* 状态由下一次 state 广播补上 */ }
+  return null;
 }
 
 /* ---------- 骨架 ---------------------------------------------------- */
@@ -24762,6 +24938,30 @@ function renderFlowWsSidebar(force) {
     if (!collapsed) flLoadSessions(g.cell, g.cwd);
   }
   list.replaceChildren(...nodes);
+}
+
+/* 侧栏「FlowLink 工作区」的显式刷新 ----------------------------------
+   自动刷新只在事件到达时发生（设备上下线、对端的 workspaces 变化），而对端
+   的会话列表另有 30 秒 TTL：对端刚开的一条会话不会推事件过来，本机就停在
+   旧列表上。这个按钮把两样都作废重拉 —— 先问本机要一份最新的 FlowLink 状态
+   （谁在线、对端工作区有没有增删），再把每个对端工作区的会话强制拉一遍。
+   失败要说出来：静默刷新会让人以为「对端真的没会话」。 */
+async function refreshFlowWsNow(btn) {
+  const spin = btn || $('#btnFlowWsRefresh');
+  if (spin) spin.classList.add('spin');
+  try {
+    const st = await refreshFlowlink();
+    if (!st) { toast('刷新失败：读不到 FlowLink 状态', 'bad', 3200); return; }
+    const items = flSettings().access_workspace ? flWorkspaces() : [];
+    if (!items.length) { toast('还没有加入任何对端工作区', 'info', 2400); return; }
+    await Promise.all(items.map(w => flLoadSessions(w.cell, w.cwd, true)));
+    const bad = items.filter(w => (flSessState(w.cell, w.cwd) || {}).err).length;
+    if (bad) toast(bad + ' 个对端工作区没读成会话（原因见列表）', 'bad', 3600);
+    else toast('已刷新 ' + items.length + ' 个对端工作区', 'ok', 1800);
+  } finally {
+    if (spin) spin.classList.remove('spin');
+    renderFlowWsSidebar(true);
+  }
 }
 
 /* FlowLink 事件（00-core 分发到这里）：配对完成、设备上线、收到传输、工作区变化 */

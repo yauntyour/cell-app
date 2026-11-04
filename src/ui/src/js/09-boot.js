@@ -13,6 +13,10 @@ function wireEvents() {
   // FlowLink 管理页：Skills 入口下面那一条（配对 / 远程工作区 / 传输列表）
   if ($('#btnFlowLink')) $('#btnFlowLink').onclick = () => openFlowLinkPage();
   if ($('#btnFlowWsManage')) $('#btnFlowWsManage').onclick = () => openFlowLinkPage();
+  // FlowLink 工作区段头的显式刷新：重拉对端状态 + 对端会话列表（见 12-flowlink.js）
+  if ($('#btnFlowWsRefresh')) $('#btnFlowWsRefresh').onclick = ev => { ev.stopPropagation(); refreshFlowWsNow($('#btnFlowWsRefresh')); };
+  // 段头的折叠开关：FlowLink 工作区 / 工作区 两段各自折叠（状态记在 localStorage）
+  $$('.sb-sec-toggle').forEach(b => onPress(b, () => toggleSbSection(b.closest('.sb-section'))));
   $('#btnWsFilter').onclick = () => toggleSidebarFilter();
   $('#btnSidebarToggle').onclick = () => toggleSidebar();
   if ($('#btnSidebarTop')) $('#btnSidebarTop').onclick = () => toggleSidebar();

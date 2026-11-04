@@ -606,6 +606,28 @@ const Mock = {
         return Promise.resolve({ ok: true, message: 'started' });
       }
       case 'teamwork.stop': { const j = this.jobs[args.id]; if (j) j.status = 'pending'; setTimeout(() => this.emit({ t: 'teamwork_changed', ws: ws }), 30); return Promise.resolve({ ok: true, message: 'stop requested' }); }
+      case 'teamwork.delete': {
+        const j = this.jobs[args.id];
+        if (!j) return Promise.resolve({ ok: false, error: 'teamwork ' + args.id + ' not found' });
+        // 与真实后端同一规则：运行中的任务必须先停止才能删除
+        if (j.status === 'running') return Promise.resolve({ ok: false, error: 'teamwork ' + args.id + ' is running and cannot be deleted' });
+        delete this.jobs[args.id];
+        setTimeout(() => this.emit({ t: 'teamwork_changed', ws: ws }), 30);
+        return Promise.resolve({ ok: true, message: 'teamwork ' + args.id + ' removed', removed: 1, skipped: 0 });
+      }
+      case 'teamwork.clear': {
+        let removed = 0, skipped = 0;
+        for (const id of Object.keys(this.jobs)) {
+          if (this.jobs[id].status === 'running') { skipped++; continue; }
+          delete this.jobs[id]; removed++;
+        }
+        setTimeout(() => this.emit({ t: 'teamwork_changed', ws: ws }), 30);
+        return Promise.resolve({
+          ok: true, removed, skipped,
+          message: 'removed ' + removed + ' teamwork job(s)' + (skipped ? ', skipped ' + skipped + ' running' : ''),
+          ...(skipped && !removed ? { error: 'teamwork is running and cannot be deleted' } : {}),
+        });
+      }
       case 'notice.list': return Promise.resolve({ ok: true, notices: this.notices });
       case 'notice.clear': { const n = this.notices.length; this.notices = []; return Promise.resolve({ ok: true, dropped: n, seen: 0 }); }
       case 'notice.send': {

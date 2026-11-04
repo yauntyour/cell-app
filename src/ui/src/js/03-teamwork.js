@@ -23,10 +23,11 @@ function pnlHead(title, sub, actions) {
   head.appendChild(el('span', 'grow'));
   const bar = el('div', 'pnl-acts');
   for (const a of (actions || [])) {
-    const b = el('button', a.btnCls || 'icon-btn sm', a.label || '');
+    const b = el('button', (a.btnCls || 'icon-btn sm') + (a.cls ? ' ' + a.cls : ''), a.label || '');
     if (a.icon) b.appendChild(iconEl(a.icon, 'sm'));
     if (a.text) b.appendChild(el('span', null, a.text));
     b.title = a.title || '';
+    if (a.disabled) b.disabled = true;
     b.onclick = a.on;
     bar.appendChild(b);
   }
@@ -73,6 +74,12 @@ function renderDockTeamwork(body, t) {
     {
       icon: 'plus', title: '新建团队任务（切到输入栏 Teamwork 模式）',
       on: () => { setComposerMode('team'); focusInput(); },
+    },
+    // 破坏性操作放最后（与通知面板「刷新 … 清空」同一顺序）：平时是普通图标，
+    // hover 才染红；列表为空时置灰
+    {
+      icon: 'trash', cls: 'danger', title: n ? '清空本会话的 ' + n + ' 条团队任务记录（运行中的会跳过）' : '没有可清空的团队任务',
+      disabled: !n, on: () => twClearAll(t),
     },
   ]);
   body.replaceChildren(head);
@@ -359,7 +366,70 @@ function renderJobControls(t, job, ck, waitKind) {
   const rr = el('button', 'btn ghost sm', '刷新');
   rr.onclick = () => twRefresh(t.ws, false, true);
   ctl.appendChild(rr);
+  // 删除（危险操作）：靠 margin-left:auto 推到最右，和运行/恢复拉开距离。
+  // 运行中的任务后端会拒绝（后台 runner 还在写任务目录），按钮仍可点 —— 点一下
+  // 给一句提示，比灰掉（disabled 的按钮连 tooltip 都不出）更好解释。
+  const del = el('button', 'btn danger sm tw-del');
+  del.appendChild(iconEl('trash', 'sm'));
+  del.appendChild(el('span', null, '删除'));
+  del.title = ck === 'run' ? '任务正在运行：先「停止」再删除' : '删除这条任务记录（含子代理对话，不可恢复）';
+  del.onclick = ev => { if (ev && ev.stopPropagation) ev.stopPropagation(); twDeleteJob(t, job); };
+  ctl.appendChild(del);
   return ctl;
+}
+
+/* ---------- 删除 / 清空 ----------------------------------------------
+   两个入口都落在后端的 teamwork.delete / teamwork.clear（同一个 remove_job，
+   与 CLI 的 /teamwork remove 一致：store 记录 + 任务目录 + 文件租约 + 停止标志
+   一起收），完成后立刻重拉列表 —— 删掉的卡片不会等到下一次轮询才消失。   */
+async function twDeleteJob(t, job) {
+  const id = (job && job.id) || '';
+  if (!id) return;
+  if (jobStatusClass(job.status) === 'run') {
+    toast('任务正在运行：先「停止」，再删除', 'warn', 2400);
+    return;
+  }
+  const ask = await confirmDlg('删除团队任务 ' + id + '？\n\n它的子代理对话记录会一起删掉，无法恢复。',
+    { title: '删除团队任务', ok: '删除' });
+  if (!ask) return;
+  const out = await cmd('teamwork.delete', { ws: t.ws, id: id });
+  if (!out || out.ok === false) { twRefresh(t.ws, false, true); return; } // 可能已被别处删掉：对齐磁盘
+  twCloseJobWins(t, id);
+  if (t._twOpen) delete t._twOpen[id];
+  toast('已删除 ' + id, 'ok', 1800);
+  await twRefresh(t.ws, false, true);
+}
+
+async function twClearAll(t) {
+  const jobs = Array.isArray(t.jobs) ? t.jobs : [];
+  if (!jobs.length) return;
+  const runningN = jobs.filter(j => jobStatusClass(j.status) === 'run').length;
+  const ask = await confirmDlg('清空本会话的 ' + jobs.length + ' 条团队任务记录？\n\n'
+    + '子代理对话记录会一起删掉，无法恢复。'
+    + (runningN ? '\n\n其中 ' + runningN + ' 个任务正在运行，会被跳过（先停止，再清空）。' : ''),
+    { title: '清空团队任务', ok: '清空' });
+  if (!ask) return;
+  const out = await cmd('teamwork.clear', { ws: t.ws });
+  if (!out || out.ok === false) { twRefresh(t.ws, false, true); return; }
+  const removed = Number(out.removed || 0), skipped = Number(out.skipped || 0);
+  // 只关被删掉的那些任务的浮窗：运行中被跳过的、以及存档浮窗（key 是 arch|…）
+  // 都留着 —— 关掉一个还在跑的任务的对话窗口是纯粹的打扰
+  for (const j of jobs) if (jobStatusClass(j.status) !== 'run') twCloseJobWins(t, j.id);
+  t._twOpen = {};
+  toast(skipped
+    ? '已删除 ' + removed + ' 个任务，' + skipped + ' 个运行中的已跳过（先停止再清空）'
+    : '已清空 ' + removed + ' 个任务',
+    skipped ? 'warn' : 'ok', 2600);
+  await twRefresh(t.ws, false, true);
+}
+
+/* 任务被删掉后，它的子代理浮窗还开着就成了孤儿（轮询会一直问一个不存在的
+   任务）：按浮窗 key「<jobId>|<worker>」前缀关掉那个任务的全部子代理窗口。 */
+function twCloseJobWins(t, jobId) {
+  if (!t || !t.wins || !jobId) return;
+  for (const key of [...t.wins.keys()]) {
+    if (String(key).indexOf(jobId + '|') === 0) closeFloatWin(t, key);
+  }
 }
 // 任务操作：命令成功后立刻重拉（并打时间戳），不再 setTimeout(400) 猜落盘时间
 function jobActionBtn(t, job, label, cls, name) {

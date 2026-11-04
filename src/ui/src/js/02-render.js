@@ -663,6 +663,42 @@ function restoreSidebarState() {
   const sb = $('#sidebar');
   if (sb) sb.classList.toggle('collapsed', col);
   paintSidebarToggle();
+  restoreSbSections();
+}
+
+/* ---- 侧栏：两段的折叠（FlowLink 工作区 / 工作区）-------------------
+   两段列表抢同一块高度：只想看对端工作区时，本机工作区那一段就是纯噪声。
+   段头左边的三角（.sb-sec-toggle）折叠这一段，状态和侧栏整体收起一样记在
+   localStorage 里。折叠只切 class —— 列表 DOM 不动，展开时不重建，滚动位置
+   与分组折叠状态都还在，也不会多打一次接口。 */
+const SB_SEC_KEY = 'cell.sbSecClosed';
+function loadSbSecState() {
+  try {
+    const v = JSON.parse(localStorage.getItem(SB_SEC_KEY) || '{}');
+    return (v && typeof v === 'object') ? v : {};
+  } catch (e) { return {}; }
+}
+function paintSbSection(sec, closed) {
+  if (!sec) return;
+  sec.classList.toggle('collapsed', !!closed);
+  const btn = sec.querySelector('.sb-sec-toggle');
+  if (!btn) return;
+  btn.setAttribute('aria-expanded', closed ? 'false' : 'true');
+  btn.title = (closed ? '展开' : '折叠') + (btn.dataset.secLabel || '');
+}
+function toggleSbSection(sec) {
+  if (!sec) return;
+  const closed = !sec.classList.contains('collapsed');
+  paintSbSection(sec, closed);
+  const st = loadSbSecState();
+  st[sec.id] = closed;
+  try { localStorage.setItem(SB_SEC_KEY, JSON.stringify(st)); } catch (e) {}
+  // 可用高度变了：侧栏里自适应的东西（贴底元素、滚动区）跟着算一次
+  if (typeof Layout !== 'undefined' && Layout.apply) setTimeout(() => Layout.apply(), 180);
+}
+function restoreSbSections() {
+  const st = loadSbSecState();
+  $$('.sb-section').forEach(sec => paintSbSection(sec, !!st[sec.id]));
 }
 function toggleSidebar() {
   const sb = $('#sidebar');
@@ -692,7 +728,11 @@ function toggleSidebarFilter() {
   inp.oninput = () => { S.sbFilter = inp.value; renderSidebar(); };
   inp.onkeydown = ev => { if (ev.key === 'Escape') { ev.stopPropagation(); toggleSidebarFilter(); } };
   wrap.appendChild(inp);
-  const sidebar = $('#sidebar');
-  sidebar.insertBefore(wrap, $('#sessionList'));
+  // 这一段折叠着就先把段头展开：否则筛选框会插进一段看不见的容器里
+  const sec = $('#sessionList') ? $('#sessionList').closest('.sb-section') : null;
+  if (sec && sec.classList.contains('collapsed')) toggleSbSection(sec);
+  // 插在列表自己的容器里：列表住在 .sb-section 内，不再是 #sidebar 的直接子节点
+  const list = $('#sessionList');
+  if (list) list.parentNode.insertBefore(wrap, list);
   inp.focus();
 }

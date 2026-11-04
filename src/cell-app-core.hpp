@@ -5601,6 +5601,75 @@ namespace app
                     r["message"] = "stop requested";
                     return r;
                 }
+                // 删除一条团队任务记录（Teamwork 面板卡片上的垃圾桶）。走
+                // cell::teamwork::remove_job —— 与 CLI 的 /teamwork remove 同一个
+                // 实现：摘掉 store 记录、删掉任务目录里的子代理对话、释放文件租约、
+                // 清掉可能残留的停止标志。运行中的任务拒绝删除（后台 runner 还在
+                // 往那个目录里写），先 stop 再来。
+                if (name == "teamwork.delete")
+                {
+                    std::lock_guard<std::mutex> lk(cmd_mx);
+                    workspace_ctx *c = target_ctx(args);
+                    if (!c)
+                        return fail("no workspace open");
+                    std::string job_id = args.value("id", "");
+                    if (job_id.empty())
+                        return fail("id is required");
+                    std::string out;
+                    bool removed = cell::teamwork::remove_job(job_id, false, out, c->h.now().id());
+                    bus.post({{"t", "teamwork_changed"}, {"ws", c->cwd_key}});
+                    if (!removed)
+                        return fail(out);
+                    nlohmann::json r = ok();
+                    r["message"] = out;
+                    r["removed"] = 1;
+                    r["skipped"] = 0;
+                    return r;
+                }
+                // 清空该会话的整张任务列表（面板标题栏的垃圾桶）：只清这台会话
+                // 看得见的那份 store，就是 teamwork.list 的来源。运行中的任务跳过
+                // 并在返回里报数——它们由 stop 负责，硬删会让 runner 写进已释放
+                // 的目录。逐条走 remove_job，所以目录/租约/停止标志的处理与单删一致。
+                if (name == "teamwork.clear")
+                {
+                    std::lock_guard<std::mutex> lk(cmd_mx);
+                    workspace_ctx *c = target_ctx(args);
+                    if (!c)
+                        return fail("no workspace open");
+                    std::string sid = c->h.now().id();
+                    std::vector<std::string> ids;
+                    {
+                        nlohmann::json store = cell::teamwork::load_store(sid);
+                        auto jobs = store.find("jobs");
+                        if (jobs != store.end() && jobs->is_object())
+                            for (auto &[id, job] : jobs->items())
+                                if (job.is_object())
+                                    ids.push_back(id);
+                    }
+                    size_t removed = 0, skipped = 0;
+                    std::string first_err;
+                    for (const auto &id : ids)
+                    {
+                        std::string out;
+                        if (cell::teamwork::remove_job(id, false, out, sid))
+                        {
+                            removed++;
+                            continue;
+                        }
+                        skipped++;
+                        if (first_err.empty())
+                            first_err = out;
+                    }
+                    bus.post({{"t", "teamwork_changed"}, {"ws", c->cwd_key}});
+                    nlohmann::json r = ok();
+                    r["removed"] = removed;
+                    r["skipped"] = skipped;
+                    r["message"] = std::format("removed {} teamwork job(s){}", removed,
+                                               skipped ? std::format(", skipped {} running", skipped) : "");
+                    if (skipped && !removed)
+                        r["error"] = first_err; // 全是运行中的：让 UI 能说清原因
+                    return r;
+                }
 
                 // ---- attachments -------------------------------------------
                 if (name == "upload")
