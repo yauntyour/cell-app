@@ -121,11 +121,14 @@ jobs:
       # find each other over UDP, pair with a 512-bit code and exchange
       # encrypted mail + rpc. This is the cross-platform gate for the whole
       # peer stack (libsodium, boost.asio and the sealed key files).
+      # the exe is a windowed (GUI-subsystem) binary: PowerShell's `&` returns as
+      # soon as it starts, so $LASTEXITCODE stays $null and the child is torn
+      # down with the step (the log ends mid-test, with no "N passed, M failed"
+      # summary). The msys2 shell waits for the process, so the exit code is the
+      # self-test's own.
       - name: FlowLink self-test
-        shell: pwsh
-        run: |
-          & build/cell-app.exe --smoke-flowlink
-          if ($LASTEXITCODE -ne 0) { throw "flowlink self-test failed ($LASTEXITCODE)" }
+        shell: msys2 {0}
+        run: ./build/cell-app.exe --smoke-flowlink
 
       # the point of the static build: the import table must not name anything
       # outside the Windows system DLLs (a stray libcurl/libsodium/zlib DLL

@@ -325,9 +325,9 @@ namespace app
     //  queueing, and a throwing sink is dropped silently.
     //
     //  post() is the hot path (every token, tool result and status line goes
-    //  through it), so the sink table is an immutable snapshot: publishers read
-    //  one atomic pointer and iterate without locking or copying, and the rare
-    //  add/remove rebuilds the snapshot instead.
+    //  through it), so the sink table is an immutable snapshot: publishers take
+    //  one reference to it and iterate without copying, and the rare add/remove
+    //  rebuilds the snapshot instead.
     // =====================================================================
     class event_bus
     {
@@ -337,26 +337,26 @@ namespace app
         int add(sink_fn fn)
         {
             std::lock_guard<std::mutex> lk(write_mx_);
-            auto next = std::make_shared<sinks>(*sinks_.load(std::memory_order_acquire));
+            auto next = std::make_shared<sinks>(*sinks_.load());
             const int id = next_++;
             next->emplace_back(id, std::move(fn));
-            sinks_.store(std::move(next), std::memory_order_release);
+            sinks_.store(std::move(next));
             return id;
         }
         void remove(int id)
         {
             std::lock_guard<std::mutex> lk(write_mx_);
-            auto next = std::make_shared<sinks>(*sinks_.load(std::memory_order_acquire));
+            auto next = std::make_shared<sinks>(*sinks_.load());
             if (!std::erase_if(*next, [id](const auto &s)
                                { return s.first == id; }))
                 return;
-            sinks_.store(std::move(next), std::memory_order_release);
+            sinks_.store(std::move(next));
         }
         void post(const nlohmann::json &ev)
         {
             // non-UTF-8 bytes must not take the whole event down
             const std::string line = ev.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
-            const auto snapshot = sinks_.load(std::memory_order_acquire);
+            const auto snapshot = sinks_.load();
             for (const auto &[id, fn] : *snapshot)
                 try
                 {
@@ -370,7 +370,9 @@ namespace app
     private:
         using sinks = std::vector<std::pair<int, sink_fn>>;
         std::mutex write_mx_; // add/remove only; post() never takes it
-        std::atomic<std::shared_ptr<const sinks>> sinks_{std::make_shared<const sinks>()};
+        // cell::atomic_shared, not std::atomic<shared_ptr>: libc++ (macOS) has
+        // never implemented the atomic<shared_ptr> specialization
+        cell::atomic_shared<const sinks> sinks_{std::make_shared<const sinks>()};
         int next_ = 1;
     };
 

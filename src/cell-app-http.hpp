@@ -398,6 +398,11 @@ namespace app
                 });
                 {
                     std::lock_guard<std::mutex> lk(conns_mx);
+                    // the handler drops its own conn when the client goes away;
+                    // pruning here keeps a long-lived page (every refresh opens
+                    // a stream) from growing this list for the life of the app
+                    std::erase_if(conns, [](const std::weak_ptr<sse_conn> &w)
+                                  { return w.expired(); });
                     conns.push_back(conn);
                 }
                 std::unique_lock<std::mutex> lk(conn->mx);
