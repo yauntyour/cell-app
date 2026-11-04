@@ -848,6 +848,12 @@ namespace app
                 if (f.value("client_id", "") == a.client_id() && f.value("port", 0) == port_a)
                     found_a = true;
         }
+        if (!found_a)
+            // the two ways this fails are very different: an ephemeral bound4
+            // means the second cell never shared the DNS-SD port at all, while
+            // bound4=47851 with no peers means the packets did not loop back
+            printf("     discovery detail: A bound4=%d B bound4=%d B saw %zu peer(s)\n",
+                   md_a.value("bound4", 0), st_b["mdns"].value("bound4", 0), b.discovered().size());
         check(found_a, "B discovers A through mDNS (client id + SRV port)");
         // ---- mutual pairing: one code each, then a link exists ------------
         {
