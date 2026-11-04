@@ -379,6 +379,9 @@ namespace app
         {
             std::string text;
             bool resume = false;
+            // queued by auto-continue rather than by the user: it counts against
+            // the chain cap, and a user message resets that chain
+            bool auto_continue = false;
         };
         std::mutex qmx;
         std::condition_variable qcv;
@@ -414,12 +417,12 @@ namespace app
         workspace_ctx(const workspace_ctx &) = delete;
         workspace_ctx &operator=(const workspace_ctx &) = delete;
 
-        void queue_turn(std::string text, bool resume = false)
+        void queue_turn(std::string text, bool resume = false, bool auto_continue = false)
         {
             if (text.empty() && !resume)
                 return;
             std::lock_guard<std::mutex> lk(qmx);
-            turns.push_back({std::move(text), resume});
+            turns.push_back({std::move(text), resume, auto_continue});
             qcv.notify_all();
         }
         void request_stop() { stop.store(true); }
@@ -462,6 +465,10 @@ namespace app
         // the shell installs the notification-area icon; called when the user
         // flips the tray switch (empty in --headless: no window, no icon)
         std::function<void(bool)> on_tray;
+
+        // 中断导致自动压缩之后，auto-continue 重新把话递给模型的原文。
+        // 一句话、不带上下文：压缩摘要已经把"做到哪一步"写清楚了。
+        static constexpr const char *kAutoContinuePrompt = "Continue to finish the work.";
 
         // ---- FlowLink ------------------------------------------------------
         // The service itself lives in the CORE (cell.cpp/cell.cpp, one file): one
@@ -573,6 +580,23 @@ namespace app
                     it = it->second.empty() ? fl_watched.erase(it) : std::next(it);
                 }
             }
+            // A remote terminal's byte stream arrives as a notification from the
+            // cell that owns the PTY. Re-publish it on this cell's bus, tagged
+            // remote: the terminal panel listens for term.out/exit/error like it
+            // does for a local shell, and the tag keeps a peer's `t1` from
+            // colliding with this machine's own `t1`.
+            if (ev.value("type", "") == "peer_event" && ev.value("method", "") == "term.event")
+            {
+                const nlohmann::json p = ev.value("params", nlohmann::json::object());
+                nlohmann::json inner = p.value("ev", nlohmann::json::object());
+                if (inner.is_object() && inner.contains("t"))
+                {
+                    if (p.contains("ws") && p["ws"].is_string())
+                        inner["ws"] = p["ws"];
+                    inner["remote"] = true;
+                    bus.post(inner);
+                }
+            }
             bus.post({{"t", "flowlink"}, {"ev", ev}});
         }
 
@@ -592,6 +616,11 @@ namespace app
         // (ws -> peer -> since). It never gets a channel to send anything —
         // agent.send is behind the workspace gate, this is behind its own.
         std::map<std::string, std::map<std::string, long long>> fl_watched;
+        // A peer opened a terminal in one of this cell's workspaces: its byte
+        // stream is on THIS bus (term::handle posts it here), so it has to be
+        // forwarded to whoever is looking. term id -> peer -> the tab key the
+        // peer's UI knows it by.
+        std::map<std::string, std::map<std::string, std::string>> fl_terms;
         int fl_sink = 0;
 
         void fl_relay_start()
@@ -604,6 +633,25 @@ namespace app
                 if (!ev.is_object())
                     return;
                 const std::string t = ev.value("t", "");
+                // remote terminals: forward the raw stream, tagged with the tab
+                // key the requesting side used, and stop there
+                if (t == "term.out" || t == "term.exit" || t == "term.error")
+                {
+                    std::map<std::string, std::string> subs;
+                    {
+                        std::lock_guard<std::mutex> lk(rt_mx);
+                        if (auto it = fl_terms.find(ev.value("id", "")); it != fl_terms.end())
+                            subs = it->second;
+                    }
+                    if (subs.empty())
+                        return;
+                    auto term_svc = cell::flowlink::service_instance();
+                    if (!term_svc)
+                        return;
+                    for (const auto &[who, tab_ws] : subs)
+                        term_svc->notify(who, "term.event", {{"ws", tab_ws}, {"ev", ev}});
+                    return;
+                }
                 if (t != "answer" && t != "reason" && t != "status" && t != "error" &&
                     t != "tool_begin" && t != "tool_end" && t != "turn_end")
                     return;
@@ -904,8 +952,93 @@ namespace app
                 }
                 return {{"ok", true}, {"models", r.value("models", nlohmann::json::array())}};
             }
+            // A FlowLink workspace tab reuses THIS cell's own UI: its right
+            // dock (files / git / terminal), the session chips (usage,
+            // background tasks) and the session actions (compact, save,
+            // export, clear) are the same commands the local tab would run.
+            // Rather than growing one RPC per panel, the peer serves the
+            // command by name behind a whitelist: the tab is a window onto
+            // one workspace, never a second control surface for the machine.
+            if (method == "ws.call"sv)
+            {
+                if (!acc_ws)
+                    return denied("workspace access");
+                const std::string m = cell::text::trim(params.value("method", ""));
+                if (m.empty())
+                {
+                    err = "ws.call needs a method";
+                    return nlohmann::json{};
+                }
+                if (!fl_ws_call_allowed(m))
+                {
+                    err = "FlowLink does not serve " + m + " to a remote workspace tab";
+                    return nlohmann::json{};
+                }
+                nlohmann::json a = params.value("args", nlohmann::json::object());
+                if (!a.is_object())
+                    a = nlohmann::json::object();
+                const std::string cwd = cell::text::trim(params.value("cwd", ""));
+                if (!cwd.empty())
+                {
+                    // resolve the directory to the workspace key this cell uses
+                    // (the same key the tab's turns land in), then let the
+                    // command run exactly as if this machine's UI had called it
+                    std::string why, key;
+                    {
+                        std::lock_guard<std::mutex> lk(cmd_mx);
+                        workspace_ctx *ctx = ensure_workspace(cwd, &why);
+                        if (!ctx)
+                        {
+                            err = why.empty() ? "could not open the workspace" : why;
+                            return nlohmann::json{};
+                        }
+                        key = ctx->cwd_key;
+                    }
+                    a["ws"] = key;
+                }
+                nlohmann::json r = exec_command(m, a);
+                // 终端：把这条 PTY 的输出绑到发起方的页签上（fl_relay_start
+                // 按 term id 转发）。关闭时解绑，别让对端一直收一条死流。
+                if (m.rfind("term.", 0) == 0)
+                {
+                    const std::string from = params.value("_from", "");
+                    const std::string tab_ws = params.value("local_ws", "");
+                    const std::string id = r.is_object() ? r.value("id", "") : std::string();
+                    const std::string tid = id.empty() ? a.value("id", "") : id;
+                    if (!from.empty() && !tab_ws.empty() && !tid.empty())
+                    {
+                        std::lock_guard<std::mutex> lk(rt_mx);
+                        if (m == "term.close")
+                            fl_terms.erase(tid);
+                        else
+                            fl_terms[tid][from] = tab_ws;
+                    }
+                }
+                return r;
+            }
             err = "unknown method: " + method_in;
             return nlohmann::json{};
+        }
+
+        // The remote tab may look at one workspace and drive its session; it
+        // may not reconfigure this machine (providers, keys, settings), open
+        // or delete workspaces, or touch the FlowLink service itself.
+        static bool fl_ws_call_allowed(const std::string &m)
+        {
+            static const std::set<std::string> exact = {
+                "compact.now",
+                "usages.summary",
+                "tasks.list", "tasks.output", "tasks.kill",
+                "sessions.list", "session.save", "session.export", "session.clear",
+                "session.history", "session.archives", "session.archive", "session.digest",
+                "teamwork.list", "teamwork.report", "teamwork.stop", "teamwork.resume",
+                "notice.list", "skills.list",
+                "git.init", "git.status", "git.log", "git.diff", "git.numstat",
+                "git.branches", "git.worktrees", "git.worktree.add", "git.worktree.remove",
+                "fs.list", "fs.read", "fs.find",
+                "term.open", "term.input", "term.resize", "term.close", "term.list", "term.exec",
+            };
+            return exact.contains(m);
         }
 
         // ---- FlowLink: the remote composer's settings ----------------------
@@ -2014,7 +2147,8 @@ namespace app
             { post({{"t", "turn_end"},
                     {"natural", tv.natural_end},
                     {"rounds", tv.rounds},
-                    {"tool_calls", tv.tool_calls}}); };
+                    {"tool_calls", tv.tool_calls},
+                    {"auto_compacted", tv.auto_compacted}}); };
             return ev;
         }
 
@@ -2024,10 +2158,15 @@ namespace app
         void worker_loop(workspace_ctx &ctx)
         {
             auto &log = cell::sys::logger::instance();
+            // 自动续跑的连续次数：中断→压缩→续跑 如果每次都撞上限，没有这个
+            // 计数就会无限循环（每轮都在花额度）。用户自己的消息把它清零。
+            int auto_chain = 0;
+            constexpr int kMaxAutoChain = 3;
             while (true)
             {
                 std::string text;
                 bool resume = false;
+                bool auto_turn = false;
                 bool compact_task = false;
                 {
                     std::unique_lock<std::mutex> lk(ctx.qmx);
@@ -2048,6 +2187,9 @@ namespace app
                         ctx.turns.pop_front();
                         text = std::move(task.text);
                         resume = task.resume;
+                        auto_turn = task.auto_continue;
+                        if (!auto_turn)
+                            auto_chain = 0;
                     }
                     // flip busy under BOTH qmx and hmx: qmx makes the settings
                     // activity check (busy || queued, under qmx) unable to miss a
@@ -2103,9 +2245,12 @@ namespace app
                     nlohmann::json e = {{"t", "turn_begin"}, {"ws", ctx.cwd_key}};
                     bus.post(e);
                 }
+                cell::engine::turn_view tv;
+                bool ran = false;
                 try
                 {
-                    ctx.eng->run_turn(text, resume, ev);
+                    tv = ctx.eng->run_turn(text, resume, ev);
+                    ran = true;
                 }
                 catch (const std::exception &e)
                 {
@@ -2114,6 +2259,22 @@ namespace app
                     bus.post(er);
                     nlohmann::json te = {{"t", "turn_end"}, {"ws", ctx.cwd_key}, {"natural", false}, {"rounds", 0}, {"tool_calls", 0}};
                     bus.post(te);
+                }
+                // 中断（轮次上限）→ 引擎在收尾时自动压缩了上下文：转录被重写、
+                // 模型又被从半路截断，这一回合没有任何东西能"接着跑"。开了
+                // auto_continue 就把话再说一遍，让它把活干完；没开就维持原样
+                // （会话停在中断处，等用户自己决定）。
+                if (ran && tv.auto_compacted && !tv.natural_end &&
+                    cfg.auto_continue && auto_chain < kMaxAutoChain && !ctx.quit && !shutting_down.load())
+                {
+                    ++auto_chain;
+                    log.info("llm", std::format("auto_continue chain={} ws={} rounds={}",
+                                               auto_chain, ctx.cwd_key, tv.rounds));
+                    bus.post({{"t", "status"},
+                              {"ws", ctx.cwd_key},
+                              {"d", std::format("[auto-continue {}/{}] {}", auto_chain, kMaxAutoChain,
+                                                kAutoContinuePrompt)}});
+                    ctx.queue_turn(kAutoContinuePrompt, false, true);
                 }
                 {
                     std::lock_guard<std::mutex> lk(ctx.hmx);
@@ -2284,6 +2445,7 @@ namespace app
             s["sandbox_mode"] = cell::box::mode_name(cell::box::sandbox_mode());
             s["autoallow"] = cfg.autoallow;
             s["compact_auto"] = cfg.compact_auto;
+            s["auto_continue"] = cfg.auto_continue;
             s["compact_provider"] = cfg.compact_provider;
             s["compact_model"] = cfg.compact_model;
             s["system_prompt"] = cfg.system_prompt;
@@ -3810,7 +3972,8 @@ namespace app
                     name == "flowlink.ws.add" || name == "flowlink.ws.remove" ||
                     name == "flowlink.ws.send" || name == "flowlink.ws.stop" ||
                     name == "flowlink.ws.watch" || name == "flowlink.ws.unwatch" ||
-                    name == "flowlink.ws.config" || name == "flowlink.ws.config.set")
+                    name == "flowlink.ws.config" || name == "flowlink.ws.config.set" ||
+                    name == "flowlink.ws.call")
                 {
                     std::string gerr;
                     if (!fl_can("access_workspace", gerr))
@@ -4004,6 +4167,42 @@ namespace app
                             out["models_error"] = merr;
                     }
                     return out;
+                }
+                // The remote tab's right dock and its session chips run the
+                // peer's own commands (fs.* / git.* / term.* / tasks.* /
+                // usages.summary / compact.now / session.*). One door, one
+                // whitelist on the far side: see fl_serve("ws.call").
+                if (name == "flowlink.ws.call")
+                {
+                    if (!fl_on())
+                        return ok_error("FlowLink is off — enable it first");
+                    auto svc = cell::flowlink::service_instance();
+                    const std::string peer = cell::flowlink::resolve_cell(args.value("cell", ""));
+                    if (!svc || peer.empty())
+                        return ok_error("unknown cell");
+                    const std::string m = cell::text::trim(args.value("method", ""));
+                    if (m.empty())
+                        return ok_error("method is required");
+                    nlohmann::json p{{"method", m}, {"cwd", args.value("cwd", "")}};
+                    if (args.contains("args"))
+                        p["args"] = args["args"];
+                    // 终端输出按"哪台机器发起"回传：对端把 PTY 的字节流绑到
+                    // 这个页签上（见 fl_serve("ws.call") 与 fl_relay_start）
+                    if (m.rfind("term.", 0) == 0)
+                        p["local_ws"] = args.value("local_ws", "");
+                    const int timeout = std::clamp(args.value("timeout", 20000), 1000, 300000);
+                    std::string err;
+                    nlohmann::json r = svc->call(peer, "ws.call", p, timeout, err);
+                    if (!err.empty())
+                        return ok_error(err);
+                    // the peer's own verdict travels unchanged: a panel that
+                    // asked for a file the peer cannot read must see that error,
+                    // not a hollow ok:true
+                    if (!r.is_object())
+                        r = nlohmann::json::object();
+                    if (!r.contains("ok"))
+                        r["ok"] = true;
+                    return r;
                 }
                 // the CLI's /link syntax, for any frontend: same parser, same text
                 if (name == "flowlink.exec")
@@ -5239,6 +5438,8 @@ namespace app
                 cfg.autoallow = p["autoallow"].get<bool>();
             if (p.contains("compact_auto"))
                 cfg.compact_auto = p["compact_auto"].get<bool>();
+            if (p.contains("auto_continue"))
+                cfg.auto_continue = p["auto_continue"].get<bool>();
             if (p.contains("compact_provider"))
                 cfg.compact_provider = cell::text::trim(p["compact_provider"].get<std::string>());
             if (p.contains("compact_model"))

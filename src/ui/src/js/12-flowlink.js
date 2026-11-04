@@ -1334,6 +1334,13 @@ async function openFlowWorkspace(cell, cwd, name, session) {
     // the turn settings belong to the peer: read them once so the composer
     // paints its real model / thinking / sandbox instead of a placeholder
     flLoadRemoteConf(t);
+    // 对端这个工作区当前在用的会话：chip（用量 / 后台任务）按会话统计，
+    // 没有它就只能显示「—」。顺带把对端的数字先取一次，页签一打开就是真值。
+    flResolveRemoteSession(t).then(() => {
+      if (S.tabs.get(key) !== t) return;
+      flRefreshRemoteUsage(t);
+      flRefreshRemoteTasks(t);
+    });
   } catch (e) { toast(e.message || String(e), 'bad'); }
 }
 
@@ -1525,6 +1532,87 @@ function flRemoteSlash(t, name, arg) {
   }
 }
 
+/* ---------- 对端工作区的通用 RPC -------------------------------------
+   远程页签复用本机的整套 UI，所以右栏（文件 / Git / 终端）、会话顶栏的
+   chip（用量 / 后台任务）和会话动作（压缩 / 保存 / 导出 / 清空）走的都是
+   **对端自己的命令名**：flowlink.ws.call 把它们连同一个 cwd 送过去，对端
+   按白名单执行，答案原样回来。面板与 chip 因此不需要知道对面是谁 —— 只要
+   把 api(...) 换成 flRemoteCall(...)。
+   mode==='watch' 是只读订阅：任何写操作都直接拒绝。                         */
+function flRemoteSessionId(t) {
+  const r = (t && t.remote) || null;
+  if (!r) return '';
+  return r.session || r.peerSession || '';
+}
+async function flRemoteCall(t, method, args, opts) {
+  if (!t || !t.remote) return { ok: false, error: 'not a FlowLink workspace' };
+  // 监视模式是只读订阅：读类命令放行（allowWatch），写类一律拒绝
+  if (t.remote.mode === 'watch' && !(opts && opts.allowWatch))
+    return { ok: false, error: '监视模式：只能看，不能改对端' };
+  const p = { cell: t.remote.cell, cwd: t.remote.cwd, method: method, args: args || {} };
+  if (opts && opts.timeout) p.timeout = opts.timeout;
+  // 终端：对端要把这条 PTY 的字节流绑到这个页签上（见 fl_serve 的 ws.call）
+  if (method.indexOf('term.') === 0) p.local_ws = t.ws;
+  try {
+    const out = await api('flowlink.ws.call', p);
+    if (out == null) return { ok: false, error: '空响应' };
+    return out;
+  } catch (e) { return { ok: false, error: String((e && e.message) || e || '远程调用失败') }; }
+}
+
+/* 对端这个工作区当前在用的会话 id。空会话的远程页签靠它把 chip 挂到对端的
+   数字上（用量 / 后台任务都是按会话统计的）。 */
+async function flResolveRemoteSession(t) {
+  if (!t || !t.remote || t.remote.mode === 'watch') return '';
+  if (flRemoteSessionId(t)) return flRemoteSessionId(t);
+  await flLoadSessions(t.remote.cell, t.remote.cwd, false);
+  const list = flSessions(t.remote.cell, t.remote.cwd);
+  const hit = list.find(s => s.active) || list[0];
+  if (hit && hit.id) {
+    t.remote.session = hit.id;
+    if (!t.remote.peerWs && hit.ws) t.remote.peerWs = hit.ws;
+  }
+  return (hit && hit.id) || '';
+}
+
+/* 对端的用量快照：结构与本机 S.usages 一致，只是落在页签上（一个对端一份，
+   不覆盖本机那份全局统计）。 */
+async function flRefreshRemoteUsage(t, force) {
+  if (!t || !t.remote || t.remote.mode === 'watch') return null;
+  const cur = t.remote.usage;
+  if (!force && cur && Date.now() - (cur.at || 0) < 20000) return cur;
+  if (t.remote.usageLoading) return cur || null;
+  t.remote.usageLoading = true;
+  try {
+    await flResolveRemoteSession(t);
+    const out = await flRemoteCall(t, 'usages.summary', {}, { allowWatch: true });
+    if (!out || out.ok === false) return cur || null;
+    const snap = {
+      at: Date.now(),
+      totals: out.totals || {},
+      models: out.models || [],
+      sessions: out.sessions || [],
+      totalSessions: out.total_sessions || (out.sessions || []).length,
+    };
+    t.remote.usage = snap;
+    paintChatUsage(t.ws);
+    return snap;
+  } finally { t.remote.usageLoading = false; }
+}
+
+/* 对端的后台任务快照（tasks.list 的同一份形状） */
+async function flRefreshRemoteTasks(t) {
+  if (!t || !t.remote || t.remote.mode === 'watch') return null;
+  await flResolveRemoteSession(t);
+  const out = await flRemoteCall(t, 'tasks.list', {}, { allowWatch: true });
+  if (!out || out.ok === false) return null;
+  t.remote.tasks = Array.isArray(out.tasks) ? out.tasks : [];
+  t.remote.tasksAt = Date.now();
+  paintChatTasks(t.ws);
+  if (S.tasksOpen) paintTasksPop();
+  return t.remote.tasks;
+}
+
 /* 输入框里的发送：远程工作区走 flowlink.ws.send，回合在对端跑 */
 async function flSendRemote(t) {
   const text = (t.composer.text || '').trim();
@@ -1558,6 +1646,13 @@ async function flSendRemote(t) {
     markChat(t.ws);
     markComposer(t.ws);
     schedule('tabbar', renderTabbar);
+    return;
+  }
+  // the peer tells us which session the turn landed in (it may have opened a
+  // new one): the chips and the next turn's "session" must follow it
+  if (out) {
+    if (out.session) t.remote.session = out.session;
+    if (out.ws) t.remote.peerWs = out.ws;
   }
 }
 

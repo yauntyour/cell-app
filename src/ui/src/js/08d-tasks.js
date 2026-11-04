@@ -19,11 +19,36 @@ const TASK_TAIL_BYTES = 4096;   // 行内预览取多少字节的输出尾巴
 function tasksAll() { return Array.isArray(S.tasks) ? S.tasks : []; }
 function tasksRunning() { return tasksAll().filter(t => t && t.running).length; }
 
+/* FlowLink 工作区：后台进程跑在对端，列表也来自对端（t.remote.tasks）。
+   页签自己带一份快照，切页签就是切机器，不会把两台机器的进程混在一起。 */
+function tasksOfTab(t) {
+  if (!t) return [];
+  if (t.remote) return Array.isArray(t.remote.tasks) ? t.remote.tasks : [];
+  return tasksOfSession(t.session);
+}
+function tasksCurrent() {
+  const t = S.tabs.get(S.active);
+  if (t && t.remote) return tasksOfTab(t);
+  return tasksAll();
+}
+/* 收到列表的时刻：运行中任务的耗时从这一刻往后推算 */
+function tasksNow() {
+  const t = S.tabs.get(S.active);
+  return (t && t.remote && t.remote.tasksAt) ? t.remote.tasksAt : S.tasksAt;
+}
+/* 任务相关的命令：远程页签落到对端，本机页签走本机 */
+function tasksCall(name, args) {
+  const t = S.tabs.get(S.active);
+  if (t && t.remote && typeof flRemoteCall === 'function')
+    return flRemoteCall(t, name, args || {}, { allowWatch: name !== 'tasks.kill' });
+  return api(name, args || {});
+}
+
 /* 已跑时长：引擎给的是收到列表那一刻的秒数，运行中的任务要加上之后流逝的时间 */
 function taskElapsed(t) {
   const base = Number(t && t.elapsed) || 0;
-  if (!t || !t.running || !S.tasksAt) return base;
-  return base + Math.max(0, (Date.now() - S.tasksAt) / 1000);
+  if (!t || !t.running || !tasksNow()) return base;
+  return base + Math.max(0, (Date.now() - tasksNow()) / 1000);
 }
 function taskDur(sec) {
   sec = Math.max(0, Math.floor(Number(sec) || 0));
@@ -58,7 +83,7 @@ function paintChatTasks(ws) {
   const b = head.querySelector('.ch-tasks');
   if (!b) return;
   const t = S.tabs.get(ws);
-  const mine = tasksOfSession(t && t.session);
+  const mine = tasksOfTab(t);
   const run = mine.filter(x => x.running).length;
   const val = $('.chu-val', b);
   b.classList.toggle('has-val', mine.length > 0);
@@ -85,6 +110,16 @@ function onTasksEvent(e) {
 
 /* 拉一次全量快照（启动时给 chip 一个数，浮层里的「刷新」也走这里） */
 async function refreshTasks(force) {
+  const t = S.tabs.get(S.active);
+  // 远程页签：进程在对端，列表也只能问对端
+  if (t && t.remote) {
+    if (typeof flRefreshRemoteTasks === 'function') {
+      await flRefreshRemoteTasks(t);
+      paintTasksChip();
+      if (S.tasksOpen) paintTasksPop();
+    }
+    return;
+  }
   if (!S.tasks.length && !force && S.tasksAt) return; // 事件已给过，别重复问
   const out = await cmd('tasks.list', {});
   if (!out || out.ok === false) return;
@@ -167,7 +202,7 @@ function openTasksPop(force) {
   tasksPop = { el: pop, anchor: anchor, out: out, key: key, resize: resize };
   S.tasksOpen = true;
   // 每次打开都从「当前会话」这一组看起，其余会话收起（按会话收纳）
-  S.tasksOpenGroups = new Set([((S.tabs.get(S.active) || {}).session) || '']);
+  S.tasksOpenGroups = new Set([tasksCurrentSession()]);
   paintTasksChip();
   paintTasksPop();
   refreshTasks(true);
@@ -180,7 +215,7 @@ function toggleTasksPop() { S.tasksOpen ? closeTasksPop() : openTasksPop(true); 
 /* 每秒的轻量刷新：只改文本，不重建列表（按 id 对行，分组后 DOM 顺序≠列表顺序） */
 function tickTasks() {
   if (!tasksPop) return;
-  const list = tasksAll();
+  const list = tasksCurrent();
   const items = tasksPop.el.querySelectorAll('.task-item');
   for (const node of items) {
     const t = list.find(x => x.id === node.dataset.id);
@@ -199,7 +234,7 @@ async function refreshTaskOutput(id) {
   if (tasksOutBusy || !tasksPop) return;
   tasksOutBusy = true;
   try {
-    const out = await api('tasks.output', { id: id });
+    const out = await tasksCall('tasks.output', { id: id });
     if (!out || !out.ok || typeof out.text !== 'string' || S.tasksShown !== id) return;
     const pre = tasksPop && tasksPop.el.querySelector('.task-out[data-id="' + id + '"] .task-pre');
     if (pre) pre.textContent = out.text;
@@ -213,13 +248,24 @@ async function refreshTaskOutput(id) {
 /* 会话名：优先用会话标题（侧栏里显示的那条），否则短 id */
 function taskSessionLabel(sid) {
   if (!sid) return '未归属会话';
+  const at = S.tabs.get(S.active);
+  if (at && at.remote && typeof flSessions === 'function') {
+    // 远程页签：标题在对端，本地 S.sessions 里没有这条会话
+    const s = flSessions(at.remote.cell, at.remote.cwd).find(x => x.id === sid);
+    if (s && s.title) return s.title;
+  }
   const s = (S.sessions || []).find(x => x.id === sid);
   return (s && s.title) || shortId(sid);
 }
+/* 当前页签所属的会话 id（远程页签记在 t.remote.session 上） */
+function tasksCurrentSession() {
+  const t = S.tabs.get(S.active) || {};
+  return (t.remote ? (t.remote.session || '') : (t.session || '')) || '';
+}
 function paintTasksPop() {
   if (!tasksPop) return;
-  const list = tasksAll();
-  const run = tasksRunning();
+  const list = tasksCurrent();
+  const run = list.filter(t => t && t.running).length;
   const sub = tasksPop.el.querySelector('.up-sub');
   if (sub) sub.textContent = list.length ? (run + ' 运行 / ' + list.length + ' 共') : '';
   const body = tasksPop.el.querySelector('.up-body');
@@ -232,7 +278,7 @@ function paintTasksPop() {
       '让 agent 用 exec(background=true) 起一个进程（开发服务器、watcher、长构建…），它会在自己的线程上跑，不占工具线程池，也不挡当前回合。'));
     body.appendChild(empty);
   } else {
-    const cur = ((S.tabs.get(S.active) || {}).session) || '';
+    const cur = tasksCurrentSession();
     const groups = new Map();               // session id -> tasks（保持注册表顺序）
     for (const t of list) {
       const k = (t && t.session) || '';
@@ -302,8 +348,13 @@ function taskRow(t) {
     bKill.onclick = async ev => {
       ev.stopPropagation();
       bKill.disabled = true;
-      const out = await cmd('tasks.kill', { id: t.id });
-      if (out && out.tasks) { S.tasks = out.tasks; S.tasksAt = Date.now(); paintTasksChip(); }
+      const out = await tasksCall('tasks.kill', { id: t.id });
+      const at = S.tabs.get(S.active);
+      if (out && out.tasks) {
+        if (at && at.remote) { at.remote.tasks = out.tasks; at.remote.tasksAt = Date.now(); }
+        else { S.tasks = out.tasks; S.tasksAt = Date.now(); }
+        paintTasksChip();
+      }
       if (out && out.message) toast(out.message, out.ok === false ? 'bad' : 'ok');
       paintTasksPop();
     };

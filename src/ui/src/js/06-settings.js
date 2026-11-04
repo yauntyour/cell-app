@@ -701,6 +701,10 @@ function buildContext(st) {
     switchRow('自动上下文压缩', !!st.compact_auto, v => setPatch({ compact_auto: v }),
       '历史超出模型窗口时自动总结较早的内容，避免请求被截断。'),
     el('div', 'set-divider'),
+    setCardHead('中断后自动继续'),
+    switchRow('auto-continue', !!st.auto_continue, v => setPatch({ auto_continue: v }),
+      '回合因中断结束（撞到轮次上限）并被自动压缩了上下文后，自动发一条「Continue to finish the work.」让模型接着把活干完。关闭时停在中断处，等你自己决定。'),
+    el('div', 'set-divider'),
     setCardHead('压缩专用模型'),
     el('div', 'set-hint', '留空则使用当前供应商与当前模型；也可以指定更便宜的模型专门做摘要。'),
     (() => {
@@ -1028,6 +1032,7 @@ function buildAbout(st) {
     ['工具调用', st.tools === false ? '已关闭' : '已开启'],
     ['思考级别', (lv ? lv.name + ' · ' + lv.desc : 'off')],
     ['上下文压缩', st.compact_auto ? '已开启' : '已关闭'],
+    ['中断后自动继续', st.auto_continue ? '已开启' : '已关闭'],
     ['工作区', (S.workspaces || []).length + ' 个已打开'],
     ['会话', (S.sessionsTotal || (S.sessions || []).length) + ' 条记录'],
   ];

@@ -593,14 +593,9 @@ function renderDock() {
   if (!S.dockOpen) return;
   const t = curTab();
   if (S.dock === 'start') { renderStartPanel(body, t); return; }
-  // FlowLink 工作区在执行在对端：本地文件 / Git / 终端面板对它没有意义
-  if (t && t.remote && (S.dock === 'files' || S.dock === 'git' || S.dock === 'terminal')) {
-    const box = el('div', 'empty');
-    box.appendChild(el('div', null, t.remote.mode === 'watch' ? '监视模式（只读）' : 'FlowLink 工作区（远程）'));
-    box.appendChild(el('div', 'tiny dim', t.remote.cwd + ' · 执行在对端 cell 上'));
-    body.replaceChildren(box);
-    return;
-  }
+  // FlowLink 工作区：面板显示的是**对端**那一侧的东西 —— 文件 / Git / 终端
+  // 的命令由 pnlApi 送到对端执行（见 fl_serve("ws.call")），所以这里不再
+  // 用一块占位符把整个右栏挡掉：同一个面板，换一个后端。
   if (window.Panels && Panels.has(S.dock)) {
     try { Panels.render(S.dock, body, t); } catch (e) { console.error(e); body.replaceChildren(el('div', 'empty', '面板渲染失败：' + e.message)); }
     return;

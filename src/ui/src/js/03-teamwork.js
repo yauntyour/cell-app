@@ -987,7 +987,24 @@ function makeDraggable(node, handle) {
    usages.summary（结构化：totals / models / sessions），全局一份，20s 内复用
    缓存；侧栏收起 / 点外面 / Esc 都会把浮层收回去。
    会话行可点：同/跨工作区都交给 session.select（后端按 cwd 索引打开）。   */
+/* 用量浮层的数据源：当前页签是 FlowLink 工作区时显示**对端**的统计
+   （对端的 usages.summary，落在 t.remote.usage 上），否则是本机那份。 */
+function usageData() {
+  const t = S.tabs.get(S.active);
+  if (t && t.remote) return t.remote.usage || null;
+  return S.usages || null;
+}
+function usageIsRemote() {
+  const t = S.tabs.get(S.active);
+  return !!(t && t.remote);
+}
 function refreshUsages(force) {
+  const at = S.tabs.get(S.active);
+  if (at && at.remote) {
+    if (typeof flRefreshRemoteUsage !== 'function') return;
+    flRefreshRemoteUsage(at, force).then(() => { paintUsageChip(); paintUsagePop(); });
+    return;
+  }
   if (S.usagesLoading) { if (force) S.usagesPending = true; return; } // 别把强刷丢掉
   if (!force && S.usages && Date.now() - (S.usages.at || 0) < 20000) return;
   S.usagesLoading = true;
@@ -1030,15 +1047,17 @@ function paintUsageChip() {
   const b = $('#navUsage');
   if (!b) return;
   const val = b.querySelector('.sb-uval');
-  const d = S.usages;
+  const d = usageData();
+  const who = usageIsRemote() ? '对端用量' : '用量统计';
   const tot = d ? (d.totals || {}) : { total_tokens: 0, requests: 0 };
   b.classList.toggle('has-val', !!d);
+  b.classList.toggle('remote', usageIsRemote());
   b.classList.toggle('on', !!S.usagesOpen);
   b.setAttribute('aria-expanded', S.usagesOpen ? 'true' : 'false');
   if (val) val.textContent = d ? fmtTok(tot.total_tokens) : '—';
   b.title = d
-    ? '用量统计 · ' + fmtTok(tot.total_tokens) + ' tokens / ' + (tot.requests || 0) + ' 请求（点击展开）'
-    : '用量统计（点击展开）';
+    ? who + ' · ' + fmtTok(tot.total_tokens) + ' tokens / ' + (tot.requests || 0) + ' 请求（点击展开）'
+    : who + '（点击展开）';
 }
 
 /* 收纳浮层：贴 chip 上方（放不下才翻到下方），宽度固定 340，超出视口内收 */
@@ -1110,9 +1129,11 @@ function openUsagePop(force) {
 function toggleUsagePop() { S.usagesOpen ? closeUsagePop() : openUsagePop(true); }
 function paintUsagePop() {
   if (!usagePop) return;
-  const d = S.usages;
+  const d = usageData();
   const sub = usagePop.el.querySelector('.up-sub');
-  if (sub) sub.textContent = d ? '更新于 ' + relTime(Math.floor(d.at / 1000)) : '正在统计…';
+  if (sub) sub.textContent = d
+    ? (usageIsRemote() ? '对端 · 更新于 ' : '更新于 ') + relTime(Math.floor(d.at / 1000))
+    : '正在统计…';
   const body = usagePop.el.querySelector('.up-body');
   if (body) renderUsageBody(body, 12);
   usagePopPlace(usagePop.el, usagePop.anchor); // 内容高度变了，重新贴边
@@ -1120,7 +1141,7 @@ function paintUsagePop() {
 /* 正文：总览方块 + 模型占比条 + 会话明细（limit = 最多列几条会话） */
 function renderUsageBody(body, limit) {
   body.replaceChildren();
-  const d = S.usages;
+  const d = usageData();
   if (!d) { body.appendChild(el('div', 'up-empty', '正在统计用量…')); return; }
   const tot = d.totals || {};
   const tiles = el('div', 'us-tiles');
@@ -1209,7 +1230,8 @@ function renderDockArchives(body, t) {
     { icon: 'refresh', title: '刷新存档列表', on: () => refreshArchives(t.ws, true) },
   ]);
   body.replaceChildren(head);
-  if (t.archivesFor !== t.session) {
+  const sid = (typeof tabSessionId === 'function') ? tabSessionId(t) : t.session;
+  if (t.archivesFor !== sid) {
     body.appendChild(pnlEmpty('正在加载存档列表…', 'archive'));
     refreshArchives(t.ws, false);
     return;
@@ -1260,7 +1282,11 @@ function openArchiveWindow(t, a) {
   ] : []);
   if (!w) return;
   w.body.replaceChildren(el('div', 'dim small', '正在加载存档…'));
-  cmd('session.archive', { ws: t.ws, id: t.session, name: a.name }).then(out => {
+  // FlowLink 工作区：存档在对端，读也由对端读
+  const p = (t && t.remote && typeof flRemoteCall === 'function')
+    ? flRemoteCall(t, 'session.archive', { id: tabSessionId(t), name: a.name }, { allowWatch: true })
+    : cmd('session.archive', { ws: t.ws, id: t.session, name: a.name });
+  p.then(out => {
     if (!w.alive) return;
     if (!out || out.ok === false) {
       w.body.replaceChildren(el('div', 'dim small', (out && out.error) || '加载失败'));

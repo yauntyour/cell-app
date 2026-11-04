@@ -323,6 +323,7 @@ lists the peers).
 | pairing | **mutual**: each side shows a 512-bit base62 code, types the other's; the link key is sealed with a key derived from *both* codes, so neither side can finish alone |
 | link key | 32 random bytes, sealed like the API-key vault, in `.cell/links/<client_id>/.key`; it only exists after both codes have been exchanged |
 | sessions | a peer's workspaces are browsable per workspace → its sessions; a session opens as a tab whose turn runs there (model / tools / sandbox stay theirs) |
+| remote tab | the tab IS the normal UI, backed by the peer: the right dock (files / git / terminal), the session chips (usage / background tasks) and the session actions (compact / save / export / clear) all run the peer's own commands through one whitelisted `ws.call` — the PTY, the files and the numbers are the peer's, never this machine's |
 | watch | monitor mode: a read-only subscription to one workspace's live output — no input, no settings |
 | transfers | one JSONL file per transfer in `.cell/links/<client_id>/`, indexed by `.cell/links/transmission.json` (time, bytes, sender, subject) |
 | identity | `.cell/links/identity.json` (`client_id` + display name) |
@@ -409,8 +410,8 @@ generous whitespace. All tokens live in `src/ui/src/css/00-tokens.css`.
 - **Slash commands** — `/` opens a fuzzy palette with descriptions and
   context-aware argument hints (sessions of the current workspace, models,
   providers, sandbox modes, jobs, …): `/new /session /model /provider
-  /think /tools /sandbox /autoallow /compact /stop /teamwork /notice
-  /workspace /theme /git /worktree /files /terminal /help`.
+  /think /tools /sandbox /autoallow /compact /auto-continue /stop /teamwork
+  /notice /workspace /theme /git /worktree /files /terminal /help`.
 - **Settings page** — providers, model, agent (thinking/tools/system
   prompt), sandbox, compaction, performance limits, theme and animation
   level; everything maps to the same config the CLI writes. Provider/model/
@@ -477,6 +478,19 @@ share the same command bus as everything else (`src/cell-app-tools.hpp`):
 
 These commands are local-only like the rest of the API: loopback + Host/Origin
 checks, no CORS, so they cannot be reached from another website.
+
+## Auto-continue after an interrupted turn
+
+A turn that hits the 200-round safety cap is aborted **and** auto-compacts its
+context (the only abort with a clean boundary): the model was cut off mid-task
+*and* the transcript it was working from has just been rewritten, so nothing can
+resume it as-is. `auto_continue` (Settings → 上下文, `/auto-continue [on|off]`,
+default **off**) makes the shell send one short line — `Continue to finish the
+work.` — right after such a compaction, so the run finishes instead of silently
+stopping. A user message resets the chain; three consecutive auto-continues in a
+row are the cap, so a model that keeps burning rounds cannot loop forever. With
+the switch off the old behaviour is untouched: the session stops where it was
+interrupted and waits for you.
 
 ## Cross-session file claims
 

@@ -2373,6 +2373,14 @@ async function execSlash(t, name, arg) {
   // 远程会话的模型 / 供应商 / 沙箱 / 工具 / 思考强度属于对端：命令不能落到
   // 本机的全局设置上（那看着生效、实际对那个会话毫无影响），改走对端 RPC。
   if (t && t.remote && flRemoteSlash(t, name, arg)) return;
+  // 会话本身的动作（新建 / 清空 / 选会话）落在对端：本机没有这个 workspace
+  if (t && t.remote) {
+    if (name === '/clear') return clearSession(t.ws);
+    if (name === '/new' || name === '/session') {
+      toast('FlowLink 工作区的会话在左侧「FlowLink 工作区」里选：点一个会话就在新页签里打开', 'info', 4200);
+      return;
+    }
+  }
   switch (name) {
     case '/new': return cmd('session.new', { ws: t.ws }).then(resync);
     case '/clear': return cmd('session.clear', { ws: t.ws }).then(resync);

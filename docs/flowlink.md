@@ -380,7 +380,7 @@ page — all default **off**:
 
 | grant | covers |
 |---|---|
-| `accept_workspace` | `ws.list`, `ws.sessions`, `ws.history`, `fs.*`, `agent.send`, `agent.stop` |
+| `accept_workspace` | `ws.list`, `ws.sessions`, `ws.history`, `ws.call`, `fs.*`, `agent.send`, `agent.stop` |
 | `accept_workflow` | `tw.new`, `tw.run` |
 | `accept_watch` | `ws.watch`, `ws.unwatch` |
 
@@ -397,6 +397,7 @@ workspace names).
 | `ws.config` | — | `{ok,config}` — how a turn runs **here**: `model`, `model_set`, `provider`, `providers`, `sandbox`, `tools`, `settings{think_level,…}` |
 | `ws.config.set` | `{patch:{provider?,model?,think_level?,tools?,sandbox_mode?,autoallow?}}` | `{ok,config}` — writes this machine's turn settings |
 | `ws.models` | — | `{ok,models:[…]}` — this cell's provider model list (a network call) |
+| `ws.call` | `{method,cwd,args?,local_ws?}` | the reply of `method`, run by this cell with `ws` resolved from `cwd` — the remote tab's right dock and session chips (see below) |
 | `fs.ls` | `{path}` | `{path,items:[{name,dir,size}]}` |
 | `fs.read` | `{path}` | `{path,size,text}` (≤ 512 KiB, text only) |
 | `fs.stat` | `{path}` | `{path,dir,size}` |
@@ -413,6 +414,20 @@ peer with **its own** providers and keys; only the report travels back. A
 watched stream is one-way: `agent.event` frames arrive with `watch:true`, and
 there is no method a watcher can use to send anything (that needs
 `accept_workspace`, which is a different switch).
+
+`ws.call` is the one door the remote tab uses for everything else the normal UI
+does: the right dock (`fs.list` / `fs.read` / `fs.find`, the `git.*` helpers,
+`term.open` / `term.input` / `term.resize` / `term.close` / `term.list` /
+`term.exec`), the session chips (`usages.summary`, `tasks.list` /
+`tasks.output` / `tasks.kill`) and the session actions (`compact.now`,
+`session.save` / `export` / `clear` / `history` / `archives` / `archive`,
+`teamwork.list`, …). It is a **whitelist**, not a proxy: the peer's settings,
+providers, keys, workspace open/close/delete and the FlowLink service itself are
+never reachable this way, and the command runs exactly as if this machine's own
+UI had called it (same `ws`, same cwd). A terminal opened this way streams its
+PTY back as `term.event` notifications tagged with the requesting tab
+(`local_ws`), which the caller re-publishes on its own bus; the ids are
+prefixed on the caller's side so a peer's `t1` cannot collide with a local one.
 
 `ws.config*` is behind the same `accept_workspace` grant as `agent.send`: whoever
 may start a turn on this machine may also say **which** model it runs with.

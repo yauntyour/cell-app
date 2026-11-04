@@ -436,6 +436,9 @@ function listSkills() {
 /* 会话类指令（对齐 CLI /save、/export、/reload、/provides） */
 function saveSession(ws) {
   ws = ws || S.active;
+  // FlowLink 工作区：转录在对端，写盘也得让对端写
+  const rt = S.tabs.get(ws);
+  if (rt && rt.remote) return saveRemoteSession(rt);
   return cmd('session.save', { ws: ws }).then(out => {
     if (!out || out.ok === false) {
       const err = String((out && out.error) || '');
@@ -445,10 +448,23 @@ function saveSession(ws) {
     toast('会话已保存（' + out.msgs + ' 条消息）', 'ok');
   });
 }
+/* 对端页签的「立刻写盘」：对端的 session.save，消息条数来自对端的转录 */
+async function saveRemoteSession(t) {
+  if (t.remote.mode === 'watch') { toast('监视模式：只能看，不能改对端', 'info'); return; }
+  const out = await flRemoteCall(t, 'session.save', {});
+  if (!out || out.ok === false) {
+    const err = String((out && out.error) || '');
+    toast(err.indexOf('a turn is running') >= 0 ? '对端回合进行中，结束后再保存' : (err || '对端保存失败'), 'bad');
+    return;
+  }
+  toast('对端会话已写盘（' + (out.msgs == null ? '?' : out.msgs) + ' 条消息）', 'ok');
+}
 // 导出为自包含 HTML。saved 给存档名（对齐 CLI /export saved NAME）时导出的
 // 是那份压缩存档，而不是当前会话的完整转录。
 function exportSession(t, path, saved) {
   const ws = (t && t.ws) || S.active;
+  // FlowLink 工作区：转录在对端，导出的文件也落在对端的机器上
+  if (t && t.remote) return exportRemoteSession(t, saved);
   const args = { ws: ws, path: path || '' };
   if (saved) args.saved = saved;
   return cmd('session.export', args).then(out => {
@@ -467,6 +483,20 @@ function exportArchive(t, a) {
   if (!a || !a.name) return;
   return exportSession(t, '', a.name);
 }
+/* 对端页签的导出：HTML 由对端生成、落在对端的磁盘上（路径原样回显，
+   免得让人以为文件在本机） */
+async function exportRemoteSession(t, saved) {
+  const args = {};
+  if (saved) args.saved = saved;
+  const out = await flRemoteCall(t, 'session.export', args, { timeout: 60000, allowWatch: true });
+  if (!out || out.ok === false) {
+    const err = String((out && out.error) || '');
+    toast(err.indexOf('a turn is running') >= 0 ? '对端回合进行中，结束后再导出' : (err || '对端导出失败'), 'bad', 5200);
+    return;
+  }
+  const hit = out.saved ? ('存档 ' + (out.what || saved) + ' 的 ') : '';
+  toast('对端已导出' + hit + out.msgs + ' 条消息 → ' + out.path + '（在对端机器上）', 'ok', 8000);
+}
 // notice-* 归档是通知快照（{id,from,topic,body,state}），不是消息转录，导不出 HTML
 function archiveExportable(a) {
   return !!a && !!a.name && !String(a.name).startsWith('notice-');
@@ -475,12 +505,32 @@ function archiveExportable(a) {
 // compact_begin / compact_end 事件，这里只负责投递
 function compactNow(ws) {
   ws = ws || S.active;
+  // FlowLink 工作区：上下文在对端，压缩也在对端跑（进度事件不跨机回传，
+  // 这里给一个明确的回执，再把重写后的转录拉回来）
+  const rt = S.tabs.get(ws);
+  if (rt && rt.remote) return compactRemote(rt);
   return cmd('compact.now', { ws: ws }).then(out => {
     if (!out || out.ok === false) {
       const err = String((out && out.error) || '');
       toast(err.indexOf('a turn is running') >= 0 ? '回合进行中，结束后再压缩' : (err || '压缩启动失败'), 'bad');
     }
   });
+}
+async function compactRemote(t) {
+  if (t.remote.mode === 'watch') { toast('监视模式：只能看，不能改对端', 'info'); return; }
+  const out = await flRemoteCall(t, 'compact.now', {});
+  if (!out || out.ok === false) {
+    const err = String((out && out.error) || '');
+    toast(err.indexOf('a turn is running') >= 0 ? '对端回合进行中，结束后再压缩' : (err || '对端拒绝了压缩请求'), 'bad');
+    return;
+  }
+  toast('已让对端压缩上下文', 'ok');
+  // 压缩在对端的 worker 里跑，几百毫秒到几秒；之后把重写后的转录取回来
+  setTimeout(() => {
+    if (S.tabs.get(t.ws) !== t) return;
+    const sid = (typeof flRemoteSessionId === 'function') ? flRemoteSessionId(t) : '';
+    if (sid) flLoadRemoteHistory(t.ws, t.remote.cell, t.remote.cwd, sid);
+  }, 2500);
 }
 function resumeTurn(t) {
   const ws = (t && t.ws) || S.active;
@@ -743,6 +793,12 @@ function applyHello(st, rebuild, opts) {
   }
 
   const ws = st.ws || st.active || '';
+  // FlowLink 工作区不是后端的 workspace：每次 state 都带着"本机当前活动工作区"，
+  // 让它覆盖选中项的话，远程页签会在下一次刷新（回合结束、2 秒轮询、任何
+  // 状态变化）时被弹回本机视图 —— 用户看到的就是"对端的主界面顶掉了会话"。
+  // 只要当前选中的是远程页签且它还活着，就保持不动。
+  const heldTab = S.tabs.get(S.active);
+  const holdRemote = !!(heldTab && heldTab.remote);
   if (ws) {
     const t = tab(ws);
     if (st.cwd) t.cwd = st.cwd;
@@ -770,9 +826,9 @@ function applyHello(st, rebuild, opts) {
       t.detailSession = '';
       loadSessionDetail(ws, t.session);
     }
-    if (!opts.keepActive && (!S.active || rebuild)) S.active = ws;
+    if (!opts.keepActive && !holdRemote && (!S.active || rebuild)) S.active = ws;
   }
-  if (!opts.keepActive && st.active && S.tabOrder.includes(st.active)) S.active = st.active;
+  if (!opts.keepActive && !holdRemote && st.active && S.tabOrder.includes(st.active)) S.active = st.active;
   // never keep a tab selected that no longer exists (workspace closed/deleted)
   if (S.active && !S.tabOrder.includes(S.active))
     S.active = (st.active && S.tabOrder.includes(st.active)) ? st.active : (S.tabOrder[0] || '');
@@ -811,6 +867,9 @@ function removeTab(ws) {
   paintNav();
   const pane = $('#pane-' + cssId(ws));
   if (pane) pane.remove();
+  // 页签栏也要跟着少一个：FlowLink 工作区关掉后 tabOrder 可能变成空的，
+  // 那条只剩 DOM 的旧页签会一直挂在那里（看着像"还停在对端"）
+  if (typeof renderTabbar === 'function') schedule('tabbar', renderTabbar);
 }
 
 /* ---------- 回合与流式 --------------------------------------------- */
@@ -1056,7 +1115,11 @@ async function refreshSessions() {
 async function refreshTeamwork(ws, quiet) {
   if (!ws) return null;
   let out;
-  if (quiet) { try { out = await api('teamwork.list', { ws: ws }); } catch (e) { return null; } }
+  const rt = S.tabs.get(ws);
+  // FlowLink 工作区：团队任务跑在对端，列表也只能问对端
+  if (rt && rt.remote && typeof flRemoteCall === 'function') {
+    out = await flRemoteCall(rt, 'teamwork.list', {}, { allowWatch: true });
+  } else if (quiet) { try { out = await api('teamwork.list', { ws: ws }); } catch (e) { return null; } }
   else out = await cmd('teamwork.list', { ws: ws });
   const t = S.tabs.get(ws); if (!t) return null;
   if (out && out.jobs) {
@@ -1080,6 +1143,10 @@ function scheduleTeamworkRefresh(ws) {
 }
 async function refreshNotices(ws) {
   if (!ws) return;
+  // FlowLink 工作区：通知是本机总线上的一条条投递，对端的工作区在本机没有
+  // 对应的 workspace，问也是一句「no workspace open」——面板留空即可
+  const rt = S.tabs.get(ws);
+  if (rt && rt.remote) { rt.noticesLoaded = true; schedule('dock', renderDock); return; }
   const out = await cmd('notice.list', { ws: ws });
   const t = S.tabs.get(ws); if (!t) return;
   t.noticesLoaded = true;
@@ -1100,15 +1167,26 @@ async function refreshNotices(ws) {
 async function refreshArchives(ws, force) {
   if (!ws) return;
   const t = S.tabs.get(ws); if (!t) return;
-  if (!force && t.archivesFor === t.session) return;
-  t.archivesFor = t.session; // 先占位，防止并发重复拉取
-  const out = await cmd('session.archives', { ws: ws, id: t.session });
+  // FlowLink 工作区：存档在对端，会话 id 也是对端的
+  const sid = tabSessionId(t);
+  if (!sid) return;
+  if (!force && t.archivesFor === sid) return;
+  t.archivesFor = sid; // 先占位，防止并发重复拉取
+  const out = t.remote
+    ? await flRemoteCall(t, 'session.archives', { id: sid }, { allowWatch: true })
+    : await cmd('session.archives', { ws: ws, id: t.session });
   const t2 = S.tabs.get(ws); if (!t2) return;
   if (out && out.ok !== false && Array.isArray(out.archives)) t2.archives = out.archives;
   else t2.archivesFor = ''; // 失败允许重试
   schedule('dock', renderDock);
   // 正在敲 /export 的存档名 → 候选刚拉回来，重建一次面板
   if (t2.composer && /^\/export\b/.test(t2.composer.text || '') && typeof buildSlash === 'function') buildSlash();
+}
+/* 页签对应的会话 id：本机页签是 t.session，FlowLink 页签是对端的会话 */
+function tabSessionId(t) {
+  if (!t) return '';
+  if (t.remote) return (typeof flRemoteSessionId === 'function' ? flRemoteSessionId(t) : '') || '';
+  return t.session || '';
 }
 function markChatTeamwork(ws) { if (ws === S.active) schedule('dock', renderDock); }
 

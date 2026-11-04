@@ -783,13 +783,40 @@
     });
   }
 
-  /* ---------- 4. 后端会话 ---------- */
+  /* ---------- 4. 后端会话 ----------
+     FlowLink 工作区的终端跑在**对端**：term.* 命令原样送到对端（见
+     cell-app-core 的 ws.call），输出由对端经 FlowLink 回传后重新发到本机
+     总线（带 remote 标记）。对端的终端 id 是它自己的计数器（t1、t2…），
+     与本机正在用的 id 必然相撞，所以这里给对端的 id 加来源前缀：
+     发出去时还原，收回来时再加。 */
+  var remoteTermIds = {};   // localId -> peerId
+
+  function termApi(name, args) {
+    var t = (typeof S !== 'undefined' && args) ? S.tabs.get(args.ws) : null;
+    if (!(t && t.remote && typeof flRemoteCall === 'function')) return api(name, args);
+    var a = {};
+    for (var k in args) if (Object.prototype.hasOwnProperty.call(args, k)) a[k] = args[k];
+    delete a.ws; delete a.cwd;
+    if (name !== 'term.open' && a.id && remoteTermIds[a.id]) a.id = remoteTermIds[a.id];
+    var localId = args && args.id;
+    return flRemoteCall(t, name, a, { timeout: 60000 }).then(function (res) {
+      if (name === 'term.open' && res && res.ok !== false && res.id) {
+        var peerId = String(res.id);
+        var lid = 'fl-' + peerId;
+        remoteTermIds[lid] = peerId;
+        res.id = lid;
+      }
+      if (name === 'term.close' && localId) delete remoteTermIds[localId];
+      return res;
+    });
+  }
+
   function sendBytes(view, bytes) {
     if (!bytes || !bytes.length) return;
     if (view.demo) { if (view.shell) view.shell.input(bytes); return; }
     if (!view.id || view.alive === false) return;
     var payload = { ws: view.ws, id: view.id, data: b64FromBytes(bytes) };
-    api('term.input', payload).catch(function () {});
+    termApi('term.input', payload).catch(function () {});
   }
   function sendText(view, text) {
     try { sendBytes(view, new TextEncoder().encode(String(text))); } catch (e) {}
@@ -857,7 +884,7 @@
     if (view.attachId) payload.id = view.attachId;         // 接管已有会话（刷新 / 切页签）
     else payload.new = true;                               // 每次新建都是独立 shell
     if (view.wantName) payload.name = view.wantName;
-    api('term.open', payload)
+    termApi('term.open', payload)
       .then(function (res) {
         if (!view.removed && view.root) {
           if (!res || res.ok === false) {
@@ -898,7 +925,7 @@
     view.cols = geo.cols; view.rows = geo.rows;
     schedule(view, true);
     if (view.demo || !view.id || view.alive === false) return;
-    api('term.resize', { ws: view.ws, id: view.id, cols: geo.cols, rows: geo.rows }).catch(function () {});
+    termApi('term.resize', { ws: view.ws, id: view.id, cols: geo.cols, rows: geo.rows }).catch(function () {});
   }
 
   function observe(view) {
@@ -1312,7 +1339,7 @@
       view.wantFocus = false;
       view.alive = false;
       var p = (demo || !id) ? Promise.resolve(true)
-        : api('term.close', { ws: ws, id: id }).then(function () { return true; }, function () { return false; });
+        : termApi('term.close', { ws: ws, id: id }).then(function () { return true; }, function () { return false; });
       CellTerm.unmount(view);
       if (id) delete views[id];
       view.id = null;
@@ -1330,7 +1357,7 @@
       view.scrollOffset = 0;
       schedule(view, true);
       if (view.demo) { view.shell = new DemoShell(view); view.shell.start(); notify(view, { kind: 'demo', text: '演示模式' }); return Promise.resolve(true); }
-      var closeP = old ? api('term.close', { ws: view.ws, id: old }).catch(function () {}) : Promise.resolve();
+      var closeP = old ? termApi('term.close', { ws: view.ws, id: old }).catch(function () {}) : Promise.resolve();
       return closeP.then(function () {
         if (old) delete views[old];
         if (view.closingId === old) view.closingId = null;
@@ -1366,6 +1393,8 @@
     },
     onEvent: function (e) {
       if (!e || !e.t) return false;
+      // 对端终端的 id 加上来源前缀，与 termApi 发出去时还原的那套对应
+      if (e.remote && e.id) e.id = 'fl-' + e.id;
       if (e.t === 'term.out') {
         var v = views[e.id];
         if (!v) { if (e.id) stashPending(e); return true; }

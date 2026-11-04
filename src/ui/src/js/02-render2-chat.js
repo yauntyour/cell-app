@@ -288,12 +288,18 @@ function renderChatHead(ws) {
   if (!head) return;
   const t = tab(ws);
   let title = baseName(cwdOf(ws)) || shortId(ws);
-  if (t && t.session) {
+  // FlowLink 工作区：标题取对端的工作区名（页签名同源），不拿 link:… 当标题
+  if (t && t.remote) {
+    title = t.remote.name || baseName(t.remote.cwd) || title;
+  } else if (t && t.session) {
     const s = (S.sessions || []).find(x => x.ws === ws && x.id === t.session);
     if (s) title = s.title || shortId(s.id);
   }
   const tt = $('.cht-title', head);
-  if (tt) { tt.textContent = title; tt.title = title; }
+  if (tt) {
+    tt.textContent = title;
+    tt.title = (t && t.remote ? (flPeerLabel(t.remote.cell) + ' · ') : '') + ((t && (t.remote ? t.remote.cwd : t.cwd)) || ws);
+  }
   paintChatUsage(ws);
   // 切会话换的是「这一栏属于谁」：任务 chip 的数字也跟着换
   if (typeof paintChatTasks === 'function') paintChatTasks(ws);
@@ -307,10 +313,23 @@ function fmtInt(n) {
   const v = Math.round(Number(n) || 0);
   return String(v).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 }
+/* 本会话的用量快照：本机页签读全局 S.usages，FlowLink 页签读对端那份
+   （t.remote.usage，会话 id 也是对端的）。 */
+function chatUsageData(ws) {
+  const t = S.tabs.get(ws);
+  if (t && t.remote) return t.remote.usage || null;
+  return S.usages || null;
+}
 function chatUsageRecord(ws) {
   const t = S.tabs.get(ws);
-  if (!t || !t.session || !S.usages) return null;
-  return (S.usages.sessions || []).find(s => s.id === t.session) || null;
+  if (!t) return null;
+  const d = chatUsageData(ws);
+  if (!d) return null;
+  const sid = t.remote
+    ? ((typeof flRemoteSessionId === 'function' ? flRemoteSessionId(t) : '') || t.remote.session || '')
+    : (t.session || '');
+  if (!sid) return null;
+  return (d.sessions || []).find(s => s.id === sid) || null;
 }
 // total 缺失时按 in+out 兜底：个别供应商只回其中一项
 function chatUsageTotal(rec) {
@@ -346,11 +365,15 @@ function paintChatUsage(ws) {
   if (rec) {
     const tot = chatUsageTotal(rec);
     if (val) val.textContent = fmtInt(tot);
-    b.title = '本会话用量 · 输入 ' + fmtInt(rec.input_tokens) + ' · 输出 '
+    const who = (S.tabs.get(ws) || {}).remote ? '对端会话用量' : '本会话用量';
+    b.title = who + ' · 输入 ' + fmtInt(rec.input_tokens) + ' · 输出 '
       + fmtInt(rec.output_tokens) + ' · 合计 ' + fmtInt(tot) + ' tokens（点击查看明细）';
   } else {
     if (val) val.textContent = '—';
-    b.title = S.usages ? '本会话还没有用量记录（点击查看）' : '正在统计用量…';
+    const rt = S.tabs.get(ws);
+    b.title = (rt && rt.remote)
+      ? '对端会话还没有用量记录（点击查看）'
+      : (S.usages ? '本会话还没有用量记录（点击查看）' : '正在统计用量…');
   }
   if (on) renderChatUsageBody();
 }
@@ -401,7 +424,7 @@ function openChatUsagePop(ws, anchor) {
   bRefresh.title = '重新统计';
   bRefresh.setAttribute('aria-label', '重新统计');
   bRefresh.appendChild(iconEl('refresh', 'sm'));
-  bRefresh.onclick = () => refreshUsages(true);
+  bRefresh.onclick = () => refreshChatUsage(ws, true);
   head.appendChild(bRefresh);
   const bClose = el('button', 'icon-btn sm');
   bClose.type = 'button';
@@ -427,9 +450,22 @@ function openChatUsagePop(ws, anchor) {
   window.addEventListener('resize', resize);
   chatUsagePop = { el: pop, anchor: anchor, ws: ws, out: out, key: key, resize: resize };
   paintChatUsage(ws);
-  refreshUsages(false);
+  refreshChatUsage(ws, false);
   renderChatUsageBody();
   chatUsagePlace(pop, anchor);
+}
+/* 本机页签统计本机，FlowLink 页签统计对端：同一个浮层，两种数据源 */
+function refreshChatUsage(ws, force) {
+  const t = S.tabs.get(ws);
+  if (t && t.remote) {
+    if (typeof flRefreshRemoteUsage !== 'function') return;
+    flRefreshRemoteUsage(t, force).then(() => {
+      paintChatUsage(ws);
+      if (chatUsagePop && chatUsagePop.ws === ws) renderChatUsageBody();
+    });
+    return;
+  }
+  refreshUsages(force);
 }
 function renderChatUsageBody() {
   if (!chatUsagePop) return;
@@ -437,9 +473,10 @@ function renderChatUsageBody() {
   const body = chatUsagePop.el.querySelector('.up-body');
   if (!body) return;
   const sub = chatUsagePop.el.querySelector('.up-sub');
-  const d = S.usages;
+  const d = chatUsageData(ws);
   const rec = chatUsageRecord(ws);
-  if (sub) sub.textContent = d ? '更新于 ' + relTime(Math.floor(d.at / 1000)) : '正在统计…';
+  const remote = !!((S.tabs.get(ws) || {}).remote);
+  if (sub) sub.textContent = d ? ((remote ? '对端 · 更新于 ' : '更新于 ') + relTime(Math.floor(d.at / 1000))) : '正在统计…';
   body.replaceChildren();
   if (!rec) {
     body.appendChild(el('div', 'up-empty', d
@@ -484,6 +521,20 @@ function renderChatUsageBody() {
 // 清空当前会话上下文（/clear 的按钮入口；会先中断正在进行的回合）
 async function clearSession(ws) {
   if (!(await confirmDlg('清空当前会话的全部上下文？此操作不可撤销（会先中断正在进行的回合）。', { title: '清空上下文', ok: '清空' }))) return;
+  const rt = S.tabs.get(ws);
+  // FlowLink 工作区：上下文在对端，清空也只能让对端清
+  if (rt && rt.remote) {
+    if (rt.remote.mode === 'watch') { toast('监视模式：只能看，不能改对端', 'info'); return; }
+    const ro = await flRemoteCall(rt, 'session.clear', {});
+    if (!ro || ro.ok === false) { toast((ro && ro.error) || '对端清空失败', 'bad'); return; }
+    rt.msgs = [];
+    rt._turnMeta = null;
+    rt._turnSnap = null;
+    rt._md = new Map();
+    markChat(ws);
+    toast('对端上下文已清空', 'ok');
+    return;
+  }
   const out = await cmd('session.clear', { ws });
   if (out && out.ok === false) { toast(out.error || '清空失败', 'bad'); return; }
   // 清空后会话 id 不变，上一回合的产物卡/快照要一起作废，否则新回合会先
@@ -536,11 +587,13 @@ function renderPanes() {
     const pane = ensurePane(ws);
     pane.classList.toggle('active', ws === S.active);
   }
+  // 一个页签的 DOM 只该在页签本身消失时被拆掉：S.tabs 里的（包括只在
+  // 前端存在的 FlowLink 工作区）都算活着
+  const live = new Set(S.tabOrder.map(cssId));
+  for (const k of S.tabs.keys()) live.add(cssId(k));
   for (const p of Array.from($$('.tabpane'))) {
     if (p.id === 'pane-empty') { p.remove(); continue; }
-    const ws = p.id.replace(/^pane-/, '');
-    const found = S.tabOrder.some(k => cssId(k) === ws);
-    if (!found) p.remove();
+    if (!live.has(p.id.replace(/^pane-/, ''))) p.remove();
   }
   renderNoWs();
   if (S.active) {
@@ -555,7 +608,11 @@ function renderNoWs() {
   const view = $('#tabview');
   if (!view) return;
   let pane = document.getElementById('pane-empty');
-  const empty = S.tabOrder.length === 0;
+  // FlowLink 工作区不是后端的 workspace：它们只在 S.tabs 里。判断"没有工作区"
+  // 要把它们算进来，否则远程页签开着的时候，本机的「打开一个工作区开始」
+  // 会重新冒出来，铺在远程转录底下（两层界面叠在一起）。
+  const anyRemote = Array.from(S.tabs.values()).some(t => t && t.remote);
+  const empty = S.tabOrder.length === 0 && !anyRemote;
   if (!empty) { if (pane) pane.remove(); return; }
   if (!pane) {
     pane = el('div', 'tabpane active'); pane.id = 'pane-empty';

@@ -4856,6 +4856,9 @@ function listSkills() {
 /* 会话类指令（对齐 CLI /save、/export、/reload、/provides） */
 function saveSession(ws) {
   ws = ws || S.active;
+  // FlowLink 工作区：转录在对端，写盘也得让对端写
+  const rt = S.tabs.get(ws);
+  if (rt && rt.remote) return saveRemoteSession(rt);
   return cmd('session.save', { ws: ws }).then(out => {
     if (!out || out.ok === false) {
       const err = String((out && out.error) || '');
@@ -4865,10 +4868,23 @@ function saveSession(ws) {
     toast('会话已保存（' + out.msgs + ' 条消息）', 'ok');
   });
 }
+/* 对端页签的「立刻写盘」：对端的 session.save，消息条数来自对端的转录 */
+async function saveRemoteSession(t) {
+  if (t.remote.mode === 'watch') { toast('监视模式：只能看，不能改对端', 'info'); return; }
+  const out = await flRemoteCall(t, 'session.save', {});
+  if (!out || out.ok === false) {
+    const err = String((out && out.error) || '');
+    toast(err.indexOf('a turn is running') >= 0 ? '对端回合进行中，结束后再保存' : (err || '对端保存失败'), 'bad');
+    return;
+  }
+  toast('对端会话已写盘（' + (out.msgs == null ? '?' : out.msgs) + ' 条消息）', 'ok');
+}
 // 导出为自包含 HTML。saved 给存档名（对齐 CLI /export saved NAME）时导出的
 // 是那份压缩存档，而不是当前会话的完整转录。
 function exportSession(t, path, saved) {
   const ws = (t && t.ws) || S.active;
+  // FlowLink 工作区：转录在对端，导出的文件也落在对端的机器上
+  if (t && t.remote) return exportRemoteSession(t, saved);
   const args = { ws: ws, path: path || '' };
   if (saved) args.saved = saved;
   return cmd('session.export', args).then(out => {
@@ -4887,6 +4903,20 @@ function exportArchive(t, a) {
   if (!a || !a.name) return;
   return exportSession(t, '', a.name);
 }
+/* 对端页签的导出：HTML 由对端生成、落在对端的磁盘上（路径原样回显，
+   免得让人以为文件在本机） */
+async function exportRemoteSession(t, saved) {
+  const args = {};
+  if (saved) args.saved = saved;
+  const out = await flRemoteCall(t, 'session.export', args, { timeout: 60000, allowWatch: true });
+  if (!out || out.ok === false) {
+    const err = String((out && out.error) || '');
+    toast(err.indexOf('a turn is running') >= 0 ? '对端回合进行中，结束后再导出' : (err || '对端导出失败'), 'bad', 5200);
+    return;
+  }
+  const hit = out.saved ? ('存档 ' + (out.what || saved) + ' 的 ') : '';
+  toast('对端已导出' + hit + out.msgs + ' 条消息 → ' + out.path + '（在对端机器上）', 'ok', 8000);
+}
 // notice-* 归档是通知快照（{id,from,topic,body,state}），不是消息转录，导不出 HTML
 function archiveExportable(a) {
   return !!a && !!a.name && !String(a.name).startsWith('notice-');
@@ -4895,12 +4925,32 @@ function archiveExportable(a) {
 // compact_begin / compact_end 事件，这里只负责投递
 function compactNow(ws) {
   ws = ws || S.active;
+  // FlowLink 工作区：上下文在对端，压缩也在对端跑（进度事件不跨机回传，
+  // 这里给一个明确的回执，再把重写后的转录拉回来）
+  const rt = S.tabs.get(ws);
+  if (rt && rt.remote) return compactRemote(rt);
   return cmd('compact.now', { ws: ws }).then(out => {
     if (!out || out.ok === false) {
       const err = String((out && out.error) || '');
       toast(err.indexOf('a turn is running') >= 0 ? '回合进行中，结束后再压缩' : (err || '压缩启动失败'), 'bad');
     }
   });
+}
+async function compactRemote(t) {
+  if (t.remote.mode === 'watch') { toast('监视模式：只能看，不能改对端', 'info'); return; }
+  const out = await flRemoteCall(t, 'compact.now', {});
+  if (!out || out.ok === false) {
+    const err = String((out && out.error) || '');
+    toast(err.indexOf('a turn is running') >= 0 ? '对端回合进行中，结束后再压缩' : (err || '对端拒绝了压缩请求'), 'bad');
+    return;
+  }
+  toast('已让对端压缩上下文', 'ok');
+  // 压缩在对端的 worker 里跑，几百毫秒到几秒；之后把重写后的转录取回来
+  setTimeout(() => {
+    if (S.tabs.get(t.ws) !== t) return;
+    const sid = (typeof flRemoteSessionId === 'function') ? flRemoteSessionId(t) : '';
+    if (sid) flLoadRemoteHistory(t.ws, t.remote.cell, t.remote.cwd, sid);
+  }, 2500);
 }
 function resumeTurn(t) {
   const ws = (t && t.ws) || S.active;
@@ -5163,6 +5213,12 @@ function applyHello(st, rebuild, opts) {
   }
 
   const ws = st.ws || st.active || '';
+  // FlowLink 工作区不是后端的 workspace：每次 state 都带着"本机当前活动工作区"，
+  // 让它覆盖选中项的话，远程页签会在下一次刷新（回合结束、2 秒轮询、任何
+  // 状态变化）时被弹回本机视图 —— 用户看到的就是"对端的主界面顶掉了会话"。
+  // 只要当前选中的是远程页签且它还活着，就保持不动。
+  const heldTab = S.tabs.get(S.active);
+  const holdRemote = !!(heldTab && heldTab.remote);
   if (ws) {
     const t = tab(ws);
     if (st.cwd) t.cwd = st.cwd;
@@ -5190,9 +5246,9 @@ function applyHello(st, rebuild, opts) {
       t.detailSession = '';
       loadSessionDetail(ws, t.session);
     }
-    if (!opts.keepActive && (!S.active || rebuild)) S.active = ws;
+    if (!opts.keepActive && !holdRemote && (!S.active || rebuild)) S.active = ws;
   }
-  if (!opts.keepActive && st.active && S.tabOrder.includes(st.active)) S.active = st.active;
+  if (!opts.keepActive && !holdRemote && st.active && S.tabOrder.includes(st.active)) S.active = st.active;
   // never keep a tab selected that no longer exists (workspace closed/deleted)
   if (S.active && !S.tabOrder.includes(S.active))
     S.active = (st.active && S.tabOrder.includes(st.active)) ? st.active : (S.tabOrder[0] || '');
@@ -5231,6 +5287,9 @@ function removeTab(ws) {
   paintNav();
   const pane = $('#pane-' + cssId(ws));
   if (pane) pane.remove();
+  // 页签栏也要跟着少一个：FlowLink 工作区关掉后 tabOrder 可能变成空的，
+  // 那条只剩 DOM 的旧页签会一直挂在那里（看着像"还停在对端"）
+  if (typeof renderTabbar === 'function') schedule('tabbar', renderTabbar);
 }
 
 /* ---------- 回合与流式 --------------------------------------------- */
@@ -5476,7 +5535,11 @@ async function refreshSessions() {
 async function refreshTeamwork(ws, quiet) {
   if (!ws) return null;
   let out;
-  if (quiet) { try { out = await api('teamwork.list', { ws: ws }); } catch (e) { return null; } }
+  const rt = S.tabs.get(ws);
+  // FlowLink 工作区：团队任务跑在对端，列表也只能问对端
+  if (rt && rt.remote && typeof flRemoteCall === 'function') {
+    out = await flRemoteCall(rt, 'teamwork.list', {}, { allowWatch: true });
+  } else if (quiet) { try { out = await api('teamwork.list', { ws: ws }); } catch (e) { return null; } }
   else out = await cmd('teamwork.list', { ws: ws });
   const t = S.tabs.get(ws); if (!t) return null;
   if (out && out.jobs) {
@@ -5500,6 +5563,10 @@ function scheduleTeamworkRefresh(ws) {
 }
 async function refreshNotices(ws) {
   if (!ws) return;
+  // FlowLink 工作区：通知是本机总线上的一条条投递，对端的工作区在本机没有
+  // 对应的 workspace，问也是一句「no workspace open」——面板留空即可
+  const rt = S.tabs.get(ws);
+  if (rt && rt.remote) { rt.noticesLoaded = true; schedule('dock', renderDock); return; }
   const out = await cmd('notice.list', { ws: ws });
   const t = S.tabs.get(ws); if (!t) return;
   t.noticesLoaded = true;
@@ -5520,15 +5587,26 @@ async function refreshNotices(ws) {
 async function refreshArchives(ws, force) {
   if (!ws) return;
   const t = S.tabs.get(ws); if (!t) return;
-  if (!force && t.archivesFor === t.session) return;
-  t.archivesFor = t.session; // 先占位，防止并发重复拉取
-  const out = await cmd('session.archives', { ws: ws, id: t.session });
+  // FlowLink 工作区：存档在对端，会话 id 也是对端的
+  const sid = tabSessionId(t);
+  if (!sid) return;
+  if (!force && t.archivesFor === sid) return;
+  t.archivesFor = sid; // 先占位，防止并发重复拉取
+  const out = t.remote
+    ? await flRemoteCall(t, 'session.archives', { id: sid }, { allowWatch: true })
+    : await cmd('session.archives', { ws: ws, id: t.session });
   const t2 = S.tabs.get(ws); if (!t2) return;
   if (out && out.ok !== false && Array.isArray(out.archives)) t2.archives = out.archives;
   else t2.archivesFor = ''; // 失败允许重试
   schedule('dock', renderDock);
   // 正在敲 /export 的存档名 → 候选刚拉回来，重建一次面板
   if (t2.composer && /^\/export\b/.test(t2.composer.text || '') && typeof buildSlash === 'function') buildSlash();
+}
+/* 页签对应的会话 id：本机页签是 t.session，FlowLink 页签是对端的会话 */
+function tabSessionId(t) {
+  if (!t) return '';
+  if (t.remote) return (typeof flRemoteSessionId === 'function' ? flRemoteSessionId(t) : '') || '';
+  return t.session || '';
 }
 function markChatTeamwork(ws) { if (ws === S.active) schedule('dock', renderDock); }
 
@@ -6489,14 +6567,9 @@ function renderDock() {
   if (!S.dockOpen) return;
   const t = curTab();
   if (S.dock === 'start') { renderStartPanel(body, t); return; }
-  // FlowLink 工作区在执行在对端：本地文件 / Git / 终端面板对它没有意义
-  if (t && t.remote && (S.dock === 'files' || S.dock === 'git' || S.dock === 'terminal')) {
-    const box = el('div', 'empty');
-    box.appendChild(el('div', null, t.remote.mode === 'watch' ? '监视模式（只读）' : 'FlowLink 工作区（远程）'));
-    box.appendChild(el('div', 'tiny dim', t.remote.cwd + ' · 执行在对端 cell 上'));
-    body.replaceChildren(box);
-    return;
-  }
+  // FlowLink 工作区：面板显示的是**对端**那一侧的东西 —— 文件 / Git / 终端
+  // 的命令由 pnlApi 送到对端执行（见 fl_serve("ws.call")），所以这里不再
+  // 用一块占位符把整个右栏挡掉：同一个面板，换一个后端。
   if (window.Panels && Panels.has(S.dock)) {
     try { Panels.render(S.dock, body, t); } catch (e) { console.error(e); body.replaceChildren(el('div', 'empty', '面板渲染失败：' + e.message)); }
     return;
@@ -6890,12 +6963,18 @@ function renderChatHead(ws) {
   if (!head) return;
   const t = tab(ws);
   let title = baseName(cwdOf(ws)) || shortId(ws);
-  if (t && t.session) {
+  // FlowLink 工作区：标题取对端的工作区名（页签名同源），不拿 link:… 当标题
+  if (t && t.remote) {
+    title = t.remote.name || baseName(t.remote.cwd) || title;
+  } else if (t && t.session) {
     const s = (S.sessions || []).find(x => x.ws === ws && x.id === t.session);
     if (s) title = s.title || shortId(s.id);
   }
   const tt = $('.cht-title', head);
-  if (tt) { tt.textContent = title; tt.title = title; }
+  if (tt) {
+    tt.textContent = title;
+    tt.title = (t && t.remote ? (flPeerLabel(t.remote.cell) + ' · ') : '') + ((t && (t.remote ? t.remote.cwd : t.cwd)) || ws);
+  }
   paintChatUsage(ws);
   // 切会话换的是「这一栏属于谁」：任务 chip 的数字也跟着换
   if (typeof paintChatTasks === 'function') paintChatTasks(ws);
@@ -6909,10 +6988,23 @@ function fmtInt(n) {
   const v = Math.round(Number(n) || 0);
   return String(v).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 }
+/* 本会话的用量快照：本机页签读全局 S.usages，FlowLink 页签读对端那份
+   （t.remote.usage，会话 id 也是对端的）。 */
+function chatUsageData(ws) {
+  const t = S.tabs.get(ws);
+  if (t && t.remote) return t.remote.usage || null;
+  return S.usages || null;
+}
 function chatUsageRecord(ws) {
   const t = S.tabs.get(ws);
-  if (!t || !t.session || !S.usages) return null;
-  return (S.usages.sessions || []).find(s => s.id === t.session) || null;
+  if (!t) return null;
+  const d = chatUsageData(ws);
+  if (!d) return null;
+  const sid = t.remote
+    ? ((typeof flRemoteSessionId === 'function' ? flRemoteSessionId(t) : '') || t.remote.session || '')
+    : (t.session || '');
+  if (!sid) return null;
+  return (d.sessions || []).find(s => s.id === sid) || null;
 }
 // total 缺失时按 in+out 兜底：个别供应商只回其中一项
 function chatUsageTotal(rec) {
@@ -6948,11 +7040,15 @@ function paintChatUsage(ws) {
   if (rec) {
     const tot = chatUsageTotal(rec);
     if (val) val.textContent = fmtInt(tot);
-    b.title = '本会话用量 · 输入 ' + fmtInt(rec.input_tokens) + ' · 输出 '
+    const who = (S.tabs.get(ws) || {}).remote ? '对端会话用量' : '本会话用量';
+    b.title = who + ' · 输入 ' + fmtInt(rec.input_tokens) + ' · 输出 '
       + fmtInt(rec.output_tokens) + ' · 合计 ' + fmtInt(tot) + ' tokens（点击查看明细）';
   } else {
     if (val) val.textContent = '—';
-    b.title = S.usages ? '本会话还没有用量记录（点击查看）' : '正在统计用量…';
+    const rt = S.tabs.get(ws);
+    b.title = (rt && rt.remote)
+      ? '对端会话还没有用量记录（点击查看）'
+      : (S.usages ? '本会话还没有用量记录（点击查看）' : '正在统计用量…');
   }
   if (on) renderChatUsageBody();
 }
@@ -7003,7 +7099,7 @@ function openChatUsagePop(ws, anchor) {
   bRefresh.title = '重新统计';
   bRefresh.setAttribute('aria-label', '重新统计');
   bRefresh.appendChild(iconEl('refresh', 'sm'));
-  bRefresh.onclick = () => refreshUsages(true);
+  bRefresh.onclick = () => refreshChatUsage(ws, true);
   head.appendChild(bRefresh);
   const bClose = el('button', 'icon-btn sm');
   bClose.type = 'button';
@@ -7029,9 +7125,22 @@ function openChatUsagePop(ws, anchor) {
   window.addEventListener('resize', resize);
   chatUsagePop = { el: pop, anchor: anchor, ws: ws, out: out, key: key, resize: resize };
   paintChatUsage(ws);
-  refreshUsages(false);
+  refreshChatUsage(ws, false);
   renderChatUsageBody();
   chatUsagePlace(pop, anchor);
+}
+/* 本机页签统计本机，FlowLink 页签统计对端：同一个浮层，两种数据源 */
+function refreshChatUsage(ws, force) {
+  const t = S.tabs.get(ws);
+  if (t && t.remote) {
+    if (typeof flRefreshRemoteUsage !== 'function') return;
+    flRefreshRemoteUsage(t, force).then(() => {
+      paintChatUsage(ws);
+      if (chatUsagePop && chatUsagePop.ws === ws) renderChatUsageBody();
+    });
+    return;
+  }
+  refreshUsages(force);
 }
 function renderChatUsageBody() {
   if (!chatUsagePop) return;
@@ -7039,9 +7148,10 @@ function renderChatUsageBody() {
   const body = chatUsagePop.el.querySelector('.up-body');
   if (!body) return;
   const sub = chatUsagePop.el.querySelector('.up-sub');
-  const d = S.usages;
+  const d = chatUsageData(ws);
   const rec = chatUsageRecord(ws);
-  if (sub) sub.textContent = d ? '更新于 ' + relTime(Math.floor(d.at / 1000)) : '正在统计…';
+  const remote = !!((S.tabs.get(ws) || {}).remote);
+  if (sub) sub.textContent = d ? ((remote ? '对端 · 更新于 ' : '更新于 ') + relTime(Math.floor(d.at / 1000))) : '正在统计…';
   body.replaceChildren();
   if (!rec) {
     body.appendChild(el('div', 'up-empty', d
@@ -7086,6 +7196,20 @@ function renderChatUsageBody() {
 // 清空当前会话上下文（/clear 的按钮入口；会先中断正在进行的回合）
 async function clearSession(ws) {
   if (!(await confirmDlg('清空当前会话的全部上下文？此操作不可撤销（会先中断正在进行的回合）。', { title: '清空上下文', ok: '清空' }))) return;
+  const rt = S.tabs.get(ws);
+  // FlowLink 工作区：上下文在对端，清空也只能让对端清
+  if (rt && rt.remote) {
+    if (rt.remote.mode === 'watch') { toast('监视模式：只能看，不能改对端', 'info'); return; }
+    const ro = await flRemoteCall(rt, 'session.clear', {});
+    if (!ro || ro.ok === false) { toast((ro && ro.error) || '对端清空失败', 'bad'); return; }
+    rt.msgs = [];
+    rt._turnMeta = null;
+    rt._turnSnap = null;
+    rt._md = new Map();
+    markChat(ws);
+    toast('对端上下文已清空', 'ok');
+    return;
+  }
   const out = await cmd('session.clear', { ws });
   if (out && out.ok === false) { toast(out.error || '清空失败', 'bad'); return; }
   // 清空后会话 id 不变，上一回合的产物卡/快照要一起作废，否则新回合会先
@@ -7138,11 +7262,13 @@ function renderPanes() {
     const pane = ensurePane(ws);
     pane.classList.toggle('active', ws === S.active);
   }
+  // 一个页签的 DOM 只该在页签本身消失时被拆掉：S.tabs 里的（包括只在
+  // 前端存在的 FlowLink 工作区）都算活着
+  const live = new Set(S.tabOrder.map(cssId));
+  for (const k of S.tabs.keys()) live.add(cssId(k));
   for (const p of Array.from($$('.tabpane'))) {
     if (p.id === 'pane-empty') { p.remove(); continue; }
-    const ws = p.id.replace(/^pane-/, '');
-    const found = S.tabOrder.some(k => cssId(k) === ws);
-    if (!found) p.remove();
+    if (!live.has(p.id.replace(/^pane-/, ''))) p.remove();
   }
   renderNoWs();
   if (S.active) {
@@ -7157,7 +7283,11 @@ function renderNoWs() {
   const view = $('#tabview');
   if (!view) return;
   let pane = document.getElementById('pane-empty');
-  const empty = S.tabOrder.length === 0;
+  // FlowLink 工作区不是后端的 workspace：它们只在 S.tabs 里。判断"没有工作区"
+  // 要把它们算进来，否则远程页签开着的时候，本机的「打开一个工作区开始」
+  // 会重新冒出来，铺在远程转录底下（两层界面叠在一起）。
+  const anyRemote = Array.from(S.tabs.values()).some(t => t && t.remote);
+  const empty = S.tabOrder.length === 0 && !anyRemote;
   if (!empty) { if (pane) pane.remove(); return; }
   if (!pane) {
     pane = el('div', 'tabpane active'); pane.id = 'pane-empty';
@@ -10404,7 +10534,24 @@ function makeDraggable(node, handle) {
    usages.summary（结构化：totals / models / sessions），全局一份，20s 内复用
    缓存；侧栏收起 / 点外面 / Esc 都会把浮层收回去。
    会话行可点：同/跨工作区都交给 session.select（后端按 cwd 索引打开）。   */
+/* 用量浮层的数据源：当前页签是 FlowLink 工作区时显示**对端**的统计
+   （对端的 usages.summary，落在 t.remote.usage 上），否则是本机那份。 */
+function usageData() {
+  const t = S.tabs.get(S.active);
+  if (t && t.remote) return t.remote.usage || null;
+  return S.usages || null;
+}
+function usageIsRemote() {
+  const t = S.tabs.get(S.active);
+  return !!(t && t.remote);
+}
 function refreshUsages(force) {
+  const at = S.tabs.get(S.active);
+  if (at && at.remote) {
+    if (typeof flRefreshRemoteUsage !== 'function') return;
+    flRefreshRemoteUsage(at, force).then(() => { paintUsageChip(); paintUsagePop(); });
+    return;
+  }
   if (S.usagesLoading) { if (force) S.usagesPending = true; return; } // 别把强刷丢掉
   if (!force && S.usages && Date.now() - (S.usages.at || 0) < 20000) return;
   S.usagesLoading = true;
@@ -10447,15 +10594,17 @@ function paintUsageChip() {
   const b = $('#navUsage');
   if (!b) return;
   const val = b.querySelector('.sb-uval');
-  const d = S.usages;
+  const d = usageData();
+  const who = usageIsRemote() ? '对端用量' : '用量统计';
   const tot = d ? (d.totals || {}) : { total_tokens: 0, requests: 0 };
   b.classList.toggle('has-val', !!d);
+  b.classList.toggle('remote', usageIsRemote());
   b.classList.toggle('on', !!S.usagesOpen);
   b.setAttribute('aria-expanded', S.usagesOpen ? 'true' : 'false');
   if (val) val.textContent = d ? fmtTok(tot.total_tokens) : '—';
   b.title = d
-    ? '用量统计 · ' + fmtTok(tot.total_tokens) + ' tokens / ' + (tot.requests || 0) + ' 请求（点击展开）'
-    : '用量统计（点击展开）';
+    ? who + ' · ' + fmtTok(tot.total_tokens) + ' tokens / ' + (tot.requests || 0) + ' 请求（点击展开）'
+    : who + '（点击展开）';
 }
 
 /* 收纳浮层：贴 chip 上方（放不下才翻到下方），宽度固定 340，超出视口内收 */
@@ -10527,9 +10676,11 @@ function openUsagePop(force) {
 function toggleUsagePop() { S.usagesOpen ? closeUsagePop() : openUsagePop(true); }
 function paintUsagePop() {
   if (!usagePop) return;
-  const d = S.usages;
+  const d = usageData();
   const sub = usagePop.el.querySelector('.up-sub');
-  if (sub) sub.textContent = d ? '更新于 ' + relTime(Math.floor(d.at / 1000)) : '正在统计…';
+  if (sub) sub.textContent = d
+    ? (usageIsRemote() ? '对端 · 更新于 ' : '更新于 ') + relTime(Math.floor(d.at / 1000))
+    : '正在统计…';
   const body = usagePop.el.querySelector('.up-body');
   if (body) renderUsageBody(body, 12);
   usagePopPlace(usagePop.el, usagePop.anchor); // 内容高度变了，重新贴边
@@ -10537,7 +10688,7 @@ function paintUsagePop() {
 /* 正文：总览方块 + 模型占比条 + 会话明细（limit = 最多列几条会话） */
 function renderUsageBody(body, limit) {
   body.replaceChildren();
-  const d = S.usages;
+  const d = usageData();
   if (!d) { body.appendChild(el('div', 'up-empty', '正在统计用量…')); return; }
   const tot = d.totals || {};
   const tiles = el('div', 'us-tiles');
@@ -10626,7 +10777,8 @@ function renderDockArchives(body, t) {
     { icon: 'refresh', title: '刷新存档列表', on: () => refreshArchives(t.ws, true) },
   ]);
   body.replaceChildren(head);
-  if (t.archivesFor !== t.session) {
+  const sid = (typeof tabSessionId === 'function') ? tabSessionId(t) : t.session;
+  if (t.archivesFor !== sid) {
     body.appendChild(pnlEmpty('正在加载存档列表…', 'archive'));
     refreshArchives(t.ws, false);
     return;
@@ -10677,7 +10829,11 @@ function openArchiveWindow(t, a) {
   ] : []);
   if (!w) return;
   w.body.replaceChildren(el('div', 'dim small', '正在加载存档…'));
-  cmd('session.archive', { ws: t.ws, id: t.session, name: a.name }).then(out => {
+  // FlowLink 工作区：存档在对端，读也由对端读
+  const p = (t && t.remote && typeof flRemoteCall === 'function')
+    ? flRemoteCall(t, 'session.archive', { id: tabSessionId(t), name: a.name }, { allowWatch: true })
+    : cmd('session.archive', { ws: t.ws, id: t.session, name: a.name });
+  p.then(out => {
     if (!w.alive) return;
     if (!out || out.ok === false) {
       w.body.replaceChildren(el('div', 'dim small', (out && out.error) || '加载失败'));
@@ -13437,6 +13593,14 @@ async function execSlash(t, name, arg) {
   // 远程会话的模型 / 供应商 / 沙箱 / 工具 / 思考强度属于对端：命令不能落到
   // 本机的全局设置上（那看着生效、实际对那个会话毫无影响），改走对端 RPC。
   if (t && t.remote && flRemoteSlash(t, name, arg)) return;
+  // 会话本身的动作（新建 / 清空 / 选会话）落在对端：本机没有这个 workspace
+  if (t && t.remote) {
+    if (name === '/clear') return clearSession(t.ws);
+    if (name === '/new' || name === '/session') {
+      toast('FlowLink 工作区的会话在左侧「FlowLink 工作区」里选：点一个会话就在新页签里打开', 'info', 4200);
+      return;
+    }
+  }
   switch (name) {
     case '/new': return cmd('session.new', { ws: t.ws }).then(resync);
     case '/clear': return cmd('session.clear', { ws: t.ws }).then(resync);
@@ -14532,6 +14696,10 @@ function buildContext(st) {
     switchRow('自动上下文压缩', !!st.compact_auto, v => setPatch({ compact_auto: v }),
       '历史超出模型窗口时自动总结较早的内容，避免请求被截断。'),
     el('div', 'set-divider'),
+    setCardHead('中断后自动继续'),
+    switchRow('auto-continue', !!st.auto_continue, v => setPatch({ auto_continue: v }),
+      '回合因中断结束（撞到轮次上限）并被自动压缩了上下文后，自动发一条「Continue to finish the work.」让模型接着把活干完。关闭时停在中断处，等你自己决定。'),
+    el('div', 'set-divider'),
     setCardHead('压缩专用模型'),
     el('div', 'set-hint', '留空则使用当前供应商与当前模型；也可以指定更便宜的模型专门做摘要。'),
     (() => {
@@ -14859,6 +15027,7 @@ function buildAbout(st) {
     ['工具调用', st.tools === false ? '已关闭' : '已开启'],
     ['思考级别', (lv ? lv.name + ' · ' + lv.desc : 'off')],
     ['上下文压缩', st.compact_auto ? '已开启' : '已关闭'],
+    ['中断后自动继续', st.auto_continue ? '已开启' : '已关闭'],
     ['工作区', (S.workspaces || []).length + ' 个已打开'],
     ['会话', (S.sessionsTotal || (S.sessions || []).length) + ' 条记录'],
   ];
@@ -16537,10 +16706,22 @@ function pnlArgs(extra) {
 }
 
 // 面板内统一调用：失败不弹全局 toast（面板自己显示），返回 {ok:false,error}
+// FlowLink 工作区：面板显示的是**对端**的文件 / 仓库 / 终端，命令原样送到
+// 对端执行（ws 由对端按 cwd 自己算，见 cell-app-core 的 fl_serve("ws.call")）。
+// 面板因此不需要知道对面是谁：同一个 pnlApi，两个后端。
+var PNL_REMOTE_WRITE = { 'git.init': 1, 'git.worktree.add': 1, 'git.worktree.remove': 1 };
 async function pnlApi(name, args) {
   try {
     if (typeof api !== 'function') return { ok: false, error: 'api 不可用' };
-    var out = await api(name, args || {});
+    var out;
+    var rt = (typeof S !== 'undefined' && S.active) ? S.tabs.get(S.active) : null;
+    if (rt && rt.remote && typeof flRemoteCall === 'function') {
+      var a = {};
+      if (args) for (var k in args) if (Object.prototype.hasOwnProperty.call(args, k) && k !== 'ws' && k !== 'cwd') a[k] = args[k];
+      out = await flRemoteCall(rt, name, a, { allowWatch: !PNL_REMOTE_WRITE[name], timeout: 60000 });
+    } else {
+      out = await api(name, args || {});
+    }
     if (out == null) return { ok: false, error: '空响应' };
     return out;
   } catch (e) {
@@ -19833,13 +20014,40 @@ window.openDiffPreview = pnlOpenDiffPreview;
     });
   }
 
-  /* ---------- 4. 后端会话 ---------- */
+  /* ---------- 4. 后端会话 ----------
+     FlowLink 工作区的终端跑在**对端**：term.* 命令原样送到对端（见
+     cell-app-core 的 ws.call），输出由对端经 FlowLink 回传后重新发到本机
+     总线（带 remote 标记）。对端的终端 id 是它自己的计数器（t1、t2…），
+     与本机正在用的 id 必然相撞，所以这里给对端的 id 加来源前缀：
+     发出去时还原，收回来时再加。 */
+  var remoteTermIds = {};   // localId -> peerId
+
+  function termApi(name, args) {
+    var t = (typeof S !== 'undefined' && args) ? S.tabs.get(args.ws) : null;
+    if (!(t && t.remote && typeof flRemoteCall === 'function')) return api(name, args);
+    var a = {};
+    for (var k in args) if (Object.prototype.hasOwnProperty.call(args, k)) a[k] = args[k];
+    delete a.ws; delete a.cwd;
+    if (name !== 'term.open' && a.id && remoteTermIds[a.id]) a.id = remoteTermIds[a.id];
+    var localId = args && args.id;
+    return flRemoteCall(t, name, a, { timeout: 60000 }).then(function (res) {
+      if (name === 'term.open' && res && res.ok !== false && res.id) {
+        var peerId = String(res.id);
+        var lid = 'fl-' + peerId;
+        remoteTermIds[lid] = peerId;
+        res.id = lid;
+      }
+      if (name === 'term.close' && localId) delete remoteTermIds[localId];
+      return res;
+    });
+  }
+
   function sendBytes(view, bytes) {
     if (!bytes || !bytes.length) return;
     if (view.demo) { if (view.shell) view.shell.input(bytes); return; }
     if (!view.id || view.alive === false) return;
     var payload = { ws: view.ws, id: view.id, data: b64FromBytes(bytes) };
-    api('term.input', payload).catch(function () {});
+    termApi('term.input', payload).catch(function () {});
   }
   function sendText(view, text) {
     try { sendBytes(view, new TextEncoder().encode(String(text))); } catch (e) {}
@@ -19907,7 +20115,7 @@ window.openDiffPreview = pnlOpenDiffPreview;
     if (view.attachId) payload.id = view.attachId;         // 接管已有会话（刷新 / 切页签）
     else payload.new = true;                               // 每次新建都是独立 shell
     if (view.wantName) payload.name = view.wantName;
-    api('term.open', payload)
+    termApi('term.open', payload)
       .then(function (res) {
         if (!view.removed && view.root) {
           if (!res || res.ok === false) {
@@ -19948,7 +20156,7 @@ window.openDiffPreview = pnlOpenDiffPreview;
     view.cols = geo.cols; view.rows = geo.rows;
     schedule(view, true);
     if (view.demo || !view.id || view.alive === false) return;
-    api('term.resize', { ws: view.ws, id: view.id, cols: geo.cols, rows: geo.rows }).catch(function () {});
+    termApi('term.resize', { ws: view.ws, id: view.id, cols: geo.cols, rows: geo.rows }).catch(function () {});
   }
 
   function observe(view) {
@@ -20362,7 +20570,7 @@ window.openDiffPreview = pnlOpenDiffPreview;
       view.wantFocus = false;
       view.alive = false;
       var p = (demo || !id) ? Promise.resolve(true)
-        : api('term.close', { ws: ws, id: id }).then(function () { return true; }, function () { return false; });
+        : termApi('term.close', { ws: ws, id: id }).then(function () { return true; }, function () { return false; });
       CellTerm.unmount(view);
       if (id) delete views[id];
       view.id = null;
@@ -20380,7 +20588,7 @@ window.openDiffPreview = pnlOpenDiffPreview;
       view.scrollOffset = 0;
       schedule(view, true);
       if (view.demo) { view.shell = new DemoShell(view); view.shell.start(); notify(view, { kind: 'demo', text: '演示模式' }); return Promise.resolve(true); }
-      var closeP = old ? api('term.close', { ws: view.ws, id: old }).catch(function () {}) : Promise.resolve();
+      var closeP = old ? termApi('term.close', { ws: view.ws, id: old }).catch(function () {}) : Promise.resolve();
       return closeP.then(function () {
         if (old) delete views[old];
         if (view.closingId === old) view.closingId = null;
@@ -20416,6 +20624,8 @@ window.openDiffPreview = pnlOpenDiffPreview;
     },
     onEvent: function (e) {
       if (!e || !e.t) return false;
+      // 对端终端的 id 加上来源前缀，与 termApi 发出去时还原的那套对应
+      if (e.remote && e.id) e.id = 'fl-' + e.id;
       if (e.t === 'term.out') {
         var v = views[e.id];
         if (!v) { if (e.id) stashPending(e); return true; }
@@ -20497,11 +20707,36 @@ const TASK_TAIL_BYTES = 4096;   // 行内预览取多少字节的输出尾巴
 function tasksAll() { return Array.isArray(S.tasks) ? S.tasks : []; }
 function tasksRunning() { return tasksAll().filter(t => t && t.running).length; }
 
+/* FlowLink 工作区：后台进程跑在对端，列表也来自对端（t.remote.tasks）。
+   页签自己带一份快照，切页签就是切机器，不会把两台机器的进程混在一起。 */
+function tasksOfTab(t) {
+  if (!t) return [];
+  if (t.remote) return Array.isArray(t.remote.tasks) ? t.remote.tasks : [];
+  return tasksOfSession(t.session);
+}
+function tasksCurrent() {
+  const t = S.tabs.get(S.active);
+  if (t && t.remote) return tasksOfTab(t);
+  return tasksAll();
+}
+/* 收到列表的时刻：运行中任务的耗时从这一刻往后推算 */
+function tasksNow() {
+  const t = S.tabs.get(S.active);
+  return (t && t.remote && t.remote.tasksAt) ? t.remote.tasksAt : S.tasksAt;
+}
+/* 任务相关的命令：远程页签落到对端，本机页签走本机 */
+function tasksCall(name, args) {
+  const t = S.tabs.get(S.active);
+  if (t && t.remote && typeof flRemoteCall === 'function')
+    return flRemoteCall(t, name, args || {}, { allowWatch: name !== 'tasks.kill' });
+  return api(name, args || {});
+}
+
 /* 已跑时长：引擎给的是收到列表那一刻的秒数，运行中的任务要加上之后流逝的时间 */
 function taskElapsed(t) {
   const base = Number(t && t.elapsed) || 0;
-  if (!t || !t.running || !S.tasksAt) return base;
-  return base + Math.max(0, (Date.now() - S.tasksAt) / 1000);
+  if (!t || !t.running || !tasksNow()) return base;
+  return base + Math.max(0, (Date.now() - tasksNow()) / 1000);
 }
 function taskDur(sec) {
   sec = Math.max(0, Math.floor(Number(sec) || 0));
@@ -20536,7 +20771,7 @@ function paintChatTasks(ws) {
   const b = head.querySelector('.ch-tasks');
   if (!b) return;
   const t = S.tabs.get(ws);
-  const mine = tasksOfSession(t && t.session);
+  const mine = tasksOfTab(t);
   const run = mine.filter(x => x.running).length;
   const val = $('.chu-val', b);
   b.classList.toggle('has-val', mine.length > 0);
@@ -20563,6 +20798,16 @@ function onTasksEvent(e) {
 
 /* 拉一次全量快照（启动时给 chip 一个数，浮层里的「刷新」也走这里） */
 async function refreshTasks(force) {
+  const t = S.tabs.get(S.active);
+  // 远程页签：进程在对端，列表也只能问对端
+  if (t && t.remote) {
+    if (typeof flRefreshRemoteTasks === 'function') {
+      await flRefreshRemoteTasks(t);
+      paintTasksChip();
+      if (S.tasksOpen) paintTasksPop();
+    }
+    return;
+  }
   if (!S.tasks.length && !force && S.tasksAt) return; // 事件已给过，别重复问
   const out = await cmd('tasks.list', {});
   if (!out || out.ok === false) return;
@@ -20645,7 +20890,7 @@ function openTasksPop(force) {
   tasksPop = { el: pop, anchor: anchor, out: out, key: key, resize: resize };
   S.tasksOpen = true;
   // 每次打开都从「当前会话」这一组看起，其余会话收起（按会话收纳）
-  S.tasksOpenGroups = new Set([((S.tabs.get(S.active) || {}).session) || '']);
+  S.tasksOpenGroups = new Set([tasksCurrentSession()]);
   paintTasksChip();
   paintTasksPop();
   refreshTasks(true);
@@ -20658,7 +20903,7 @@ function toggleTasksPop() { S.tasksOpen ? closeTasksPop() : openTasksPop(true); 
 /* 每秒的轻量刷新：只改文本，不重建列表（按 id 对行，分组后 DOM 顺序≠列表顺序） */
 function tickTasks() {
   if (!tasksPop) return;
-  const list = tasksAll();
+  const list = tasksCurrent();
   const items = tasksPop.el.querySelectorAll('.task-item');
   for (const node of items) {
     const t = list.find(x => x.id === node.dataset.id);
@@ -20677,7 +20922,7 @@ async function refreshTaskOutput(id) {
   if (tasksOutBusy || !tasksPop) return;
   tasksOutBusy = true;
   try {
-    const out = await api('tasks.output', { id: id });
+    const out = await tasksCall('tasks.output', { id: id });
     if (!out || !out.ok || typeof out.text !== 'string' || S.tasksShown !== id) return;
     const pre = tasksPop && tasksPop.el.querySelector('.task-out[data-id="' + id + '"] .task-pre');
     if (pre) pre.textContent = out.text;
@@ -20691,13 +20936,24 @@ async function refreshTaskOutput(id) {
 /* 会话名：优先用会话标题（侧栏里显示的那条），否则短 id */
 function taskSessionLabel(sid) {
   if (!sid) return '未归属会话';
+  const at = S.tabs.get(S.active);
+  if (at && at.remote && typeof flSessions === 'function') {
+    // 远程页签：标题在对端，本地 S.sessions 里没有这条会话
+    const s = flSessions(at.remote.cell, at.remote.cwd).find(x => x.id === sid);
+    if (s && s.title) return s.title;
+  }
   const s = (S.sessions || []).find(x => x.id === sid);
   return (s && s.title) || shortId(sid);
 }
+/* 当前页签所属的会话 id（远程页签记在 t.remote.session 上） */
+function tasksCurrentSession() {
+  const t = S.tabs.get(S.active) || {};
+  return (t.remote ? (t.remote.session || '') : (t.session || '')) || '';
+}
 function paintTasksPop() {
   if (!tasksPop) return;
-  const list = tasksAll();
-  const run = tasksRunning();
+  const list = tasksCurrent();
+  const run = list.filter(t => t && t.running).length;
   const sub = tasksPop.el.querySelector('.up-sub');
   if (sub) sub.textContent = list.length ? (run + ' 运行 / ' + list.length + ' 共') : '';
   const body = tasksPop.el.querySelector('.up-body');
@@ -20710,7 +20966,7 @@ function paintTasksPop() {
       '让 agent 用 exec(background=true) 起一个进程（开发服务器、watcher、长构建…），它会在自己的线程上跑，不占工具线程池，也不挡当前回合。'));
     body.appendChild(empty);
   } else {
-    const cur = ((S.tabs.get(S.active) || {}).session) || '';
+    const cur = tasksCurrentSession();
     const groups = new Map();               // session id -> tasks（保持注册表顺序）
     for (const t of list) {
       const k = (t && t.session) || '';
@@ -20780,8 +21036,13 @@ function taskRow(t) {
     bKill.onclick = async ev => {
       ev.stopPropagation();
       bKill.disabled = true;
-      const out = await cmd('tasks.kill', { id: t.id });
-      if (out && out.tasks) { S.tasks = out.tasks; S.tasksAt = Date.now(); paintTasksChip(); }
+      const out = await tasksCall('tasks.kill', { id: t.id });
+      const at = S.tabs.get(S.active);
+      if (out && out.tasks) {
+        if (at && at.remote) { at.remote.tasks = out.tasks; at.remote.tasksAt = Date.now(); }
+        else { S.tasks = out.tasks; S.tasksAt = Date.now(); }
+        paintTasksChip();
+      }
       if (out && out.message) toast(out.message, out.ok === false ? 'bad' : 'ok');
       paintTasksPop();
     };
@@ -22924,6 +23185,13 @@ async function openFlowWorkspace(cell, cwd, name, session) {
     // the turn settings belong to the peer: read them once so the composer
     // paints its real model / thinking / sandbox instead of a placeholder
     flLoadRemoteConf(t);
+    // 对端这个工作区当前在用的会话：chip（用量 / 后台任务）按会话统计，
+    // 没有它就只能显示「—」。顺带把对端的数字先取一次，页签一打开就是真值。
+    flResolveRemoteSession(t).then(() => {
+      if (S.tabs.get(key) !== t) return;
+      flRefreshRemoteUsage(t);
+      flRefreshRemoteTasks(t);
+    });
   } catch (e) { toast(e.message || String(e), 'bad'); }
 }
 
@@ -23115,6 +23383,87 @@ function flRemoteSlash(t, name, arg) {
   }
 }
 
+/* ---------- 对端工作区的通用 RPC -------------------------------------
+   远程页签复用本机的整套 UI，所以右栏（文件 / Git / 终端）、会话顶栏的
+   chip（用量 / 后台任务）和会话动作（压缩 / 保存 / 导出 / 清空）走的都是
+   **对端自己的命令名**：flowlink.ws.call 把它们连同一个 cwd 送过去，对端
+   按白名单执行，答案原样回来。面板与 chip 因此不需要知道对面是谁 —— 只要
+   把 api(...) 换成 flRemoteCall(...)。
+   mode==='watch' 是只读订阅：任何写操作都直接拒绝。                         */
+function flRemoteSessionId(t) {
+  const r = (t && t.remote) || null;
+  if (!r) return '';
+  return r.session || r.peerSession || '';
+}
+async function flRemoteCall(t, method, args, opts) {
+  if (!t || !t.remote) return { ok: false, error: 'not a FlowLink workspace' };
+  // 监视模式是只读订阅：读类命令放行（allowWatch），写类一律拒绝
+  if (t.remote.mode === 'watch' && !(opts && opts.allowWatch))
+    return { ok: false, error: '监视模式：只能看，不能改对端' };
+  const p = { cell: t.remote.cell, cwd: t.remote.cwd, method: method, args: args || {} };
+  if (opts && opts.timeout) p.timeout = opts.timeout;
+  // 终端：对端要把这条 PTY 的字节流绑到这个页签上（见 fl_serve 的 ws.call）
+  if (method.indexOf('term.') === 0) p.local_ws = t.ws;
+  try {
+    const out = await api('flowlink.ws.call', p);
+    if (out == null) return { ok: false, error: '空响应' };
+    return out;
+  } catch (e) { return { ok: false, error: String((e && e.message) || e || '远程调用失败') }; }
+}
+
+/* 对端这个工作区当前在用的会话 id。空会话的远程页签靠它把 chip 挂到对端的
+   数字上（用量 / 后台任务都是按会话统计的）。 */
+async function flResolveRemoteSession(t) {
+  if (!t || !t.remote || t.remote.mode === 'watch') return '';
+  if (flRemoteSessionId(t)) return flRemoteSessionId(t);
+  await flLoadSessions(t.remote.cell, t.remote.cwd, false);
+  const list = flSessions(t.remote.cell, t.remote.cwd);
+  const hit = list.find(s => s.active) || list[0];
+  if (hit && hit.id) {
+    t.remote.session = hit.id;
+    if (!t.remote.peerWs && hit.ws) t.remote.peerWs = hit.ws;
+  }
+  return (hit && hit.id) || '';
+}
+
+/* 对端的用量快照：结构与本机 S.usages 一致，只是落在页签上（一个对端一份，
+   不覆盖本机那份全局统计）。 */
+async function flRefreshRemoteUsage(t, force) {
+  if (!t || !t.remote || t.remote.mode === 'watch') return null;
+  const cur = t.remote.usage;
+  if (!force && cur && Date.now() - (cur.at || 0) < 20000) return cur;
+  if (t.remote.usageLoading) return cur || null;
+  t.remote.usageLoading = true;
+  try {
+    await flResolveRemoteSession(t);
+    const out = await flRemoteCall(t, 'usages.summary', {}, { allowWatch: true });
+    if (!out || out.ok === false) return cur || null;
+    const snap = {
+      at: Date.now(),
+      totals: out.totals || {},
+      models: out.models || [],
+      sessions: out.sessions || [],
+      totalSessions: out.total_sessions || (out.sessions || []).length,
+    };
+    t.remote.usage = snap;
+    paintChatUsage(t.ws);
+    return snap;
+  } finally { t.remote.usageLoading = false; }
+}
+
+/* 对端的后台任务快照（tasks.list 的同一份形状） */
+async function flRefreshRemoteTasks(t) {
+  if (!t || !t.remote || t.remote.mode === 'watch') return null;
+  await flResolveRemoteSession(t);
+  const out = await flRemoteCall(t, 'tasks.list', {}, { allowWatch: true });
+  if (!out || out.ok === false) return null;
+  t.remote.tasks = Array.isArray(out.tasks) ? out.tasks : [];
+  t.remote.tasksAt = Date.now();
+  paintChatTasks(t.ws);
+  if (S.tasksOpen) paintTasksPop();
+  return t.remote.tasks;
+}
+
 /* 输入框里的发送：远程工作区走 flowlink.ws.send，回合在对端跑 */
 async function flSendRemote(t) {
   const text = (t.composer.text || '').trim();
@@ -23148,6 +23497,13 @@ async function flSendRemote(t) {
     markChat(t.ws);
     markComposer(t.ws);
     schedule('tabbar', renderTabbar);
+    return;
+  }
+  // the peer tells us which session the turn landed in (it may have opened a
+  // new one): the chips and the next turn's "session" must follow it
+  if (out) {
+    if (out.session) t.remote.session = out.session;
+    if (out.ws) t.remote.peerWs = out.ws;
   }
 }
 

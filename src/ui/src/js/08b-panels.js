@@ -180,10 +180,22 @@ function pnlArgs(extra) {
 }
 
 // 面板内统一调用：失败不弹全局 toast（面板自己显示），返回 {ok:false,error}
+// FlowLink 工作区：面板显示的是**对端**的文件 / 仓库 / 终端，命令原样送到
+// 对端执行（ws 由对端按 cwd 自己算，见 cell-app-core 的 fl_serve("ws.call")）。
+// 面板因此不需要知道对面是谁：同一个 pnlApi，两个后端。
+var PNL_REMOTE_WRITE = { 'git.init': 1, 'git.worktree.add': 1, 'git.worktree.remove': 1 };
 async function pnlApi(name, args) {
   try {
     if (typeof api !== 'function') return { ok: false, error: 'api 不可用' };
-    var out = await api(name, args || {});
+    var out;
+    var rt = (typeof S !== 'undefined' && S.active) ? S.tabs.get(S.active) : null;
+    if (rt && rt.remote && typeof flRemoteCall === 'function') {
+      var a = {};
+      if (args) for (var k in args) if (Object.prototype.hasOwnProperty.call(args, k) && k !== 'ws' && k !== 'cwd') a[k] = args[k];
+      out = await flRemoteCall(rt, name, a, { allowWatch: !PNL_REMOTE_WRITE[name], timeout: 60000 });
+    } else {
+      out = await api(name, args || {});
+    }
     if (out == null) return { ok: false, error: '空响应' };
     return out;
   } catch (e) {
