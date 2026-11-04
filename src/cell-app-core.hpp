@@ -538,6 +538,74 @@ namespace app
             st["transfers"] = cell::flowlink::transfers();
             return st;
         }
+
+        // ---- FlowLink outbox -----------------------------------------------
+        // The 传输列表 shows both directions: what a peer sent us (the core's
+        // transmission index) and what left this machine. The peer is the only
+        // one that stores a delivered message, so the sent side is a log of our
+        // own: .cell/links/outbox.json, newest last, bounded.
+        //
+        // Attachment bytes are NOT kept here — only name / size / mime. The
+        // delivered copy lives on the peer; duplicating a base64 blob in a JSON
+        // index would multiply the disk cost of every message for no gain.
+        static std::filesystem::path fl_outbox_file()
+        {
+            return cell::root / "links" / "outbox.json";
+        }
+        nlohmann::json fl_outbox_read()
+        {
+            std::ifstream f(fl_outbox_file(), std::ios::binary);
+            auto j = nlohmann::json::parse(f, nullptr, false);
+            if (!j.is_object() || !j.contains("items") || !j["items"].is_array())
+                return nlohmann::json::array();
+            return j["items"];
+        }
+        bool fl_outbox_write(const nlohmann::json &items)
+        {
+            std::error_code ec;
+            std::filesystem::create_directories(fl_outbox_file().parent_path(), ec);
+            std::ofstream out(fl_outbox_file(), std::ios::trunc | std::ios::binary);
+            if (!out)
+                return false;
+            out << nlohmann::json{{"items", items}}.dump(2);
+            return out.good();
+        }
+        // newest first for the page; the file keeps append order so trimming
+        // only ever drops the oldest entries
+        void fl_outbox_append(nlohmann::json item)
+        {
+            nlohmann::json items = fl_outbox_read();
+            items.push_back(std::move(item));
+            while (items.size() > 200)
+                items.erase(items.begin());
+            (void)fl_outbox_write(items);
+        }
+        bool fl_outbox_drop(const std::string &id)
+        {
+            nlohmann::json items = fl_outbox_read();
+            nlohmann::json keep = nlohmann::json::array();
+            bool hit = false;
+            for (auto &e : items)
+            {
+                if (e.value("id", "") == id)
+                {
+                    hit = true;
+                    continue;
+                }
+                keep.push_back(e);
+            }
+            if (hit)
+                (void)fl_outbox_write(keep);
+            return hit;
+        }
+        // the display name of a peer, for the sent log and the toast
+        std::string fl_peer_name(const std::string &client_id)
+        {
+            for (const auto &m : cell::flowlink::links())
+                if (m.value("client_id", "") == client_id)
+                    return m.value("name", "");
+            return {};
+        }
         // "Scan Links": every device we can see right now, paired or not, with
         // the metadata that tells two machines apart before pairing.
         nlohmann::json fl_devices()
@@ -4012,27 +4080,95 @@ namespace app
                                 return ok_error(err);
                             return ok_with(fl_status());
                         }
-                        // share / send: the transcript travels as JSONL and is
-                        // indexed in the peer's links/transmission.json
-                        const std::string peer = cell::flowlink::resolve_cell(args.value("cell", ""));
-                        if (peer.empty())
-                            return ok_error("unknown cell");
-                        nlohmann::json item{{"from", svc->client_id()},
-                                            {"from_name", svc->name()},
-                                            {"note", args.value("note", "")},
-                                            {"kind", args.value("kind", std::string("session"))}};
+                        // share / send: one message (a conversation, or text
+                        // plus attachments) delivered as JSONL into the peer's
+                        // links/<sender>/ and indexed in its transmission.json.
+                        //
+                        // Recipients: `cells` is the list the compose sheet
+                        // hands over (multi-select); `cell` stays the single
+                        // form the older frontends and the agent tool use.
+                        nlohmann::json refs = nlohmann::json::array();
+                        if (args.contains("cells") && args["cells"].is_array())
+                        {
+                            for (const auto &c : args["cells"])
+                                if (c.is_string() && !c.get<std::string>().empty())
+                                    refs.push_back(c);
+                        }
+                        else if (!args.value("cell", std::string{}).empty())
+                        {
+                            refs.push_back(args.value("cell", std::string{}));
+                        }
+                        if (refs.empty())
+                            return ok_error("no recipient — pick at least one cell");
+
+                        // ---- the payload ------------------------------------
+                        // `messages` is the only thing a peer stores, and the
+                        // core keeps just {role,text,ts} per line — so an
+                        // attachment travels as a message whose text IS the
+                        // JSON blob {name,mime,size,data(base64)}. Older
+                        // peers show it as text instead of a card; nothing
+                        // breaks, and no wire-format change is needed.
+                        nlohmann::json msgs = nlohmann::json::array();
+                        std::string subject = args.value("subject", std::string{});
+                        std::string sid;
+                        std::string kind;
+                        nlohmann::json att_meta = nlohmann::json::array();
+                        std::string preview;
                         if (name == "flowlink.send")
                         {
                             const std::string body = args.value("body", "");
-                            if (body.empty())
-                                return ok_error("send needs a body");
-                            item["subject"] = args.value("subject", std::string("(no subject)"));
-                            item["messages"] = nlohmann::json::array(
-                                {{{"role", "user"}, {"text", body}}});
+                            nlohmann::json atts = (args.contains("attachments") && args["attachments"].is_array())
+                                                      ? args["attachments"]
+                                                      : nlohmann::json::array();
+                            std::size_t total = 0;
+                            std::size_t files = 0;
+                            bool all_media = true;
+                            for (const auto &a : atts)
+                            {
+                                if (!a.is_object())
+                                    continue;
+                                const std::string data = a.value("data", "");
+                                if (data.empty())
+                                    continue;
+                                total += data.size();
+                                files++;
+                                const std::string mime = a.value("mime", std::string("application/octet-stream"));
+                                if (!(mime.starts_with("image/") || mime.starts_with("video/") ||
+                                      mime.starts_with("audio/")))
+                                    all_media = false;
+                            }
+                            if (total > 32u * 1024 * 1024)
+                                return ok_error("attachments are too large (32 MiB per message)");
+                            if (body.empty() && files == 0)
+                                return ok_error("send needs a body or an attachment");
+                            if (!body.empty())
+                                msgs.push_back({{"role", "user"}, {"text", body}});
+                            for (const auto &a : atts)
+                            {
+                                if (!a.is_object())
+                                    continue;
+                                const std::string data = a.value("data", "");
+                                if (data.empty())
+                                    continue;
+                                const std::string aname = a.value("name", std::string("file"));
+                                const std::string amime = a.value("mime", std::string("application/octet-stream"));
+                                const long long asize = a.value("size", (long long)0);
+                                nlohmann::json blob{{"name", aname}, {"mime", amime},
+                                                    {"size", asize}, {"data", data}};
+                                msgs.push_back({{"role", "attachment"}, {"text", blob.dump(-1)}});
+                                att_meta.push_back({{"name", aname}, {"mime", amime}, {"size", asize}});
+                            }
+                            kind = files == 0 ? "text" : (all_media ? "media" : "file");
+                            if (subject.empty())
+                                subject = files == 0
+                                              ? "Message"
+                                              : (files == 1 ? att_meta[0].value("name", "Attachment")
+                                                            : std::format("{} attachments", files));
+                            preview = body;
                         }
                         else
                         {
-                            std::string sid = args.value("session", "");
+                            sid = args.value("session", "");
                             if (sid.empty())
                             {
                                 std::lock_guard<std::mutex> lk(cmd_mx);
@@ -4041,18 +4177,81 @@ namespace app
                             }
                             if (sid.empty())
                                 return ok_error("no session to share");
-                            nlohmann::json msgs = cell::flowlink::transcript_json(sid);
+                            msgs = cell::flowlink::transcript_json(sid);
                             if (msgs.empty())
                                 return ok_error("this session has no shareable messages yet");
-                            item["subject"] = args.value("subject", std::string("Shared conversation"));
-                            item["session"] = sid;
-                            item["messages"] = msgs;
+                            kind = "session";
+                            if (subject.empty())
+                                subject = "Shared conversation";
+                            for (const auto &m : msgs)
+                                if (m.value("role", "") == "user" &&
+                                    !m.value("text", std::string{}).empty())
+                                {
+                                    preview = m.value("text", std::string{});
+                                    break;
+                                }
                         }
-                        std::string err;
-                        nlohmann::json r = svc->send_transfer(peer, item, err);
-                        if (!err.empty())
-                            return ok_error(err);
-                        return ok_with(nlohmann::json{{"id", r.value("id", "")}});
+                        if (preview.size() > 400)
+                            preview = preview.substr(0, 400) + "…";
+                        nlohmann::json item{{"from", svc->client_id()},
+                                            {"from_name", svc->name()},
+                                            {"subject", subject},
+                                            {"note", args.value("note", "")},
+                                            {"kind", kind},
+                                            {"session", sid},
+                                            {"messages", msgs}};
+
+                        // ---- fan out ----------------------------------------
+                        nlohmann::json sent = nlohmann::json::array();
+                        nlohmann::json failed = nlohmann::json::array();
+                        std::string first_err;
+                        for (const auto &ref : refs)
+                        {
+                            const std::string want = ref.get<std::string>();
+                            const std::string peer = cell::flowlink::resolve_cell(want);
+                            if (peer.empty())
+                            {
+                                failed.push_back({{"cell", want}, {"error", "unknown cell"}});
+                                if (first_err.empty())
+                                    first_err = "unknown cell: " + want;
+                                continue;
+                            }
+                            std::string err;
+                            nlohmann::json r = svc->send_transfer(peer, item, err);
+                            if (!err.empty())
+                            {
+                                failed.push_back({{"cell", peer}, {"error", err}});
+                                if (first_err.empty())
+                                    first_err = err;
+                                continue;
+                            }
+                            const std::string pname = fl_peer_name(peer);
+                            sent.push_back({{"cell", peer},
+                                            {"name", pname},
+                                            {"id", r.value("id", "")}});
+                            fl_outbox_append({{"id", cell::flowlink::store::new_transmission_id()},
+                                              {"to", peer},
+                                              {"to_name", pname},
+                                              {"subject", subject},
+                                              {"note", args.value("note", "")},
+                                              {"kind", kind},
+                                              {"created", (long long)std::time(nullptr)},
+                                              {"bytes", (long long)msgs.dump().size()},
+                                              {"count", (long long)msgs.size()},
+                                              {"session", sid},
+                                              {"attachments", att_meta},
+                                              {"body", name == "flowlink.send"
+                                                           ? args.value("body", std::string{})
+                                                           : std::string{}},
+                                              {"preview", preview}});
+                        }
+                        if (sent.empty())
+                            return ok_error(first_err.empty() ? "nothing was delivered" : first_err);
+                        nlohmann::json out = ok();
+                        out["sent"] = sent;
+                        out["failed"] = failed;
+                        out["kind"] = kind;
+                        return out;
                     }
                     catch (const std::exception &e)
                     {
@@ -4090,6 +4289,31 @@ namespace app
                     nlohmann::json r = ok();
                     r["items"] = cell::flowlink::transfers();
                     return r;
+                }
+                // ---- outbox (the "已发送" side of 传输列表) ------------------
+                // Works with the service off: it is our own log on disk.
+                if (name == "flowlink.outbox")
+                {
+                    nlohmann::json r = ok();
+                    nlohmann::json items = fl_outbox_read();
+                    // newest first: the page reads top-down
+                    std::reverse(items.begin(), items.end());
+                    r["items"] = items;
+                    return r;
+                }
+                if (name == "flowlink.outbox.drop")
+                {
+                    const std::string id = args.value("id", "");
+                    if (!fl_outbox_drop(id))
+                        return ok_error("no such sent item");
+                    nlohmann::json items = fl_outbox_read();
+                    std::reverse(items.begin(), items.end());
+                    return ok_with(nlohmann::json{{"items", items}});
+                }
+                if (name == "flowlink.outbox.clear")
+                {
+                    (void)fl_outbox_write(nlohmann::json::array());
+                    return ok_with(nlohmann::json{{"items", nlohmann::json::array()}});
                 }
                 // ---- FlowLink workspaces -----------------------------------
                 // A pinned remote workspace behaves like a local one, except the

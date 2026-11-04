@@ -180,6 +180,180 @@
 #flowlinkPage .fl-msg-body{font-size:13px;line-height:1.72;color:var(--fg2)}
 #flowlinkPage .fl-msg-body > :first-child{margin-top:0}
 
+/* =====================================================================
+   传输列表 —— 收发一体的邮件式三栏（分类 | 列表 | 阅读窗格）
+   ===================================================================== */
+#flowlinkPage .fl-mail{display:flex;gap:12px;padding:14px 22px 20px;
+  height:calc(100vh - var(--titlebar-h) - 100px);min-height:380px}
+
+/* 左：分类 */
+#flowlinkPage .fl-rail{width:150px;flex:none;display:flex;flex-direction:column;gap:2px;padding:8px 6px;
+  border:1px solid var(--line);border-radius:12px;background:rgba(255,255,255,.022);min-height:0}
+#flowlinkPage .fl-rail-item{display:flex;align-items:center;gap:7px;width:100%;padding:7px 8px;
+  border-radius:8px;color:var(--fg2);font-size:12.5px;text-align:left;
+  transition:background var(--dur) var(--ease),color var(--dur) var(--ease)}
+#flowlinkPage .fl-rail-item:hover{background:var(--raise);color:var(--fg)}
+#flowlinkPage .fl-rail-item.on{background:var(--accent-soft);color:var(--accent)}
+#flowlinkPage .fl-rail-item .uico{width:14px;height:14px;flex:none}
+#flowlinkPage .fl-rail-label{font-weight:600;min-width:0}
+#flowlinkPage .fl-rail-n{font-family:var(--mono);font-size:10.5px;color:var(--fg4)}
+#flowlinkPage .fl-rail-item.on .fl-rail-n{color:var(--accent)}
+#flowlinkPage .fl-rail-foot{margin-top:auto;padding:8px 8px 2px;border-top:1px solid var(--line)}
+#flowlinkPage .fl-rail-foot .fl-hint{font-size:10px;line-height:1.5}
+
+/* 中：列表 */
+#flowlinkPage .fl-list{width:296px;flex:none;display:flex;flex-direction:column;min-height:0;
+  border:1px solid var(--line);border-radius:12px;background:rgba(255,255,255,.022);overflow:hidden}
+#flowlinkPage .fl-list-head{display:flex;align-items:center;gap:8px;padding:10px 12px;
+  border-bottom:1px solid var(--line);flex:none}
+#flowlinkPage .fl-list-title{font-size:12.5px;font-weight:650}
+#flowlinkPage .fl-list-n{font-family:var(--mono);font-size:10.5px;color:var(--fg4)}
+#flowlinkPage .fl-list-scroll{flex:1;min-height:0;overflow-y:auto;padding:6px;display:flex;
+  flex-direction:column;gap:2px}
+#flowlinkPage .fl-list-empty{padding:22px 14px;display:flex;flex-direction:column;gap:6px}
+#flowlinkPage .fl-list-empty .fl-empty-title{font-size:12.5px}
+#flowlinkPage .fl-list-empty .fl-empty-txt{font-size:11.5px;line-height:1.6;margin:0}
+
+#flowlinkPage .fl-mrow{display:flex;align-items:flex-start;gap:9px;padding:9px 9px;border-radius:9px;
+  text-align:left;width:100%;color:var(--fg2);transition:background var(--dur) var(--ease)}
+#flowlinkPage .fl-mrow:hover{background:var(--raise)}
+#flowlinkPage .fl-mrow.on{background:var(--accent-soft)}
+#flowlinkPage .fl-mrow.unread .fl-mrow-subj{color:var(--fg);font-weight:650}
+#flowlinkPage .fl-mrow-ico{width:26px;height:26px;flex:none;border-radius:7px;background:var(--raise);
+  border:1px solid var(--line);display:flex;align-items:center;justify-content:center;color:var(--fg3)}
+#flowlinkPage .fl-mrow-ico .uico{width:14px;height:14px}
+#flowlinkPage .fl-mrow-main{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1}
+#flowlinkPage .fl-mrow-l1{display:flex;align-items:center;gap:6px;min-width:0}
+#flowlinkPage .fl-mrow-subj{font-size:12.5px;font-weight:560;color:var(--fg2);min-width:0}
+#flowlinkPage .fl-dot{width:6px;height:6px;flex:none;border-radius:50%;background:var(--accent)}
+#flowlinkPage .fl-mrow-l2{font-size:11px;color:var(--fg3);line-height:1.4}
+#flowlinkPage .fl-mrow-l3{display:flex;align-items:center;gap:6px;min-width:0}
+#flowlinkPage .fl-mrow-tag{font-size:10px;color:var(--fg4);border:1px solid var(--line2);
+  border-radius:var(--radius-full);padding:0 6px;line-height:15px;flex:none}
+#flowlinkPage .fl-mrow-time{font-size:10.5px;color:var(--fg4);flex:none}
+
+/* 右：阅读窗格 */
+#flowlinkPage .fl-read{flex:1;min-width:0;display:flex;flex-direction:column;min-height:0;
+  border:1px solid var(--line);border-radius:12px;background:rgba(255,255,255,.022);overflow:hidden}
+#flowlinkPage .fl-read-head{display:flex;align-items:flex-start;gap:10px;padding:12px 14px;
+  border-bottom:1px solid var(--line);flex:none}
+#flowlinkPage .fl-read-hcol{display:flex;flex-direction:column;gap:4px;min-width:0}
+#flowlinkPage .fl-read-subj{margin:0;font-size:14.5px;font-weight:650;letter-spacing:-.01em;line-height:1.35}
+#flowlinkPage .fl-read-meta{display:flex;align-items:center;gap:6px;flex-wrap:wrap;
+  font-size:11px;color:var(--fg3)}
+#flowlinkPage .fl-read-from{color:var(--fg2)}
+#flowlinkPage .fl-read-sep{color:var(--fg4)}
+#flowlinkPage .fl-read-scroll{flex:1;min-height:0;overflow-y:auto;padding:14px;display:flex;
+  flex-direction:column;gap:12px}
+#flowlinkPage .fl-read-empty{margin:auto;display:flex;flex-direction:column;align-items:center;
+  gap:6px;text-align:center;color:var(--fg4);padding:24px}
+#flowlinkPage .fl-read-empty .fl-empty-title{font-size:13px;color:var(--fg3)}
+#flowlinkPage .fl-read-empty .fl-empty-txt{font-size:11.5px;line-height:1.6;margin:0;max-width:280px}
+
+/* 附件卡片 */
+#flowlinkPage .fl-atts{display:flex;flex-direction:column;gap:6px}
+#flowlinkPage .fl-att{display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:9px;
+  background:rgba(255,255,255,.03);border:1px solid var(--line)}
+#flowlinkPage .fl-att-ico{width:26px;height:26px;flex:none;border-radius:7px;background:var(--raise);
+  border:1px solid var(--line);display:flex;align-items:center;justify-content:center;color:var(--fg2)}
+#flowlinkPage .fl-att-ico .uico{width:14px;height:14px}
+#flowlinkPage .fl-att-main{display:flex;flex-direction:column;gap:1px;min-width:0;flex:1}
+#flowlinkPage .fl-att-name{font-size:12.5px;font-weight:600;color:var(--fg)}
+#flowlinkPage .fl-att-meta{font-family:var(--mono);font-size:10.5px;color:var(--fg4)}
+#flowlinkPage .fl-att-save{height:26px;padding:0 9px;font-size:11.5px;flex:none}
+
+/* =====================================================================
+   撰写浮层（写消息）—— 盖在 FlowLink 页上，页面重画不影响它
+   ===================================================================== */
+#flowlinkPage .fl-cmp-veil{position:absolute;inset:0;z-index:8;display:flex;align-items:center;
+  justify-content:center;padding:26px;background:rgba(6,6,10,.5);
+  -webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);animation:popIn 160ms var(--ease)}
+#flowlinkPage .fl-cmp-sheet{width:min(760px,100%);max-height:100%;display:flex;flex-direction:column;
+  border-radius:14px;border:1px solid var(--line2);background:var(--bg2);
+  box-shadow:0 24px 70px rgba(0,0,0,.5);overflow:hidden}
+#flowlinkPage .fl-cmp-sheet.drop{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent),0 24px 70px rgba(0,0,0,.5)}
+#flowlinkPage .fl-cmp-head{display:flex;align-items:center;gap:10px;padding:12px 14px;
+  border-bottom:1px solid var(--line);flex:none}
+#flowlinkPage .fl-cmp-title{display:flex;flex-direction:column;gap:1px;min-width:0}
+#flowlinkPage .fl-cmp-h1{font-size:14px;font-weight:650}
+#flowlinkPage .fl-cmp-sub{font-size:11px;color:var(--fg4)}
+#flowlinkPage .fl-cmp-body{display:flex;flex-direction:column;gap:2px;padding:8px 14px;
+  overflow-y:auto;min-height:0;flex:1}
+#flowlinkPage .fl-cmp-row{display:flex;align-items:flex-start;gap:10px;padding:7px 0;
+  border-bottom:1px solid var(--line);min-width:0}
+#flowlinkPage .fl-cmp-row:last-child{border-bottom:0}
+#flowlinkPage .fl-cmp-row.grow{flex:1;min-height:120px}
+#flowlinkPage .fl-cmp-k{flex:none;width:52px;padding-top:6px;font-size:11.5px;color:var(--fg4)}
+#flowlinkPage .fl-cmp-to{display:flex;flex-wrap:wrap;gap:6px;min-width:0;flex:1;padding-top:2px}
+#flowlinkPage .fl-cmp-chip{display:flex;align-items:center;gap:6px;max-width:200px;padding:4px 9px;
+  border-radius:var(--radius-full);border:1px solid var(--line2);background:rgba(255,255,255,.03);
+  font-size:11.5px;color:var(--fg2);transition:border-color var(--dur) var(--ease),color var(--dur) var(--ease)}
+#flowlinkPage .fl-cmp-chip:hover{border-color:var(--fg3)}
+#flowlinkPage .fl-cmp-chip.on{border-color:var(--accent);color:var(--accent);background:var(--accent-soft)}
+#flowlinkPage .fl-cmp-dot{width:6px;height:6px;flex:none;border-radius:50%;background:var(--fg4)}
+#flowlinkPage .fl-cmp-dot.on{background:var(--ok)}
+#flowlinkPage .fl-cmp-subj{flex:1;border-color:transparent;background:transparent;height:30px}
+#flowlinkPage .fl-cmp-subj:focus{border-color:var(--accent);background:var(--bg2)}
+#flowlinkPage .fl-cmp-text{flex:1;min-height:120px;font-family:inherit;font-size:13px;line-height:1.7;
+  border-color:transparent;background:transparent;resize:none}
+#flowlinkPage .fl-cmp-text:focus{border-color:var(--accent);background:var(--bg2)}
+#flowlinkPage .fl-cmp-atts{display:flex;flex-direction:column;gap:6px;flex:1;min-width:0}
+#flowlinkPage .fl-cmp-add{align-self:flex-start;height:26px;padding:0 9px;font-size:11.5px}
+#flowlinkPage .fl-cmp-files{display:flex;flex-wrap:wrap;gap:6px}
+#flowlinkPage .fl-cmp-filechip{display:flex;align-items:center;gap:6px;max-width:260px;padding:4px 6px 4px 8px;
+  border-radius:8px;border:1px solid var(--line);background:rgba(255,255,255,.03);font-size:11.5px}
+#flowlinkPage .fl-cmp-filechip .uico{width:13px;height:13px;flex:none;color:var(--fg3)}
+#flowlinkPage .fl-cmp-fname{color:var(--fg2);min-width:0}
+#flowlinkPage .fl-cmp-fsize{font-family:var(--mono);font-size:10px;color:var(--fg4);flex:none}
+#flowlinkPage .fl-cmp-fx{display:flex;align-items:center;justify-content:center;width:18px;height:18px;
+  flex:none;border-radius:5px;color:var(--fg4)}
+#flowlinkPage .fl-cmp-fx:hover{background:var(--raise);color:var(--fg)}
+#flowlinkPage .fl-cmp-fx .uico{width:11px;height:11px}
+#flowlinkPage .fl-cmp-file{display:none}
+#flowlinkPage .fl-cmp-foot{display:flex;align-items:center;gap:8px;padding:10px 14px;
+  border-top:1px solid var(--line);flex:none}
+#flowlinkPage .fl-cmp-info{font-size:11px;color:var(--fg4)}
+#flowlinkPage .fl-cmp-send{min-width:88px;justify-content:center}
+#flowlinkPage .fl-cmp-send:disabled{opacity:.45;cursor:not-allowed}
+
+/* =====================================================================
+   分享会话弹窗（会话顶栏的 share 按钮，走 #genericModal）
+   ===================================================================== */
+.sh-dlg{display:flex;flex-direction:column;gap:10px;min-width:min(520px,72vw)}
+.sh-row{display:flex;align-items:flex-start;gap:10px}
+.sh-k{flex:none;width:60px;padding-top:6px;font-size:11.5px;color:var(--fg4)}
+.sh-to{display:flex;flex-wrap:wrap;gap:6px;flex:1;min-width:0;padding-top:2px}
+.sh-none{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.sh-chip{display:flex;align-items:center;gap:6px;max-width:190px;padding:4px 9px;border-radius:var(--radius-full);
+  border:1px solid var(--line2);background:rgba(255,255,255,.03);font-size:11.5px;color:var(--fg2)}
+.sh-chip:hover{border-color:var(--fg3)}
+.sh-chip.on{border-color:var(--accent);color:var(--accent);background:var(--accent-soft)}
+.sh-dot{width:6px;height:6px;flex:none;border-radius:50%;background:var(--fg4)}
+.sh-dot.on{background:var(--ok)}
+.sh-src{display:flex;gap:6px;flex:1;min-width:0}
+.sh-src-btn{display:flex;flex-direction:column;gap:1px;flex:1;min-width:0;padding:7px 9px;border-radius:9px;
+  border:1px solid var(--line);background:rgba(255,255,255,.025);text-align:left}
+.sh-src-btn:hover{border-color:var(--fg3)}
+.sh-src-btn.on{border-color:var(--accent);background:var(--accent-soft)}
+.sh-src-t{font-size:12px;font-weight:600;color:var(--fg)}
+.sh-src-btn.on .sh-src-t{color:var(--accent)}
+.sh-src-s{font-size:10.5px;color:var(--fg4);min-width:0}
+.sh-select{height:30px}
+.sh-hint{margin:0;font-size:11px;line-height:1.6;color:var(--fg4)}
+.sh-warn{padding:7px 10px;border-radius:8px;border:1px solid var(--warn);background:rgba(210,153,34,.1);
+  font-size:11.5px;line-height:1.6;color:var(--warn)}
+/* 弹窗不在 #flowlinkPage 里，表单字段的样式要在这里补一份 */
+.sh-dlg .fl-field{display:flex;flex-direction:column;gap:4px}
+.sh-dlg .fl-field-label{font-size:11.5px;color:var(--fg4)}
+
+@media (max-width:980px){
+  #flowlinkPage .fl-mail{flex-wrap:wrap;height:auto;min-height:0;padding:12px}
+  #flowlinkPage .fl-rail{width:100%;flex-direction:row;overflow-x:auto}
+  #flowlinkPage .fl-rail-foot{display:none}
+  #flowlinkPage .fl-list{width:100%;max-height:44vh}
+  #flowlinkPage .fl-read{width:100%;min-height:320px}
+}
+
 /* ---- 空状态 -------------------------------------------------------- */
 #flowlinkPage .fl-empty{max-width:520px;margin:6vh auto 0;display:flex;flex-direction:column;
   align-items:flex-start;gap:10px}

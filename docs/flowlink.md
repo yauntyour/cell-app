@@ -66,6 +66,7 @@ global `config.json` holds **none** of it (see §8):
     ├── identity.json             {"client_id", "name", "created_at"}
     ├── links.json                service settings (incl. extra_targets) + paired links + workspaces
     ├── transmission.json         index of every transfer/mail received
+    ├── outbox.json               what this cell sent (subject, kind, attachment names/sizes)
     └── <client_id>/
         ├── .key                  the link key, sealed with Argon2id + AES-256-GCM
         └── <id>.jsonl            one stored conversation / transfer per received item
@@ -474,8 +475,14 @@ The same operations, JSON-shaped:
   `flowlink.transfer.drop`, `flowlink.transfer.mark`. These are what
   `/link inbox` and `/link read` drive; the older `flowlink.inbox` /
   `flowlink.mail.*` names never existed on the bus.
-* **Messaging and remote work** — `flowlink.share`, `flowlink.send`,
-  `flowlink.remote.ls`, `flowlink.remote.read`.
+* **Outbox** — `flowlink.outbox`, `flowlink.outbox.drop`,
+  `flowlink.outbox.clear`: the sent side of the transfers page, read from
+  `.cell/links/outbox.json` (works with the service off).
+* **Messaging and remote work** — `flowlink.share` (`cells: [...]` or `cell`,
+  `session`, `subject`, `note`), `flowlink.send` (`cells`/`cell`, `subject`,
+  `body`, `attachments: [{name,mime,size,data}]`), `flowlink.remote.ls`,
+  `flowlink.remote.read`. Both take several recipients and answer
+  `{sent:[…], failed:[{cell,error}]}`.
 * **Workspaces** — `flowlink.ws.remote`, `flowlink.ws.add`,
   `flowlink.ws.remove`, `flowlink.ws.open`, `flowlink.ws.send`,
   `flowlink.ws.stop`, `flowlink.ws.sessions`, `flowlink.ws.history`.

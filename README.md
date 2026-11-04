@@ -308,8 +308,11 @@ no thread, no socket, no allocation.
 
 In the desktop app the whole feature lives on the **FlowLink** page (sidebar,
 right under Skills — `Ctrl+Shift+L`): *Scan Links* (discovery + pairing),
-*已配对* (paired devices and their workspaces), *传输列表* (transfers),
-*权限* (workspace / workflow / watch, in both directions) and *设置*.
+*已配对* (paired devices and their workspaces), *传输列表* (a mail-style
+inbox/outbox — categories, a reading pane and a compose sheet), *权限*
+(workspace / workflow / watch, in both directions) and *设置*.
+Every conversation tab also carries a **share** button in its header that
+sends the current or any archived session to one or more paired cells.
 **Settings → 互联** keeps only the service switch and the connected
 devices (where a link can be disconnected). The agent gets the same capability
 through the `fl` tool and through `tw`'s `cell` field (`tw operation=cells`
@@ -325,7 +328,8 @@ lists the peers).
 | sessions | a peer's workspaces are browsable per workspace → its sessions; a session opens as a tab whose turn runs there (model / tools / sandbox stay theirs) |
 | remote tab | the tab IS the normal UI, backed by the peer: the right dock (files / git / terminal), the session chips (usage / background tasks) and the session actions (compact / save / export / clear) all run the peer's own commands through one whitelisted `ws.call` — the PTY, the files and the numbers are the peer's, never this machine's |
 | watch | monitor mode: a read-only subscription to one workspace's live output — no input, no settings |
-| transfers | one JSONL file per transfer in `.cell/links/<client_id>/`, indexed by `.cell/links/transmission.json` (time, bytes, sender, subject) |
+| transfers | one JSONL file per transfer in `.cell/links/<client_id>/`, indexed by `.cell/links/transmission.json` (time, bytes, sender, subject, kind). What this cell sent is logged separately in `.cell/links/outbox.json` — the peer is the only side that stores the delivered copy, so the "已发送" list is our own record (attachment *metadata* only, never the bytes) |
+| attachments | an attachment is a message with `role:"attachment"` whose `text` is the JSON `{name,mime,size,data(base64)}`: the core's JSONL keeps only `role`/`text`/`ts`, so a blob inside `text` needs no wire-format change. 32 MiB per message (the UI caps a file at 12 MB) |
 | identity | `.cell/links/identity.json` (`client_id` + display name) |
 | settings | `.cell/links/links.json` — service switch, name, ports, `announce`, the three `accept_*` grants (what peers may do here), the two `access_*` grants (what this cell may use), the paired links and the pinned FlowLink workspaces |
 | disconnect | deleting `<client_id>/.key` (the record and every received file stay; re-pair to use it again) |

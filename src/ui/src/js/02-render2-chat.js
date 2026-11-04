@@ -96,6 +96,7 @@ function ensurePane(ws) {
   // 会话顶栏快捷动作（与 /export、/save、/compact 同源）：都只作用于本工作区，
   // 危险动作（清空上下文）留在最右边单独一档
   for (const [icon, tip, act] of [
+    ['share', '分享会话到其他 cell（FlowLink）', () => openShareDialog(ws)],
     ['download', '导出会话为 HTML（/export）', () => exportSession(tab(ws))],
     ['archive', '立刻把当前会话写盘（/save）', () => saveSession(ws)],
     ['layers', '立刻压缩上下文（/compact）', () => compactNow(ws)],

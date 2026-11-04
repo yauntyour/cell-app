@@ -4134,6 +4134,180 @@ html[data-theme="light"] #splash::before{opacity:.5}
 #flowlinkPage .fl-msg-body{font-size:13px;line-height:1.72;color:var(--fg2)}
 #flowlinkPage .fl-msg-body > :first-child{margin-top:0}
 
+/* =====================================================================
+   传输列表 —— 收发一体的邮件式三栏（分类 | 列表 | 阅读窗格）
+   ===================================================================== */
+#flowlinkPage .fl-mail{display:flex;gap:12px;padding:14px 22px 20px;
+  height:calc(100vh - var(--titlebar-h) - 100px);min-height:380px}
+
+/* 左：分类 */
+#flowlinkPage .fl-rail{width:150px;flex:none;display:flex;flex-direction:column;gap:2px;padding:8px 6px;
+  border:1px solid var(--line);border-radius:12px;background:rgba(255,255,255,.022);min-height:0}
+#flowlinkPage .fl-rail-item{display:flex;align-items:center;gap:7px;width:100%;padding:7px 8px;
+  border-radius:8px;color:var(--fg2);font-size:12.5px;text-align:left;
+  transition:background var(--dur) var(--ease),color var(--dur) var(--ease)}
+#flowlinkPage .fl-rail-item:hover{background:var(--raise);color:var(--fg)}
+#flowlinkPage .fl-rail-item.on{background:var(--accent-soft);color:var(--accent)}
+#flowlinkPage .fl-rail-item .uico{width:14px;height:14px;flex:none}
+#flowlinkPage .fl-rail-label{font-weight:600;min-width:0}
+#flowlinkPage .fl-rail-n{font-family:var(--mono);font-size:10.5px;color:var(--fg4)}
+#flowlinkPage .fl-rail-item.on .fl-rail-n{color:var(--accent)}
+#flowlinkPage .fl-rail-foot{margin-top:auto;padding:8px 8px 2px;border-top:1px solid var(--line)}
+#flowlinkPage .fl-rail-foot .fl-hint{font-size:10px;line-height:1.5}
+
+/* 中：列表 */
+#flowlinkPage .fl-list{width:296px;flex:none;display:flex;flex-direction:column;min-height:0;
+  border:1px solid var(--line);border-radius:12px;background:rgba(255,255,255,.022);overflow:hidden}
+#flowlinkPage .fl-list-head{display:flex;align-items:center;gap:8px;padding:10px 12px;
+  border-bottom:1px solid var(--line);flex:none}
+#flowlinkPage .fl-list-title{font-size:12.5px;font-weight:650}
+#flowlinkPage .fl-list-n{font-family:var(--mono);font-size:10.5px;color:var(--fg4)}
+#flowlinkPage .fl-list-scroll{flex:1;min-height:0;overflow-y:auto;padding:6px;display:flex;
+  flex-direction:column;gap:2px}
+#flowlinkPage .fl-list-empty{padding:22px 14px;display:flex;flex-direction:column;gap:6px}
+#flowlinkPage .fl-list-empty .fl-empty-title{font-size:12.5px}
+#flowlinkPage .fl-list-empty .fl-empty-txt{font-size:11.5px;line-height:1.6;margin:0}
+
+#flowlinkPage .fl-mrow{display:flex;align-items:flex-start;gap:9px;padding:9px 9px;border-radius:9px;
+  text-align:left;width:100%;color:var(--fg2);transition:background var(--dur) var(--ease)}
+#flowlinkPage .fl-mrow:hover{background:var(--raise)}
+#flowlinkPage .fl-mrow.on{background:var(--accent-soft)}
+#flowlinkPage .fl-mrow.unread .fl-mrow-subj{color:var(--fg);font-weight:650}
+#flowlinkPage .fl-mrow-ico{width:26px;height:26px;flex:none;border-radius:7px;background:var(--raise);
+  border:1px solid var(--line);display:flex;align-items:center;justify-content:center;color:var(--fg3)}
+#flowlinkPage .fl-mrow-ico .uico{width:14px;height:14px}
+#flowlinkPage .fl-mrow-main{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1}
+#flowlinkPage .fl-mrow-l1{display:flex;align-items:center;gap:6px;min-width:0}
+#flowlinkPage .fl-mrow-subj{font-size:12.5px;font-weight:560;color:var(--fg2);min-width:0}
+#flowlinkPage .fl-dot{width:6px;height:6px;flex:none;border-radius:50%;background:var(--accent)}
+#flowlinkPage .fl-mrow-l2{font-size:11px;color:var(--fg3);line-height:1.4}
+#flowlinkPage .fl-mrow-l3{display:flex;align-items:center;gap:6px;min-width:0}
+#flowlinkPage .fl-mrow-tag{font-size:10px;color:var(--fg4);border:1px solid var(--line2);
+  border-radius:var(--radius-full);padding:0 6px;line-height:15px;flex:none}
+#flowlinkPage .fl-mrow-time{font-size:10.5px;color:var(--fg4);flex:none}
+
+/* 右：阅读窗格 */
+#flowlinkPage .fl-read{flex:1;min-width:0;display:flex;flex-direction:column;min-height:0;
+  border:1px solid var(--line);border-radius:12px;background:rgba(255,255,255,.022);overflow:hidden}
+#flowlinkPage .fl-read-head{display:flex;align-items:flex-start;gap:10px;padding:12px 14px;
+  border-bottom:1px solid var(--line);flex:none}
+#flowlinkPage .fl-read-hcol{display:flex;flex-direction:column;gap:4px;min-width:0}
+#flowlinkPage .fl-read-subj{margin:0;font-size:14.5px;font-weight:650;letter-spacing:-.01em;line-height:1.35}
+#flowlinkPage .fl-read-meta{display:flex;align-items:center;gap:6px;flex-wrap:wrap;
+  font-size:11px;color:var(--fg3)}
+#flowlinkPage .fl-read-from{color:var(--fg2)}
+#flowlinkPage .fl-read-sep{color:var(--fg4)}
+#flowlinkPage .fl-read-scroll{flex:1;min-height:0;overflow-y:auto;padding:14px;display:flex;
+  flex-direction:column;gap:12px}
+#flowlinkPage .fl-read-empty{margin:auto;display:flex;flex-direction:column;align-items:center;
+  gap:6px;text-align:center;color:var(--fg4);padding:24px}
+#flowlinkPage .fl-read-empty .fl-empty-title{font-size:13px;color:var(--fg3)}
+#flowlinkPage .fl-read-empty .fl-empty-txt{font-size:11.5px;line-height:1.6;margin:0;max-width:280px}
+
+/* 附件卡片 */
+#flowlinkPage .fl-atts{display:flex;flex-direction:column;gap:6px}
+#flowlinkPage .fl-att{display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:9px;
+  background:rgba(255,255,255,.03);border:1px solid var(--line)}
+#flowlinkPage .fl-att-ico{width:26px;height:26px;flex:none;border-radius:7px;background:var(--raise);
+  border:1px solid var(--line);display:flex;align-items:center;justify-content:center;color:var(--fg2)}
+#flowlinkPage .fl-att-ico .uico{width:14px;height:14px}
+#flowlinkPage .fl-att-main{display:flex;flex-direction:column;gap:1px;min-width:0;flex:1}
+#flowlinkPage .fl-att-name{font-size:12.5px;font-weight:600;color:var(--fg)}
+#flowlinkPage .fl-att-meta{font-family:var(--mono);font-size:10.5px;color:var(--fg4)}
+#flowlinkPage .fl-att-save{height:26px;padding:0 9px;font-size:11.5px;flex:none}
+
+/* =====================================================================
+   撰写浮层（写消息）—— 盖在 FlowLink 页上，页面重画不影响它
+   ===================================================================== */
+#flowlinkPage .fl-cmp-veil{position:absolute;inset:0;z-index:8;display:flex;align-items:center;
+  justify-content:center;padding:26px;background:rgba(6,6,10,.5);
+  -webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);animation:popIn 160ms var(--ease)}
+#flowlinkPage .fl-cmp-sheet{width:min(760px,100%);max-height:100%;display:flex;flex-direction:column;
+  border-radius:14px;border:1px solid var(--line2);background:var(--bg2);
+  box-shadow:0 24px 70px rgba(0,0,0,.5);overflow:hidden}
+#flowlinkPage .fl-cmp-sheet.drop{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent),0 24px 70px rgba(0,0,0,.5)}
+#flowlinkPage .fl-cmp-head{display:flex;align-items:center;gap:10px;padding:12px 14px;
+  border-bottom:1px solid var(--line);flex:none}
+#flowlinkPage .fl-cmp-title{display:flex;flex-direction:column;gap:1px;min-width:0}
+#flowlinkPage .fl-cmp-h1{font-size:14px;font-weight:650}
+#flowlinkPage .fl-cmp-sub{font-size:11px;color:var(--fg4)}
+#flowlinkPage .fl-cmp-body{display:flex;flex-direction:column;gap:2px;padding:8px 14px;
+  overflow-y:auto;min-height:0;flex:1}
+#flowlinkPage .fl-cmp-row{display:flex;align-items:flex-start;gap:10px;padding:7px 0;
+  border-bottom:1px solid var(--line);min-width:0}
+#flowlinkPage .fl-cmp-row:last-child{border-bottom:0}
+#flowlinkPage .fl-cmp-row.grow{flex:1;min-height:120px}
+#flowlinkPage .fl-cmp-k{flex:none;width:52px;padding-top:6px;font-size:11.5px;color:var(--fg4)}
+#flowlinkPage .fl-cmp-to{display:flex;flex-wrap:wrap;gap:6px;min-width:0;flex:1;padding-top:2px}
+#flowlinkPage .fl-cmp-chip{display:flex;align-items:center;gap:6px;max-width:200px;padding:4px 9px;
+  border-radius:var(--radius-full);border:1px solid var(--line2);background:rgba(255,255,255,.03);
+  font-size:11.5px;color:var(--fg2);transition:border-color var(--dur) var(--ease),color var(--dur) var(--ease)}
+#flowlinkPage .fl-cmp-chip:hover{border-color:var(--fg3)}
+#flowlinkPage .fl-cmp-chip.on{border-color:var(--accent);color:var(--accent);background:var(--accent-soft)}
+#flowlinkPage .fl-cmp-dot{width:6px;height:6px;flex:none;border-radius:50%;background:var(--fg4)}
+#flowlinkPage .fl-cmp-dot.on{background:var(--ok)}
+#flowlinkPage .fl-cmp-subj{flex:1;border-color:transparent;background:transparent;height:30px}
+#flowlinkPage .fl-cmp-subj:focus{border-color:var(--accent);background:var(--bg2)}
+#flowlinkPage .fl-cmp-text{flex:1;min-height:120px;font-family:inherit;font-size:13px;line-height:1.7;
+  border-color:transparent;background:transparent;resize:none}
+#flowlinkPage .fl-cmp-text:focus{border-color:var(--accent);background:var(--bg2)}
+#flowlinkPage .fl-cmp-atts{display:flex;flex-direction:column;gap:6px;flex:1;min-width:0}
+#flowlinkPage .fl-cmp-add{align-self:flex-start;height:26px;padding:0 9px;font-size:11.5px}
+#flowlinkPage .fl-cmp-files{display:flex;flex-wrap:wrap;gap:6px}
+#flowlinkPage .fl-cmp-filechip{display:flex;align-items:center;gap:6px;max-width:260px;padding:4px 6px 4px 8px;
+  border-radius:8px;border:1px solid var(--line);background:rgba(255,255,255,.03);font-size:11.5px}
+#flowlinkPage .fl-cmp-filechip .uico{width:13px;height:13px;flex:none;color:var(--fg3)}
+#flowlinkPage .fl-cmp-fname{color:var(--fg2);min-width:0}
+#flowlinkPage .fl-cmp-fsize{font-family:var(--mono);font-size:10px;color:var(--fg4);flex:none}
+#flowlinkPage .fl-cmp-fx{display:flex;align-items:center;justify-content:center;width:18px;height:18px;
+  flex:none;border-radius:5px;color:var(--fg4)}
+#flowlinkPage .fl-cmp-fx:hover{background:var(--raise);color:var(--fg)}
+#flowlinkPage .fl-cmp-fx .uico{width:11px;height:11px}
+#flowlinkPage .fl-cmp-file{display:none}
+#flowlinkPage .fl-cmp-foot{display:flex;align-items:center;gap:8px;padding:10px 14px;
+  border-top:1px solid var(--line);flex:none}
+#flowlinkPage .fl-cmp-info{font-size:11px;color:var(--fg4)}
+#flowlinkPage .fl-cmp-send{min-width:88px;justify-content:center}
+#flowlinkPage .fl-cmp-send:disabled{opacity:.45;cursor:not-allowed}
+
+/* =====================================================================
+   分享会话弹窗（会话顶栏的 share 按钮，走 #genericModal）
+   ===================================================================== */
+.sh-dlg{display:flex;flex-direction:column;gap:10px;min-width:min(520px,72vw)}
+.sh-row{display:flex;align-items:flex-start;gap:10px}
+.sh-k{flex:none;width:60px;padding-top:6px;font-size:11.5px;color:var(--fg4)}
+.sh-to{display:flex;flex-wrap:wrap;gap:6px;flex:1;min-width:0;padding-top:2px}
+.sh-none{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.sh-chip{display:flex;align-items:center;gap:6px;max-width:190px;padding:4px 9px;border-radius:var(--radius-full);
+  border:1px solid var(--line2);background:rgba(255,255,255,.03);font-size:11.5px;color:var(--fg2)}
+.sh-chip:hover{border-color:var(--fg3)}
+.sh-chip.on{border-color:var(--accent);color:var(--accent);background:var(--accent-soft)}
+.sh-dot{width:6px;height:6px;flex:none;border-radius:50%;background:var(--fg4)}
+.sh-dot.on{background:var(--ok)}
+.sh-src{display:flex;gap:6px;flex:1;min-width:0}
+.sh-src-btn{display:flex;flex-direction:column;gap:1px;flex:1;min-width:0;padding:7px 9px;border-radius:9px;
+  border:1px solid var(--line);background:rgba(255,255,255,.025);text-align:left}
+.sh-src-btn:hover{border-color:var(--fg3)}
+.sh-src-btn.on{border-color:var(--accent);background:var(--accent-soft)}
+.sh-src-t{font-size:12px;font-weight:600;color:var(--fg)}
+.sh-src-btn.on .sh-src-t{color:var(--accent)}
+.sh-src-s{font-size:10.5px;color:var(--fg4);min-width:0}
+.sh-select{height:30px}
+.sh-hint{margin:0;font-size:11px;line-height:1.6;color:var(--fg4)}
+.sh-warn{padding:7px 10px;border-radius:8px;border:1px solid var(--warn);background:rgba(210,153,34,.1);
+  font-size:11.5px;line-height:1.6;color:var(--warn)}
+/* 弹窗不在 #flowlinkPage 里，表单字段的样式要在这里补一份 */
+.sh-dlg .fl-field{display:flex;flex-direction:column;gap:4px}
+.sh-dlg .fl-field-label{font-size:11.5px;color:var(--fg4)}
+
+@media (max-width:980px){
+  #flowlinkPage .fl-mail{flex-wrap:wrap;height:auto;min-height:0;padding:12px}
+  #flowlinkPage .fl-rail{width:100%;flex-direction:row;overflow-x:auto}
+  #flowlinkPage .fl-rail-foot{display:none}
+  #flowlinkPage .fl-list{width:100%;max-height:44vh}
+  #flowlinkPage .fl-read{width:100%;min-height:320px}
+}
+
 /* ---- 空状态 -------------------------------------------------------- */
 #flowlinkPage .fl-empty{max-width:520px;margin:6vh auto 0;display:flex;flex-direction:column;
   align-items:flex-start;gap:10px}
@@ -4601,6 +4775,13 @@ const ICON_PATHS = {
   bars: '<path d="M4.5 20V11M9.75 20V5M15 20v-6M20.25 20V8.5"/><path d="M2.5 20h19"/>',
   key: '<circle cx="8" cy="15" r="4"/><path d="m10.8 12.2 8.2-8.2M16 7l2.5 2.5M19 4l2 2"/>',
   rotate: '<path d="M3 12a9 9 0 1 0 3-6.7M3 4v5h5"/>',
+  // FlowLink 分享 / 撰写：share 是「三个点连线」，send 是纸飞机，
+  // inbox 是收件箱（传输列表的「收到」一侧）
+  share: '<circle cx="18" cy="5.5" r="2.6"/><circle cx="6" cy="12" r="2.6"/><circle cx="18" cy="18.5" r="2.6"/><path d="m8.4 10.8 7.3-3.9M8.4 13.2l7.3 3.9"/>',
+  send: '<path d="M21.4 3.6 3 10.4l6.6 2.5 2.5 6.6 9.3-15.9Z"/><path d="m9.6 12.9 4.6-4.6"/>',
+  inbox: '<path d="M3.5 12.5h4l1.4 2.8h6.2l1.4-2.8h4"/><path d="M5.2 12.5 7.1 5.9A2 2 0 0 1 9 4.5h6a2 2 0 0 1 1.9 1.4l1.9 6.6v4.6a2 2 0 0 1-2 2H7.2a2 2 0 0 1-2-2v-4.6Z"/>',
+  image: '<rect x="3" y="4.5" width="18" height="15" rx="2.2"/><circle cx="8.6" cy="10" r="1.7"/><path d="m4 17.5 4.6-4.4 3.4 3.2 2.8-2.6 4.2 4"/>',
+  mail: '<rect x="2.8" y="5" width="18.4" height="14" rx="2.2"/><path d="m3.4 6.4 8.6 6.4 8.6-6.4"/>',
 
 };
 function iconHtml(name, cls) {
@@ -6782,6 +6963,7 @@ function ensurePane(ws) {
   // 会话顶栏快捷动作（与 /export、/save、/compact 同源）：都只作用于本工作区，
   // 危险动作（清空上下文）留在最右边单独一档
   for (const [icon, tip, act] of [
+    ['share', '分享会话到其他 cell（FlowLink）', () => openShareDialog(ws)],
     ['download', '导出会话为 HTML（/export）', () => exportSession(tab(ws))],
     ['archive', '立刻把当前会话写盘（/save）', () => saveSession(ws)],
     ['layers', '立刻压缩上下文（/compact）', () => compactNow(ws)],
@@ -21903,13 +22085,18 @@ function paintSkillDetail() {
 'use strict';
 
 const FL = {
-  tab: 'scan',            // scan | links | transfers | settings
+  tab: 'scan',            // scan | links | transfers | perm | settings
   devices: [],            // 最近一次扫描的结果（flowlink.scan）
   remote: [],             // 选中设备上已打开的工作区
   remoteFor: '',          // remote 属于哪个 client_id
   sel: '',                // 已配对页选中的设备
-  tsel: '',               // 传输列表选中的条目
-  tdetail: null,
+  tsel: '',               // 传输列表选中的条目（收 / 发共用）
+  tdetail: null,          // 选中条目是「收到的」时的正文（flowlink.transfer.read）
+  sdetail: null,          // 选中条目是「已发送」时的日志条目（outbox）
+  mail: 'all',            // 传输列表的分类：all|session|message|file|media|sent
+  outbox: null,           // 已发送记录；null = 还没拉过
+  compose: false,         // 撰写浮层是否打开
+  draft: null,            // 撰写中的草稿 {cells, subject, body, files}
   code: '',               // 本机亮出的配对码
   joinCode: '',           // 用户输入的配对码
   joinAddr: '',
@@ -22055,6 +22242,10 @@ function closeFlowLinkPage() {
   if (!host) return;
   host.classList.remove('show');
   S.flowlinkOpen = false;
+  // 撰写浮层是 #flowlinkPage 的子节点：关页时连草稿一起收掉，
+  // 下次打开不会突然冒出半封没发出去的信
+  FL.compose = false;
+  FL.draft = null;
   host.replaceChildren(); // 下次打开重新建骨架（数据每次重拉）
 }
 function toggleFlowLinkPage() {
@@ -22080,7 +22271,7 @@ async function refreshFlowlink() {
 const FL_TABS = [
   { id: 'scan', label: 'Scan Links', icon: 'search', sub: '发现与配对' },
   { id: 'links', label: '已配对', icon: 'link', sub: '设备与远程工作区' },
-  { id: 'transfers', label: '传输列表', icon: 'download', sub: '收到的会话' },
+  { id: 'transfers', label: '传输列表', icon: 'inbox', sub: '收发 / 撰写' },
   { id: 'perm', label: '权限', icon: 'shield', sub: '工作区 / Workflow / 监视' },
   { id: 'settings', label: '设置', icon: 'sliders', sub: '服务与端口' },
 ];
@@ -22861,93 +23052,720 @@ async function flForget(d) {
   }
 }
 
-/* ---------- 传输列表 ---------------------------------------------- */
+/* ---------- 传输列表（收发一体的邮件式界面） ------------------------
+
+   三栏：分类（全部 / 会话 / 消息 / 文件 / 媒体 / 已发送）| 列表 | 阅读窗格。
+
+   数据来自两个方向：
+
+     收到的  flowlink.status.transfers —— 对端写进本机
+             .cell/links/<client_id>/ 的 JSONL，索引在 transmission.json；
+             打开一条走 flowlink.transfer.read 取正文（顺手标已读）。
+     发出的  flowlink.outbox —— 本机 .cell/links/outbox.json，由后端在
+             flowlink.share / flowlink.send 成功后追加（附件只记元数据）。
+
+   附件在传输里是一条 role=attachment 的消息，它的 text **就是**
+   {name,mime,size,data(base64)} 的 JSON：core 的 JSONL 每行只保留
+   role/text/ts，把 blob 塞进 text 是唯一不需要改线上格式的带附件方式。
+   ---------------------------------------------------------------- */
+
+const FL_MAIL_CATS = [
+  { id: 'all', label: '全部', icon: 'inbox', sub: '收到的全部' },
+  { id: 'session', label: '会话', icon: 'message', sub: '分享过来的对话' },
+  { id: 'message', label: '消息', icon: 'mail', sub: '纯文本' },
+  { id: 'file', label: '文件', icon: 'file', sub: '文档 / 压缩包' },
+  { id: 'media', label: '媒体文件', icon: 'image', sub: '图片 / 音视频' },
+  { id: 'sent', label: '已发送', icon: 'send', sub: '本机发出的' },
+];
+
+/* 传输类别：后端 kind 是自由字符串（session / archive / text / file /
+   media），这里归成界面上那五类。未知值按「消息」处理。 */
+function flKindCat(kind) {
+  const k = String(kind || '').toLowerCase();
+  if (k === 'session' || k === 'archive') return 'session';
+  if (k === 'file') return 'file';
+  if (k === 'media') return 'media';
+  return 'message';
+}
+function flKindLabel(kind) {
+  return { session: '会话', file: '文件', media: '媒体', message: '消息' }[flKindCat(kind)];
+}
+function flKindIcon(kind) {
+  return { session: 'message', file: 'file', media: 'image', message: 'mail' }[flKindCat(kind)];
+}
+
+/* ---------- 附件 ---------------------------------------------------- */
+const FL_ATT_MAX = 12 * 1024 * 1024;    // 单个附件（原始字节）
+const FL_ATT_TOTAL = 20 * 1024 * 1024;  // 一条消息（base64 后仍在后端 32 MiB 内）
+
+function flAttachmentOf(m) {
+  if (!m || m.role !== 'attachment') return null;
+  const txt = String(m.text || '');
+  if (txt.charAt(0) !== '{') return null;
+  try {
+    const j = JSON.parse(txt);
+    return (j && typeof j.name === 'string') ? j : null;
+  } catch (e) { return null; }
+}
+
+function flSaveAttachment(a) {
+  const b64 = String((a && a.data) || '');
+  if (!b64) { toast('这个附件没有内容', 'bad'); return; }
+  try {
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    const url = URL.createObjectURL(new Blob([bytes], { type: (a.mime || 'application/octet-stream') }));
+    const link = el('a');
+    link.href = url;
+    link.download = a.name || 'file';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => { try { URL.revokeObjectURL(url); } catch (e) {} }, 5000);
+  } catch (e) {
+    toast('保存附件失败：' + (e.message || e), 'bad');
+  }
+}
+
+function flAttachCard(a, withSave) {
+  const card = el('div', 'fl-att');
+  const ico = el('span', 'fl-att-ico');
+  const ic = iconEl(/^(image|video|audio)\//.test(a.mime || '') ? 'image' : 'file', 'sm');
+  if (ic) ico.appendChild(ic);
+  card.appendChild(ico);
+  const col = el('div', 'fl-att-main');
+  col.appendChild(el('span', 'fl-att-name trunc', a.name || 'file'));
+  col.appendChild(el('span', 'fl-att-meta',
+    (a.mime || 'application/octet-stream') + ' · ' + flFmtBytes(a.size)));
+  card.appendChild(col);
+  if (withSave) {
+    const b = flBtn('保存', 'download', () => flSaveAttachment(a), 'ghost');
+    b.classList.add('fl-att-save');
+    card.appendChild(b);
+  }
+  return card;
+}
+
+/* ---------- 发件箱 -------------------------------------------------- */
+async function flLoadOutbox() {
+  try {
+    const out = await api('flowlink.outbox', {});
+    if (out && out.ok !== false && Array.isArray(out.items)) FL.outbox = out.items;
+  } catch (e) { /* 旧后端没有这个命令：列表留空即可 */ }
+  return FL.outbox || [];
+}
+
+/* ---------- 页面 ---------------------------------------------------- */
 function flPaintTransfers(main) {
   flHead(main, '传输列表',
-    '对端分享过来的会话与已存档会话。分享时对端把 JSONL 文件写到本机 .cell/links/<client_id>/，这里按时间列出。',
-    [flBtn('刷新', 'refresh', () => refreshFlowlink(), 'ghost')]);
+    '收到的会话、消息、文件与媒体，以及本机发出的记录。分享与发送都走 FlowLink 的加密通道，对端的条目落在它的 .cell/links/ 下。',
+    [flBtn('写消息', 'pencil', () => flComposeOpen(), 'accent'),
+     flBtn('刷新', 'refresh', () => { flLoadOutbox().then(() => { refreshFlowlink(); }); }, 'ghost')]);
 
-  const body = el('div', 'fl-content');
-  const items = flTransfers();
-  const card = el('section', 'fl-card');
-  const ch = el('div', 'fl-card-head');
-  ch.appendChild(el('span', 'fl-card-title', '收到的内容'));
-  ch.appendChild(el('span', 'grow'));
-  ch.appendChild(flPill(String(items.length) + ' 条'));
-  card.appendChild(ch);
+  // 第一次进来把发件箱拉一遍（旧后端没有 outbox 命令 → 空列表）
+  if (!FL.outbox) {
+    FL.outbox = [];
+    flLoadOutbox().then(() => { if (FL.tab === 'transfers') flPaint(); });
+  }
+
+  const wrap = el('div', 'fl-mail');
+  wrap.appendChild(flMailRail());
+  wrap.appendChild(flMailList());
+  wrap.appendChild(flMailRead());
+  main.appendChild(wrap);
+
+  // 撰写浮层挂在 #flowlinkPage 上（不是 .fl-main）：页面重画不会把它拆掉，
+  // 正在敲的正文也就不会因为对端发来一条传输而丢焦点
+  if (FL.compose) flComposeMount();
+}
+
+/* ---- 分类栏 ---- */
+function flMailRail() {
+  const rail = el('nav', 'fl-rail');
+  const recv = flTransfers();
+  const sent = FL.outbox || [];
+  const unread = recv.filter(t => !t.read).length;
+  for (const c of FL_MAIL_CATS) {
+    const n = c.id === 'sent' ? sent.length
+      : c.id === 'all' ? recv.length
+      : recv.filter(t => flKindCat(t.kind) === c.id).length;
+    const b = el('button', 'fl-rail-item' + (FL.mail === c.id ? ' on' : ''));
+    b.type = 'button';
+    b.title = c.sub;
+    const ic = iconEl(c.icon, 'sm');
+    if (ic) b.appendChild(ic);
+    b.appendChild(el('span', 'fl-rail-label', c.label));
+    b.appendChild(el('span', 'grow'));
+    if (c.id === 'all' && unread) b.appendChild(flPill(String(unread), 'accent'));
+    else b.appendChild(el('span', 'fl-rail-n', n ? String(n) : ''));
+    b.onclick = () => { FL.mail = c.id; FL.tsel = ''; FL.tdetail = null; FL.sdetail = null; flPaint(); };
+    rail.appendChild(b);
+  }
+  const foot = el('div', 'fl-rail-foot');
+  foot.appendChild(el('span', 'fl-hint', '附件上限 12 MB / 个，单条消息 32 MB'));
+  rail.appendChild(foot);
+  return rail;
+}
+
+function flMailItems() {
+  if (FL.mail === 'sent') return (FL.outbox || []).slice();
+  const recv = flTransfers();
+  if (FL.mail === 'all') return recv;
+  return recv.filter(t => flKindCat(t.kind) === FL.mail);
+}
+
+/* ---- 列表 ---- */
+function flMailList() {
+  const pane = el('div', 'fl-list');
+  const items = flMailItems();
+  const cat = FL_MAIL_CATS.find(c => c.id === FL.mail) || FL_MAIL_CATS[0];
+  const head = el('div', 'fl-list-head');
+  head.appendChild(el('span', 'fl-list-title', cat.label));
+  head.appendChild(el('span', 'grow'));
+  head.appendChild(el('span', 'fl-list-n', items.length + ' 条'));
+  pane.appendChild(head);
 
   if (!items.length) {
-    card.appendChild(el('div', 'fl-hint', '还没有收到任何传输。对端在会话里分享时，会出现在这里。'));
-  } else {
-    for (const t of items) {
-      const row = el('div', 'fl-trow' + (FL.tsel === t.id ? ' on' : ''));
-      const ico = el('span', 'fl-dev-ico');
-      const ic = iconEl(t.kind === 'session' ? 'message' : 'download', 'sm');
-      if (ic) ico.appendChild(ic);
-      row.appendChild(ico);
-      const col = el('div', 'fl-trow-main');
-      const l1 = el('div', 'fl-dev-line1');
-      l1.appendChild(el('span', 'fl-dev-name trunc', t.subject || t.id));
-      if (!t.read) l1.appendChild(flPill('未读', 'accent'));
-      l1.appendChild(flPill(t.kind === 'session' ? '会话' : '内容'));
-      col.appendChild(l1);
-      col.appendChild(el('div', 'fl-dev-meta',
-        (t.from_name || String(t.from || '').slice(0, 8)) + ' · ' + flAgo(t.created) + ' · ' + flFmtBytes(t.bytes)));
-      if (t.file) col.appendChild(el('div', 'fl-dev-id', t.file));
-      row.appendChild(col);
-      row.appendChild(flIconBtn('trash', '删除这条传输', () => flDropTransfer(t.id)));
-      row.onclick = () => flReadTransfer(t.id);
-      card.appendChild(row);
-    }
+    const empty = el('div', 'fl-list-empty');
+    empty.appendChild(el('div', 'fl-empty-title', FL.mail === 'sent' ? '还没有发出过内容' : '这个分类下是空的'));
+    empty.appendChild(el('p', 'fl-empty-txt', FL.mail === 'sent'
+      ? '点右上角「写消息」：可以发文本、附件，也可以把当前会话整段发过去。'
+      : '对端分享或发送过来的内容会出现在这里。'));
+    pane.appendChild(empty);
+    return pane;
   }
-  body.appendChild(card);
 
-  if (FL.tdetail) {
-    const d = FL.tdetail;
-    const view = el('section', 'fl-card');
-    const vh = el('div', 'fl-card-head');
-    vh.appendChild(el('span', 'fl-card-title', d.subject || d.id));
-    vh.appendChild(el('span', 'grow'));
-    vh.appendChild(el('span', 'fl-hint', (d.from_name || '') + ' · ' + flFmtBytes(d.bytes)));
-    view.appendChild(vh);
-    if (d.note) view.appendChild(el('p', 'fl-note', d.note));
-    const msgs = el('div', 'fl-transcript');
-    for (const m of (d.messages || [])) {
+  const scroll = el('div', 'fl-list-scroll');
+  for (const it of items) scroll.appendChild(flMailRow(it));
+  pane.appendChild(scroll);
+  return pane;
+}
+
+function flMailRow(t) {
+  const isSent = FL.mail === 'sent';
+  const id = t.id || '';
+  const unread = !isSent && !t.read;
+  const row = el('button', 'fl-mrow' + (FL.tsel === id ? ' on' : '') + (unread ? ' unread' : ''));
+  row.type = 'button';
+  const ico = el('span', 'fl-mrow-ico');
+  const ic = iconEl(flKindIcon(t.kind), 'sm');
+  if (ic) ico.appendChild(ic);
+  row.appendChild(ico);
+
+  const col = el('div', 'fl-mrow-main');
+  const l1 = el('div', 'fl-mrow-l1');
+  l1.appendChild(el('span', 'fl-mrow-subj trunc', t.subject || t.id || '（无主题）'));
+  if (unread) l1.appendChild(el('span', 'fl-dot'));
+  col.appendChild(l1);
+
+  const who = isSent
+    ? ('发给 ' + (t.to_name || String(t.to || '').slice(0, 8) || '—'))
+    : ('来自 ' + (t.from_name || String(t.from || '').slice(0, 8) || '—'));
+  col.appendChild(el('div', 'fl-mrow-l2 trunc', who));
+
+  const l3 = el('div', 'fl-mrow-l3');
+  l3.appendChild(el('span', 'fl-mrow-tag', flKindLabel(t.kind)));
+  const natt = Array.isArray(t.attachments) ? t.attachments.length : 0;
+  if (natt) l3.appendChild(el('span', 'fl-mrow-tag', natt + ' 个附件'));
+  l3.appendChild(el('span', 'grow'));
+  l3.appendChild(el('span', 'fl-mrow-time', flAgo(t.created)));
+  col.appendChild(l3);
+  row.appendChild(col);
+
+  row.onclick = () => flSelectMail(t, isSent);
+  return row;
+}
+
+async function flSelectMail(t, isSent) {
+  FL.tsel = t.id || '';
+  FL.tdetail = null;
+  FL.sdetail = isSent ? t : null;
+  flPaint();
+  if (isSent) return;
+  const out = await cmd('flowlink.transfer.read', { id: t.id });
+  if (out && out.ok !== false) {
+    FL.tdetail = out;
+    refreshFlowlink(); // 已读标记进了索引，同步一次状态
+  }
+  flPaint();
+}
+
+async function flDropTransfer(id, sent) {
+  const okGo = await confirmDlg(sent
+    ? '删除这条发送记录？只是本机的日志，对端已经收到的那份不受影响。'
+    : '删除这条传输？本机保存的 JSONL 文件也会删除。',
+    { title: '删除记录', ok: '删除' });
+  if (!okGo) return;
+  if (sent) {
+    const out = await cmd('flowlink.outbox.drop', { id: id });
+    if (out && out.ok !== false) FL.outbox = Array.isArray(out.items) ? out.items : [];
+  } else {
+    const out = await cmd('flowlink.transfer.drop', { id: id });
+    if (out && out.ok !== false) refreshFlowlink();
+  }
+  if (FL.tsel === id) { FL.tsel = ''; FL.tdetail = null; FL.sdetail = null; }
+  toast('已删除', 'ok', 1400);
+  flPaint();
+}
+
+/* ---- 阅读窗格 ---- */
+function flMailRead() {
+  const pane = el('section', 'fl-read');
+  const isSent = FL.mail === 'sent';
+  const d = isSent ? FL.sdetail : FL.tdetail;
+
+  if (!d) {
+    const empty = el('div', 'fl-read-empty');
+    const ic = iconEl('mail', 'lg');
+    if (ic) empty.appendChild(ic);
+    empty.appendChild(el('div', 'fl-empty-title', '选一条读'));
+    empty.appendChild(el('p', 'fl-empty-txt', '左边点开任意一条，正文会显示在这里。写消息用右上角的按钮。'));
+    pane.appendChild(empty);
+    return pane;
+  }
+
+  const head = el('div', 'fl-read-head');
+  const hcol = el('div', 'fl-read-hcol');
+  hcol.appendChild(el('h2', 'fl-read-subj', d.subject || '（无主题）'));
+  const meta = el('div', 'fl-read-meta');
+  meta.appendChild(el('span', 'fl-read-from', isSent
+    ? ('发给 ' + (d.to_name || String(d.to || '').slice(0, 8)))
+    : ('来自 ' + (d.from_name || String(d.from || '').slice(0, 8)))));
+  meta.appendChild(el('span', 'fl-read-sep', '·'));
+  meta.appendChild(el('span', null, flAgo(d.created)));
+  meta.appendChild(el('span', 'fl-read-sep', '·'));
+  meta.appendChild(el('span', null, flKindLabel(d.kind)));
+  meta.appendChild(el('span', 'fl-read-sep', '·'));
+  meta.appendChild(el('span', null, flFmtBytes(d.bytes)));
+  hcol.appendChild(meta);
+  head.appendChild(hcol);
+  head.appendChild(el('span', 'grow'));
+  head.appendChild(flIconBtn('trash', '删除这条记录', () => flDropTransfer(d.id, isSent)));
+  pane.appendChild(head);
+
+  const scroll = el('div', 'fl-read-scroll');
+  if (d.note) scroll.appendChild(el('p', 'fl-note', d.note));
+
+  if (isSent) {
+    // 已发送只有本机日志：正文 / 附件元数据，附件本体在对端
+    if (d.body) {
+      const body = el('div', 'fl-msg-body prose');
+      body.innerHTML = renderMarkdown(d.body);
+      scroll.appendChild(body);
+    } else if (d.preview && flKindCat(d.kind) !== 'session') {
+      scroll.appendChild(el('p', 'fl-hint', d.preview));
+    }
+    if (flKindCat(d.kind) === 'session') {
+      scroll.appendChild(el('p', 'fl-hint',
+        '这段会话（' + Number(d.count || 0) + ' 条消息）已整段发给对端，本机只保留这条发送记录。'));
+    }
+    const atts = Array.isArray(d.attachments) ? d.attachments : [];
+    if (atts.length) {
+      const box = el('div', 'fl-atts');
+      for (const a of atts) box.appendChild(flAttachCard(a, false));
+      scroll.appendChild(box);
+      scroll.appendChild(el('p', 'fl-hint', '附件本体只在对端，本机只记录名称与大小。'));
+    }
+  } else {
+    const msgs = Array.isArray(d.messages) ? d.messages : [];
+    const list = el('div', 'fl-transcript');
+    for (const m of msgs) {
+      const att = flAttachmentOf(m);
+      if (att) {
+        list.appendChild(flAttachCard(att, true));
+        continue;
+      }
       const item = el('div', 'fl-msg ' + (m.role === 'user' ? 'user' : 'assistant'));
       item.appendChild(el('div', 'fl-msg-role', m.role === 'user' ? '用户' : '助手'));
       const bodyEl = el('div', 'fl-msg-body prose');
       bodyEl.innerHTML = renderMarkdown(m.text || '');
       item.appendChild(bodyEl);
-      msgs.appendChild(item);
+      list.appendChild(item);
     }
-    view.appendChild(msgs);
-    body.appendChild(view);
+    if (!msgs.length) list.appendChild(el('p', 'fl-hint', '这条传输没有正文。'));
+    scroll.appendChild(list);
   }
-  main.appendChild(body);
+
+  pane.appendChild(scroll);
+  return pane;
 }
 
-async function flReadTransfer(id) {
-  FL.tsel = id;
-  try {
-    const out = await cmd('flowlink.transfer.read', { id: id });
-    if (out && out.ok !== false) {
-      FL.tdetail = out;
-      // 读过的条目在索引里已标记：同步一次状态
-      refreshFlowlink();
+/* ---------- 撰写（浮层） --------------------------------------------
+
+   挂在 #flowlinkPage 上的一层卡片，像邮件的撰写窗口：收件人（多选）、
+   主题、正文、附件。数据全在 FL.draft 里，重画只会重建 DOM 不会丢内容。
+   ------------------------------------------------------------------ */
+function flDraftState() {
+  if (!FL.draft || typeof FL.draft !== 'object') FL.draft = { cells: [], subject: '', body: '', files: [] };
+  if (!Array.isArray(FL.draft.cells)) FL.draft.cells = [];
+  if (!Array.isArray(FL.draft.files)) FL.draft.files = [];
+  return FL.draft;
+}
+
+function flComposeOpen(preset) {
+  FL.compose = true;
+  const d = flDraftState();
+  if (preset) {
+    if (Array.isArray(preset.cells)) d.cells = preset.cells.slice();
+    if (preset.subject != null) d.subject = preset.subject;
+    if (preset.body != null) d.body = preset.body;
+  }
+  flComposeMount();
+}
+
+function flComposeClose() {
+  FL.compose = false;
+  FL.draft = null;
+  const n = $('#flCompose');
+  if (n) n.remove();
+}
+
+function flComposeMount() {
+  if ($('#flCompose')) { flComposeSync(); return; }
+  const host = $('#flowlinkPage');
+  if (!host) return;
+  const d = flDraftState();
+
+  const veil = el('div', 'fl-cmp-veil');
+  veil.id = 'flCompose';
+  const sheet = el('div', 'fl-cmp-sheet');
+
+  const head = el('div', 'fl-cmp-head');
+  const ttl = el('div', 'fl-cmp-title');
+  ttl.appendChild(el('span', 'fl-cmp-h1', '写消息'));
+  ttl.appendChild(el('span', 'fl-cmp-sub', '通过 FlowLink 的加密通道直接送到对端 cell'));
+  head.appendChild(ttl);
+  head.appendChild(el('span', 'grow'));
+  head.appendChild(flIconBtn('x', '关闭（Esc）', flComposeClose));
+  sheet.appendChild(head);
+
+  const bodyWrap = el('div', 'fl-cmp-body');
+
+  // 收件人：已配对的设备各一个可点的 chip（多选）
+  const toRow = el('div', 'fl-cmp-row');
+  toRow.appendChild(el('span', 'fl-cmp-k', '收件人'));
+  const toBox = el('div', 'fl-cmp-to');
+  const peers = flSharePeers();
+  if (!peers.length) {
+    toBox.appendChild(el('span', 'fl-hint', '还没有配对的设备 —— 先在 FlowLink → Scan Links 里配对。'));
+  }
+  for (const p of peers) {
+    const chip = el('button', 'fl-cmp-chip' + (d.cells.includes(p.client_id) ? ' on' : ''));
+    chip.type = 'button';
+    chip.title = p.client_id + (p.online ? '（在线）' : '（离线）');
+    chip.appendChild(el('span', 'fl-cmp-dot' + (p.online ? ' on' : '')));
+    chip.appendChild(el('span', 'trunc', p.name || p.client_id.slice(0, 8)));
+    chip.onclick = () => {
+      const i = d.cells.indexOf(p.client_id);
+      if (i >= 0) d.cells.splice(i, 1);
+      else d.cells.push(p.client_id);
+      chip.classList.toggle('on', i < 0);
+      flComposeSync();
+    };
+    toBox.appendChild(chip);
+  }
+  toRow.appendChild(toBox);
+  bodyWrap.appendChild(toRow);
+
+  // 主题
+  const subjRow = el('div', 'fl-cmp-row');
+  subjRow.appendChild(el('span', 'fl-cmp-k', '主题'));
+  const subj = flInput('（可选）一句话说明这次发送的内容', d.subject);
+  subj.classList.add('fl-cmp-subj');
+  subj.oninput = () => { d.subject = subj.value; flComposeSync(); };
+  subjRow.appendChild(subj);
+  bodyWrap.appendChild(subjRow);
+
+  // 正文
+  const bodyRow = el('div', 'fl-cmp-row grow');
+  bodyRow.appendChild(el('span', 'fl-cmp-k', '正文'));
+  const ta = flTextarea('写点什么，或者只发附件…', d.body, 9);
+  ta.classList.add('fl-cmp-text');
+  ta.oninput = () => { d.body = ta.value; flComposeSync(); };
+  // Ctrl/⌘+Enter 直接发送：写长正文时不必去够底栏那颗按钮
+  ta.onkeydown = ev => {
+    if ((ev.ctrlKey || ev.metaKey) && ev.key === 'Enter') { ev.preventDefault(); flComposeSend(); }
+  };
+  bodyRow.appendChild(ta);
+  bodyWrap.appendChild(bodyRow);
+
+  // 附件：一个「添加文件」按钮 + chips
+  const attRow = el('div', 'fl-cmp-row');
+  attRow.appendChild(el('span', 'fl-cmp-k', '附件'));
+  const attBox = el('div', 'fl-cmp-atts');
+  const add = flBtn('添加文件', 'clip', () => { const f = sheet.querySelector('.fl-cmp-file'); if (f) f.click(); }, 'ghost');
+  add.classList.add('fl-cmp-add');
+  attBox.appendChild(add);
+  attBox.appendChild(el('div', 'fl-cmp-files'));
+  attRow.appendChild(attBox);
+  bodyWrap.appendChild(attRow);
+  sheet.appendChild(bodyWrap);
+
+  const fileIn = el('input', 'fl-cmp-file');
+  fileIn.type = 'file';
+  fileIn.multiple = true;
+  fileIn.onchange = () => { flAddFiles(fileIn.files); fileIn.value = ''; };
+  sheet.appendChild(fileIn);
+
+  // 底栏
+  const foot = el('div', 'fl-cmp-foot');
+  foot.appendChild(el('span', 'fl-cmp-info'));
+  foot.appendChild(el('span', 'grow'));
+  foot.appendChild(flBtn('取消', '', flComposeClose, 'ghost'));
+  const send = flBtn('发送', 'send', () => flComposeSend(), 'accent');
+  send.classList.add('fl-cmp-send');
+  foot.appendChild(send);
+  sheet.appendChild(foot);
+
+  // 拖放附件到整张卡片上
+  sheet.addEventListener('dragover', ev => { ev.preventDefault(); sheet.classList.add('drop'); });
+  sheet.addEventListener('dragleave', () => sheet.classList.remove('drop'));
+  sheet.addEventListener('drop', ev => {
+    ev.preventDefault();
+    sheet.classList.remove('drop');
+    if (ev.dataTransfer && ev.dataTransfer.files && ev.dataTransfer.files.length) flAddFiles(ev.dataTransfer.files);
+  });
+
+  veil.addEventListener('mousedown', ev => { if (ev.target === veil) flComposeClose(); });
+  veil.addEventListener('keydown', ev => {
+    if (ev.key === 'Escape') { ev.stopPropagation(); flComposeClose(); }
+  });
+
+  veil.appendChild(sheet);
+  host.appendChild(veil);
+  flComposeSync();
+  requestAnimationFrame(() => { try { subj.focus(); } catch (e) {} });
+}
+
+/* 只更新「会变的那几块」：附件 chips、发送按钮可用性、底部提示。
+   输入框本身不重建，光标和选区都留着。 */
+function flComposeSync() {
+  const veil = $('#flCompose');
+  if (!veil) return;
+  const d = flDraftState();
+
+  const files = veil.querySelector('.fl-cmp-files');
+  if (files) {
+    files.replaceChildren();
+    d.files.forEach((f, i) => {
+      const chip = el('div', 'fl-cmp-filechip');
+      chip.title = f.name;
+      const ic = iconEl(/^(image|video|audio)\//.test(f.mime || '') ? 'image' : 'file', 'sm');
+      if (ic) chip.appendChild(ic);
+      chip.appendChild(el('span', 'fl-cmp-fname trunc', f.name));
+      chip.appendChild(el('span', 'fl-cmp-fsize', flFmtBytes(f.size)));
+      const x = el('button', 'fl-cmp-fx');
+      x.type = 'button';
+      x.title = '移除附件';
+      const xi = iconEl('x', 'sm');
+      if (xi) x.appendChild(xi);
+      x.onclick = () => { d.files.splice(i, 1); flComposeSync(); };
+      chip.appendChild(x);
+      files.appendChild(chip);
+    });
+  }
+
+  const total = d.files.reduce((n, f) => n + Number(f.size || 0), 0);
+  const has = !!(String(d.body || '').trim() || d.files.length);
+  const send = veil.querySelector('.fl-cmp-send');
+  if (send) {
+    send.disabled = !(d.cells.length && has);
+    send.title = !d.cells.length ? '先选一个收件人'
+      : !has ? '正文和附件都是空的' : '发送（Ctrl+Enter）';
+  }
+  const info = veil.querySelector('.fl-cmp-info');
+  if (info) {
+    const bits = [];
+    if (d.cells.length) bits.push('收件人 ' + d.cells.length + ' 台');
+    if (d.files.length) bits.push('附件 ' + d.files.length + ' 个 · ' + flFmtBytes(total));
+    info.textContent = bits.join(' · ');
+  }
+}
+
+async function flAddFiles(list) {
+  const d = flDraftState();
+  for (const f of Array.from(list || [])) {
+    if (f.size > FL_ATT_MAX) {
+      toast('「' + f.name + '」超过 12 MB，没有加进来', 'bad', 3200);
+      continue;
     }
-  } catch (e) { toast(e.message || String(e), 'bad'); }
+    const total = d.files.reduce((n, x) => n + Number(x.size || 0), 0);
+    if (total + f.size > FL_ATT_TOTAL) {
+      toast('附件总大小超过 20 MB，后面的没有加进来', 'bad', 3200);
+      break;
+    }
+    try {
+      const data = await fileToB64(f);
+      d.files.push({ name: f.name || 'file', mime: f.type || '', size: f.size || 0, data: data });
+    } catch (e) {
+      toast('读取「' + f.name + '」失败', 'bad');
+    }
+  }
+  flComposeSync();
+}
+
+async function flComposeSend() {
+  const d = flDraftState();
+  if (!d.cells.length) { toast('先选一个收件人', 'bad'); return; }
+  const body = String(d.body || '').trim();
+  if (!body && !d.files.length) { toast('正文和附件都是空的', 'bad'); return; }
+  const veil = $('#flCompose');
+  const send = veil ? veil.querySelector('.fl-cmp-send') : null;
+  if (send) { send.disabled = true; send.title = '发送中…'; }
+  const out = await cmd('flowlink.send', {
+    cells: d.cells.slice(),
+    subject: String(d.subject || '').trim(),
+    body: body,
+    attachments: d.files.map(f => ({ name: f.name, mime: f.mime, size: f.size, data: f.data })),
+  });
+  if (!out || out.ok === false) {
+    if (send) { send.disabled = false; }
+    flComposeSync();
+    return;
+  }
+  const okN = (out.sent || []).length;
+  const badN = (out.failed || []).length;
+  toast('已发送到 ' + okN + ' 台 cell' + (badN ? '（' + badN + ' 台失败）' : ''), badN ? 'warn' : 'ok', 2800);
+  flComposeClose();
+  FL.mail = 'sent';
+  FL.tsel = '';
+  FL.sdetail = null;
+  await flLoadOutbox();
   flPaint();
 }
 
-async function flDropTransfer(id) {
-  if (!confirm('删除这条传输？本机保存的 JSONL 文件也会删除。')) return;
-  const out = await cmd('flowlink.transfer.drop', { id: id });
-  if (out && out.ok !== false) {
-    if (FL.tsel === id) { FL.tsel = ''; FL.tdetail = null; }
-    refreshFlowlink();
-    toast('已删除', 'ok', 1400);
-    flPaint();
-  }
+/* ---------- 分享会话（会话顶栏的 share 按钮） ------------------------
+
+   收件人多选 + 来源（当前会话 / 已存档会话）+ 主题 + 备注。
+   分享出去的是纯文本转录（用户 / 助手消息），工具调用与附件不跟着走。
+   ------------------------------------------------------------------ */
+function flSharePeers() {
+  return flPeers().filter(p => p && p.client_id && p.paired !== false);
+}
+
+function openShareDialog(ws) {
+  ws = ws || S.active || '';
+  const t = ws ? tab(ws) : null;
+  const peers = flSharePeers();
+  const curSession = (t && t.session) || '';
+  const curTitle = (S.sessions.find(s => s.id === curSession) || {}).title || '当前会话';
+  const chosen = new Set(peers.filter(p => p.online).slice(0, 1).map(p => p.client_id));
+  let source = curSession ? 'current' : 'archive';
+  let picked = curSession;
+
+  if (!S.sessions || !S.sessions.length) refreshSessions();
+
+  const go = async () => {
+    if (!chosen.size) { toast('先选一个收件人', 'bad'); return; }
+    const sid = source === 'current' ? curSession : picked;
+    if (!sid) { toast('没有可分享的会话', 'bad'); return; }
+    const subjEl = $('#genericModal .sh-subject');
+    const noteEl = $('#genericModal .sh-note');
+    const out = await cmd('flowlink.share', {
+      cells: [...chosen],
+      session: sid,
+      subject: subjEl ? subjEl.value.trim() : '',
+      note: noteEl ? noteEl.value.trim() : '',
+    });
+    if (!out || out.ok === false) return;
+    closeModal();
+    toast('已分享到 ' + (out.sent || []).length + ' 台 cell', 'ok', 2600);
+    await flLoadOutbox();
+    if (FL.tab === 'transfers' && $('#flowlinkPage').classList.contains('show')) {
+      FL.mail = 'sent';
+      flPaint();
+    }
+  };
+
+  showModal('分享会话', '', [
+    { label: '取消', cls: 'ghost', fn: closeModal },
+    { label: '分享', cls: 'accent', fn: go },
+  ], body => {
+    const wrap = el('div', 'sh-dlg');
+
+    if (!flEnabled()) {
+      wrap.appendChild(el('div', 'sh-warn', 'FlowLink 服务当前是关闭的 —— 现在分享会失败，先在 FlowLink → 设置里打开服务。'));
+    }
+
+    // 收件人
+    const toRow = el('div', 'sh-row');
+    toRow.appendChild(el('span', 'sh-k', '发送对象'));
+    const toBox = el('div', 'sh-to');
+    if (!peers.length) {
+      const none = el('div', 'sh-none');
+      none.appendChild(el('span', 'fl-hint', '还没有配对的设备。'));
+      const open = flBtn('去配对', 'link', () => { closeModal(); FL.tab = 'scan'; openFlowLinkPage(); }, 'ghost');
+      none.appendChild(open);
+      toBox.appendChild(none);
+    }
+    for (const p of peers) {
+      const chip = el('button', 'sh-chip' + (chosen.has(p.client_id) ? ' on' : ''));
+      chip.type = 'button';
+      chip.title = p.client_id + (p.online ? '（在线）' : '（离线，会在下次上线后收到）');
+      chip.appendChild(el('span', 'sh-dot' + (p.online ? ' on' : '')));
+      chip.appendChild(el('span', 'trunc', p.name || p.client_id.slice(0, 8)));
+      chip.onclick = () => {
+        if (chosen.has(p.client_id)) chosen.delete(p.client_id);
+        else chosen.add(p.client_id);
+        chip.classList.toggle('on', chosen.has(p.client_id));
+      };
+      toBox.appendChild(chip);
+    }
+    toRow.appendChild(toBox);
+    wrap.appendChild(toRow);
+
+    // 来源
+    const srcRow = el('div', 'sh-row');
+    srcRow.appendChild(el('span', 'sh-k', '分享内容'));
+    const srcBox = el('div', 'sh-src');
+    const mkRadio = (val, label, sub) => {
+      const b = el('button', 'sh-src-btn' + (source === val ? ' on' : ''));
+      b.type = 'button';
+      b.appendChild(el('span', 'sh-src-t', label));
+      b.appendChild(el('span', 'sh-src-s trunc', sub));
+      b.onclick = () => {
+        source = val;
+        $$('#genericModal .sh-src-btn').forEach(x => x.classList.toggle('on', x === b));
+        sel.style.display = val === 'archive' ? '' : 'none';
+      };
+      return b;
+    };
+    srcBox.appendChild(mkRadio('current', '当前会话', curSession ? curTitle : '这个工作区还没有会话'));
+    srcBox.appendChild(mkRadio('archive', '已存档会话', '本机任意会话的转录'));
+    srcRow.appendChild(srcBox);
+    wrap.appendChild(srcRow);
+
+    // 已存档会话下拉
+    const sel = el('select', 'fl-input sh-select');
+    const list = (S.sessions || []).filter(s => s.id);
+    for (const s of list) {
+      const o = el('option', null, (s.title || s.id) + ' · ' + relTime(s.mtime));
+      o.value = s.id;
+      sel.appendChild(o);
+    }
+    if (!list.length) {
+      const o = el('option', null, '（没有已存档的会话）');
+      o.value = '';
+      sel.appendChild(o);
+    }
+    sel.value = picked || (list[0] && list[0].id) || '';
+    picked = sel.value;
+    sel.onchange = () => { picked = sel.value; };
+    sel.style.display = source === 'archive' ? '' : 'none';
+    wrap.appendChild(sel);
+
+    // 主题 / 备注
+    const subj = flInput('主题（默认「Shared conversation」）', '');
+    subj.classList.add('sh-subject');
+    wrap.appendChild(flField('主题', subj));
+    const note = flTextarea('给对方留一句话（可选）', '', 3);
+    note.classList.add('sh-note');
+    wrap.appendChild(flField('备注', note));
+    wrap.appendChild(el('p', 'sh-hint',
+      '分享的是纯文本转录：用户与助手的消息，最多 200 条 / 20 万字符；工具调用、附件不随会话一起发。'));
+    body.appendChild(wrap);
+  });
 }
 
 /* 实际绑定端口（只读）：来自 status，和下面的偏好输入框不是一回事。

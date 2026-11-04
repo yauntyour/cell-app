@@ -181,6 +181,13 @@ const ICON_PATHS = {
   bars: '<path d="M4.5 20V11M9.75 20V5M15 20v-6M20.25 20V8.5"/><path d="M2.5 20h19"/>',
   key: '<circle cx="8" cy="15" r="4"/><path d="m10.8 12.2 8.2-8.2M16 7l2.5 2.5M19 4l2 2"/>',
   rotate: '<path d="M3 12a9 9 0 1 0 3-6.7M3 4v5h5"/>',
+  // FlowLink 分享 / 撰写：share 是「三个点连线」，send 是纸飞机，
+  // inbox 是收件箱（传输列表的「收到」一侧）
+  share: '<circle cx="18" cy="5.5" r="2.6"/><circle cx="6" cy="12" r="2.6"/><circle cx="18" cy="18.5" r="2.6"/><path d="m8.4 10.8 7.3-3.9M8.4 13.2l7.3 3.9"/>',
+  send: '<path d="M21.4 3.6 3 10.4l6.6 2.5 2.5 6.6 9.3-15.9Z"/><path d="m9.6 12.9 4.6-4.6"/>',
+  inbox: '<path d="M3.5 12.5h4l1.4 2.8h6.2l1.4-2.8h4"/><path d="M5.2 12.5 7.1 5.9A2 2 0 0 1 9 4.5h6a2 2 0 0 1 1.9 1.4l1.9 6.6v4.6a2 2 0 0 1-2 2H7.2a2 2 0 0 1-2-2v-4.6Z"/>',
+  image: '<rect x="3" y="4.5" width="18" height="15" rx="2.2"/><circle cx="8.6" cy="10" r="1.7"/><path d="m4 17.5 4.6-4.4 3.4 3.2 2.8-2.6 4.2 4"/>',
+  mail: '<rect x="2.8" y="5" width="18.4" height="14" rx="2.2"/><path d="m3.4 6.4 8.6 6.4 8.6-6.4"/>',
 
 };
 function iconHtml(name, cls) {
