@@ -297,8 +297,11 @@ jobs:
             exit 1
           fi
 
+      # no `timeout` here: that is coreutils (Linux has it, macOS only ships
+      # `gtimeout` via brew). Every wait inside the self-test is bounded, and the
+      # job's own timeout-minutes covers a pathological hang.
       - name: FlowLink self-test
-        run: timeout 180 ./build/cell-app --smoke-flowlink
+        run: ./build/cell-app --smoke-flowlink
 
       - name: Package
         run: |
