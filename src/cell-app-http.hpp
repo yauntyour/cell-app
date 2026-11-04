@@ -1,173 +1,119 @@
-// cell-app-http.hpp — the web service mode of the shell, built on the
-// servic.cpp server + router components (third_party/include/{servic.hpp,
-// router/router.hpp}).
+// cell-app-http.hpp — the web service: the same page and the same command bus
+// over HTTP + SSE, built on servic.hpp + router.
 //
-//   GET  /              the same single-page UI the desktop shell renders
-//   POST /api/cmd/:name the command bus (JSON body in, JSON out)
-//   GET  /api/state     convenience: the full state snapshot
-//   GET  /api/events    server-sent events: the same event stream the
-//                       WebView view receives, one `data: {...}` per event
-//   GET  /api/themes    third-party theme manifest (there are no built-in
-//                       themes: the default look is the page's own :root,
-//                       themes live in <exe dir>/.cell/theme/<name>/,
-//                       the same root as config/sessions/vault)
-//   GET  /api/theme/:name  a third-party theme's theme.css
-//   GET  /api/splash/asset the custom splash image
-//                       (<exe dir>/.cell/splash/<name>)
-//   GET  /api/splash/page  a custom whole-page splash
-//                       (<exe dir>/.cell/splash/index.html)
+//   GET  /                 the embedded UI (or --ui FILE, a dev loop)
+//   POST /api/cmd/:name    the command bus: JSON body in, JSON out
+//   GET  /api/state        the full state snapshot
+//   GET  /api/events       server-sent events, one `data: {…}` per event
+//   GET  /api/themes       third-party theme manifests
+//   GET  /api/theme/:name  a theme's theme.css
+//   GET  /api/splash/asset the custom splash image  (.cell/splash/<name>)
+//   GET  /api/splash/page  a whole-page splash       (.cell/splash/index.html)
 //
-// Security model: the service is a local control surface for a full-access
-// agent, so it must never be reachable from a web page or from the LAN.
-//   * the listener is bound to 127.0.0.1 only (see servic::Server);
-//   * every request must carry a loopback Host header (DNS-rebinding defence)
-//     and a same-origin (or absent) Origin; browsers additionally tag
-//     cross-site requests, which are refused outright;
-//   * there is no CORS: the page is always served from this same origin, and
-//     a cross-origin fetch/EventSource is therefore rejected by the browser
-//     even before the Host/Origin check runs.
+// Security: the service is a local control surface for a full-access agent, so
+// it must never be reachable from a web page or from the LAN. The listener
+// binds 127.0.0.1 only; every request must carry a loopback Host header (DNS
+// rebinding) and a same-origin or absent Origin, browsers additionally tag
+// cross-site requests, and there is no CORS: the page is always served from
+// this origin, so a cross-origin fetch/EventSource dies in the browser before
+// any of these checks run.
+#pragma once
+
 #include "servic.hpp"
 
 #include <boost/asio.hpp>
 #include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include <fstream>
 #include <map>
 #include <thread>
 
+#include "cell-app-util.hpp"
+
 namespace app
 {
     namespace asio = boost::asio;
 
-    // =====================================================================
-    //  主题系统（桌面外壳功能，CLI 不涉及）
-    //
-    //  没有内置主题：默认外观内置于 UI 页面（:root 深色灰阶，与 cell.cpp
-    //  /export 导出页同一套令牌）。唯一的主题来源是第三方：
-    //
-    //      <exe 目录>/.cell/theme/<name>/theme.json   {"label","type","desc"}
-    //      <exe 目录>/.cell/theme/<name>/theme.css    覆盖 CSS 自定义属性
-    //
-    //  即 cell::root/theme（cell::root = 可执行文件目录/.cell，与
-    //  config.json / sessions / vault 同源）。前端把 theme.css 注入
-    //  样式表末尾，只重定义变量即可完整换肤（含深浅）。
-    // =====================================================================
-    inline bool theme_name_ok(const std::string &n)
-    {
-        if (n.empty() || n.size() > 64)
-            return false;
-        for (unsigned char c : n)
-            if (!(std::isalnum(c) || c == '-' || c == '_' || c == '.'))
-                return false;
-        return n.front() != '.';
-    }
-
+    // ---- themes ----------------------------------------------------------
+    // There is no built-in theme: the default look is the page's own :root, and
+    // every entry here comes from <root>/theme/<name>/{theme.json,theme.css}.
     struct theme_info
     {
         std::string name, label, type = "dark", desc;
-        std::vector<std::string> swatch; // 主题代表色，供选择器做色板预览
+        std::vector<std::string> swatch; // preview colours for the picker
     };
 
-    // 扫描一个主题目录：每个子目录是一个主题，theme.json 提供元数据。
-    // 元数据是第三方输入：字段类型必须逐一校验（一个 "label": 123 曾让
-    // /api/themes 抛异常并直接断开连接）。
-    inline void scan_theme_dir(const std::filesystem::path &base, std::map<std::string, theme_info> &out)
+    inline bool theme_name_ok(std::string_view n)
     {
-        std::error_code ec;
-        if (!std::filesystem::is_directory(base, ec))
-            return;
-        auto it = std::filesystem::directory_iterator(base, ec);
-        for (; !ec && it != std::filesystem::directory_iterator(); it.increment(ec))
-        {
-            if (!it->is_directory(ec))
-                continue;
-            std::string name = it->path().filename().string();
-            if (!theme_name_ok(name) || out.count(name))
-                continue; // 前面的目录已收录同名主题
-            if (!std::filesystem::exists(it->path() / "theme.css", ec))
-                continue; // 没有样式的主题无法应用
-            theme_info t;
-            t.name = name;
-            t.label = name;
-            std::ifstream jf(it->path() / "theme.json", std::ios::binary);
-            if (jf)
-            {
-                try
-                {
-                    auto j = nlohmann::json::parse(std::istreambuf_iterator<char>(jf),
-                                                   std::istreambuf_iterator<char>(), nullptr, false);
-                    if (j.is_object())
-                    {
-                        if (j.contains("label") && j["label"].is_string())
-                        {
-                            std::string s = j["label"].get<std::string>();
-                            if (!s.empty())
-                                t.label = s;
-                        }
-                        if (j.contains("type") && j["type"].is_string() && j["type"].get<std::string>() == "light")
-                            t.type = "light";
-                        if (j.contains("desc") && j["desc"].is_string())
-                            t.desc = j["desc"].get<std::string>();
-                        if (j.contains("swatch") && j["swatch"].is_array())
-                            for (auto &c : j["swatch"])
-                                if (c.is_string() && t.swatch.size() < 4)
-                                    t.swatch.push_back(c.get<std::string>());
-                    }
-                }
-                catch (...)
-                {
-                    // 坏掉的 theme.json 只丢元数据，主题本身仍可用
-                }
-            }
-            out.emplace(name, t);
-        }
+        return !n.empty() && n.size() <= 64 && n.front() != '.' &&
+               std::ranges::all_of(n, [](unsigned char c)
+                                   { return std::isalnum(c) || c == '-' || c == '_' || c == '.'; });
     }
 
-    // 完整主题清单：只有扫描到的第三方主题（默认外观不在清单里）
+    // theme.json is third-party input: every field is type-checked (a
+    // {"label":123} used to make /api/themes throw and drop the connection).
+    inline theme_info read_theme(const std::filesystem::path &dir, const std::string &name)
+    {
+        theme_info t;
+        t.name = t.label = name;
+        std::ifstream jf(dir / "theme.json", std::ios::binary);
+        if (!jf)
+            return t;
+        const auto j = nlohmann::json::parse(jf, nullptr, false);
+        if (!j.is_object())
+            return t; // a broken theme.json only loses the metadata
+        if (const auto it = j.find("label"); it != j.end() && it->is_string() && !it->get<std::string>().empty())
+            t.label = it->get<std::string>();
+        if (j.value("type", std::string{}) == "light")
+            t.type = "light";
+        if (const auto it = j.find("desc"); it != j.end() && it->is_string())
+            t.desc = it->get<std::string>();
+        if (const auto it = j.find("swatch"); it != j.end() && it->is_array())
+            for (const auto &c : *it)
+                if (c.is_string() && t.swatch.size() < 4)
+                    t.swatch.push_back(c.get<std::string>());
+        return t;
+    }
+
+    // Only the scanned third-party themes: the default look is not a theme.
     inline std::vector<theme_info> list_themes()
     {
-        std::map<std::string, theme_info> ext;
-        scan_theme_dir(cell::root / "theme", ext); // 与配置/会话/凭据同目录
         std::vector<theme_info> out;
-        for (auto &[name, t] : ext)
-            out.push_back(t);
+        std::error_code ec;
+        for (std::filesystem::directory_iterator it(cell::root / "theme", ec), end; !ec && it != end; it.increment(ec))
+        {
+            const std::string name = it->path().filename().string();
+            if (it->is_directory(ec) && theme_name_ok(name) &&
+                std::filesystem::exists(it->path() / "theme.css", ec)) // no style = not applicable
+                out.push_back(read_theme(it->path(), name));
+        }
+        std::ranges::sort(out, {}, &theme_info::name);
         return out;
     }
 
-    // 启动页图片的 MIME。未知扩展名返回空 → 路由直接 404：.cell/splash/ 里
-    // 除了图片和 index.html 之外的文件不会被顺手当成资源发出去。
-    inline std::string splash_mime(const std::string &name)
+    // ---- static assets ---------------------------------------------------
+    inline std::string_view splash_mime(std::string_view name)
     {
-        auto dot = name.find_last_of('.');
-        if (dot == std::string::npos)
-            return "";
-        std::string ext;
-        for (char c : name.substr(dot + 1))
-            ext += (char)std::tolower((unsigned char)c);
-        if (ext == "png")
-            return "image/png";
-        if (ext == "jpg" || ext == "jpeg")
-            return "image/jpeg";
-        if (ext == "gif")
-            return "image/gif";
-        if (ext == "webp")
-            return "image/webp";
-        if (ext == "avif")
-            return "image/avif";
-        if (ext == "bmp")
-            return "image/bmp";
-        if (ext == "svg")
-            return "image/svg+xml";
-        return "";
+        const size_t dot = name.rfind('.');
+        if (dot == std::string_view::npos)
+            return {};
+        static constexpr std::pair<std::string_view, std::string_view> kMime[] = {
+            {"png", "image/png"}, {"jpg", "image/jpeg"}, {"jpeg", "image/jpeg"},
+            {"gif", "image/gif"}, {"webp", "image/webp"}, {"avif", "image/avif"},
+            {"bmp", "image/bmp"}, {"svg", "image/svg+xml"}};
+        const std::string ext = js::lower_ascii(name.substr(dot + 1));
+        const auto it = std::ranges::find(kMime, ext, &std::pair<std::string_view, std::string_view>::first);
+        return it == std::end(kMime) ? std::string_view{} : it->second;
     }
 
-    // 读一个小文件（启动页资源都很小；上限兜住误配置的大文件）
+    // Read a small file; the cap guards against a mis-pointed configuration.
     inline bool read_small_file(const std::filesystem::path &p, size_t max_bytes, std::string &out)
     {
         std::error_code ec;
         if (!std::filesystem::is_regular_file(p, ec))
             return false;
-        auto size = std::filesystem::file_size(p, ec);
+        const auto size = std::filesystem::file_size(p, ec);
         if (ec || size == 0 || size > max_bytes)
             return false;
         std::ifstream f(p, std::ios::binary);
@@ -216,21 +162,14 @@ namespace app
         explicit http_service(app_core &c) : core(c) {}
         ~http_service() { stop(); }
 
-        // ---- helpers ------------------------------------------------------
-        static std::string lower_ascii(std::string s)
+        // ---- responses -----------------------------------------------------
+        static std::string http_response(std::string_view status, std::string_view ctype, std::string_view body)
         {
-            for (char &c : s)
-                c = (char)std::tolower((unsigned char)c);
-            return s;
+            return std::format("HTTP/1.1 {}\r\nContent-Type: {}\r\nX-Content-Type-Options: nosniff\r\n"
+                               "Content-Length: {}\r\nConnection: close\r\n\r\n{}",
+                               status, ctype, body.size(), body);
         }
-        static std::string http_response(const std::string &status, const std::string &ctype,
-                                         const std::string &body)
-        {
-            return "HTTP/1.1 " + status + "\r\nContent-Type: " + ctype +
-                   "\r\nX-Content-Type-Options: nosniff\r\n" +
-                   std::format("Content-Length: {}\r\nConnection: close\r\n\r\n", body.size()) + body;
-        }
-        static std::string text_response(const std::string &status, const std::string &body)
+        static std::string text_response(std::string_view status, std::string_view body)
         {
             return http_response(status, "text/plain; charset=utf-8", body);
         }
@@ -239,68 +178,74 @@ namespace app
             return http_response("200 OK", "application/json; charset=utf-8",
                                  j.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace));
         }
-        // loopback host forms accepted in the Host header / Origin
-        bool host_allowed(const std::string &host) const
+        // The dev surfaces (page, theme.css, splash) change on disk under us.
+        static std::string no_store(std::string r)
         {
-            std::string h = lower_ascii(host);
-            std::string p = std::to_string(bound_port);
+            if (const size_t head = r.find("\r\n\r\n"); head != std::string::npos)
+                r.insert(head, "\r\nCache-Control: no-store");
+            return r;
+        }
+
+        // ---- the request gate ----------------------------------------------
+        // loopback host forms accepted in the Host header / Origin
+        bool host_allowed(std::string_view host) const
+        {
+            const std::string h = js::lower_ascii(host), p = std::to_string(bound_port);
             return h == "127.0.0.1:" + p || h == "localhost:" + p || h == "[::1]:" + p;
         }
-        bool origin_allowed(const std::string &origin) const
+        bool origin_allowed(std::string_view origin) const
         {
-            std::string o = lower_ascii(origin);
-            const std::string scheme = "http://";
-            if (o.rfind(scheme, 0) != 0)
-                return false;
-            return host_allowed(o.substr(scheme.size()));
+            constexpr std::string_view kScheme = "http://";
+            return origin.starts_with(kScheme) && host_allowed(origin.substr(kScheme.size()));
         }
-        // "" = allowed, otherwise a ready-to-send refusal
-        std::string check_request(const std::string &raw, const std::string &want_method) const
+        // "" = allowed, otherwise a ready-to-send refusal.
+        std::string check_request(const std::string &raw, std::string_view want_method) const
         {
             if (servic::request_method(raw) != want_method)
                 return text_response("405 Method Not Allowed", "method not allowed");
             if (!host_allowed(servic::header_value(raw, "Host")))
                 return text_response("403 Forbidden", "loopback Host header required");
-            std::string origin = servic::header_value(raw, "Origin");
+            const std::string origin = servic::header_value(raw, "Origin");
             if (!origin.empty() && !origin_allowed(origin))
                 return text_response("403 Forbidden", "cross-origin request refused");
-            if (lower_ascii(servic::header_value(raw, "Sec-Fetch-Site")) == "cross-site")
+            if (js::lower_ascii(servic::header_value(raw, "Sec-Fetch-Site")) == "cross-site")
                 return text_response("403 Forbidden", "cross-site request refused");
             return "";
         }
-        // split a raw request into method / path / body
-        static void parse_request(const std::string &raw, std::string &method, std::string &path, std::string &body)
+        // Every route starts with the same three lines; this keeps them out of
+        // the handlers. False = the refusal is already in `out`.
+        bool gate(const std::string &req, std::string &out, std::string_view method) const
         {
-            method.clear();
-            path.clear();
-            body.clear();
-            size_t line_end = raw.find_first_of("\r\n");
-            if (line_end == std::string::npos)
-                return;
-            std::istringstream iss(raw.substr(0, line_end));
-            std::string target, version;
-            if (iss >> method >> target >> version)
-            {
-                size_t q = target.find('?');
-                path = q == std::string::npos ? target : target.substr(0, q);
-            }
-            size_t hdr_end = raw.find("\r\n\r\n");
-            if (hdr_end != std::string::npos)
-                body = raw.substr(hdr_end + 4);
+            std::string bad = check_request(req, method);
+            if (bad.empty())
+                return true;
+            out = std::move(bad);
+            return false;
+        }
+        // The body follows the first blank line of the raw request.
+        static std::string request_body(const std::string &raw)
+        {
+            const size_t hdr_end = raw.find("\r\n\r\n");
+            return hdr_end == std::string::npos ? std::string{} : raw.substr(hdr_end + 4);
+        }
+
+        // A themed file response, or "" when it is missing/unreadable.
+        static std::string file_response(const std::filesystem::path &p, std::string_view mime, size_t max_bytes)
+        {
+            std::string body;
+            if (!read_small_file(p, max_bytes, body))
+                return {};
+            return no_store(http_response("200 OK", mime, body));
         }
 
         // ---- lifecycle -----------------------------------------------------
         // returns "" on success, else the failure reason
         std::string start(int port, int n_threads)
         {
-            // -- routes ------------------------------------------------------
             ros.on("", [this](std::string &req, std::string &out, const std::map<std::string, std::string> &) -> int
                    {
-                if (std::string bad = check_request(req, "GET"); !bad.empty())
-                {
-                    out = std::move(bad);
+                if (!gate(req, out, "GET"))
                     return rt::FLAG_DONE;
-                }
                 std::string html = app::kUiHtml;
                 bool from_disk = false;
                 if (!ui_path.empty())
@@ -312,39 +257,24 @@ namespace app
                         from_disk = true;
                     }
                     else
-                    {
                         cell::sys::logger::instance().warn("http", std::format("--ui file unreadable, serving the embedded page: {}", ui_path));
-                    }
                 }
-                std::string r = http_response("200 OK", "text/html; charset=utf-8", html);
+                out = http_response("200 OK", "text/html; charset=utf-8", html);
                 if (from_disk)
-                {
-                    // dev mode: never cache, the file changes under us
-                    size_t head = r.find("\r\n\r\n");
-                    r.insert(head, "\r\nCache-Control: no-store");
-                }
-                out = std::move(r);
+                    out = no_store(std::move(out));
                 return rt::FLAG_DONE; });
 
             ros.on("favicon.ico", [this](std::string &req, std::string &out, const std::map<std::string, std::string> &) -> int
                    {
-                if (std::string bad = check_request(req, "GET"); !bad.empty())
-                {
-                    out = std::move(bad);
-                    return rt::FLAG_DONE;
-                }
-                out = "HTTP/1.1 204 No Content\r\n\r\n";
+                if (gate(req, out, "GET"))
+                    out = "HTTP/1.1 204 No Content\r\n\r\n";
                 return rt::FLAG_DONE; });
 
-            // GET /api/themes — 第三方主题清单（设置页主题选择器用）
+            // GET /api/themes — the manifests behind the theme picker
             ros.on("api/themes", [this](std::string &req, std::string &out, const std::map<std::string, std::string> &) -> int
                    {
-                if (std::string bad = check_request(req, "GET"); !bad.empty())
-                {
-                    out = std::move(bad);
+                if (!gate(req, out, "GET"))
                     return rt::FLAG_DONE;
-                }
-                nlohmann::json r = nlohmann::json{{"ok", true}};
                 nlohmann::json arr = nlohmann::json::array();
                 try
                 {
@@ -357,127 +287,81 @@ namespace app
                     out = text_response("500 Internal Server Error", e.what());
                     return rt::FLAG_DONE;
                 }
-                r["themes"] = std::move(arr);
-                out = http_json(r);
+                out = http_json({{"ok", true}, {"themes", std::move(arr)}});
                 return rt::FLAG_DONE; });
 
-            // GET /api/theme/:name — 第三方主题的 theme.css
+            // GET /api/theme/:name — one theme's theme.css
             ros.on("api/theme/:name", [this](std::string &req, std::string &out, const std::map<std::string, std::string> &params) -> int
                    {
-                if (std::string bad = check_request(req, "GET"); !bad.empty())
-                {
-                    out = std::move(bad);
+                if (!gate(req, out, "GET"))
                     return rt::FLAG_DONE;
-                }
-                std::string name = params.count("name") ? params.at("name") : "";
+                const auto it = params.find("name");
+                const std::string name = it == params.end() ? std::string{} : it->second;
                 if (!theme_name_ok(name))
                 {
                     out = text_response("400 Bad Request", "bad theme name");
                     return rt::FLAG_DONE;
                 }
+                // defence in depth: the resolved directory must be a direct child
+                // of the theme root (also blocks junction/symlink tricks)
                 std::error_code ec;
-                auto base = std::filesystem::weakly_canonical(cell::root / "theme", ec);
-                auto dir = std::filesystem::weakly_canonical(cell::root / "theme" / name, ec);
-                // defense in depth: the resolved directory must be a child of
-                // the theme root (also blocks junction/symlink tricks)
+                const auto base = std::filesystem::weakly_canonical(cell::root / "theme", ec);
+                const auto dir = std::filesystem::weakly_canonical(cell::root / "theme" / name, ec);
                 if (!ec && dir != base && dir.parent_path() == base)
-                {
-                    auto css = dir / "theme.css";
-                    if (std::filesystem::is_regular_file(css, ec))
+                    if (std::string css = file_response(dir / "theme.css", "text/css; charset=utf-8", 4u * 1024 * 1024); !css.empty())
                     {
-                        std::ifstream f(css, std::ios::binary);
-                        if (f)
-                        {
-                            std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-                            if (!text.empty())
-                            {
-                                out = http_response("200 OK", "text/css; charset=utf-8", text);
-                                // 第三方主题常改常试：不缓存，刷新即生效
-                                size_t head = out.find("\r\n\r\n");
-                                out.insert(head, "\r\nCache-Control: no-store");
-                                return rt::FLAG_DONE;
-                            }
-                        }
+                        out = std::move(css);
+                        return rt::FLAG_DONE;
                     }
-                }
                 out = text_response("404 Not Found", "theme not found");
                 return rt::FLAG_DONE; });
 
-            // GET /api/splash/asset — 启动页自定义图片（.cell/splash/<name>）
-            // 只按 prefs 里记下的**纯文件名**取，路径分隔符在写入时就已被
-            // prefs::plain_name_ok 拒绝，这里再判一次 MIME 就够安全。
+            // GET /api/splash/asset — the custom splash image. Only the plain
+            // file name recorded in the prefs is fetched (path separators are
+            // rejected when it is stored), and the extension decides the MIME.
             ros.on("api/splash/asset", [this](std::string &req, std::string &out, const std::map<std::string, std::string> &) -> int
                    {
-                if (std::string bad = check_request(req, "GET"); !bad.empty())
-                {
-                    out = std::move(bad);
+                if (!gate(req, out, "GET"))
                     return rt::FLAG_DONE;
-                }
                 const std::string name = app::prefs::load().splash_image;
-                const std::string mime = splash_mime(name);
-                std::string body;
-                if (mime.empty() || !app::prefs::plain_name_ok(name) ||
-                    !read_small_file(app::prefs::splash_dir() / name, 32u * 1024 * 1024, body))
-                {
+                const std::string_view mime = splash_mime(name);
+                if (mime.empty() || !app::prefs::plain_name_ok(name))
                     out = text_response("404 Not Found", "no splash image");
-                    return rt::FLAG_DONE;
-                }
-                out = http_response("200 OK", mime, body);
-                // 换图后刷新即生效，不必重启
-                size_t head = out.find("\r\n\r\n");
-                out.insert(head, "\r\nCache-Control: no-store");
+                else if (std::string body = file_response(app::prefs::splash_dir() / name, mime, 32u * 1024 * 1024); !body.empty())
+                    out = std::move(body);
+                else
+                    out = text_response("404 Not Found", "no splash image");
                 return rt::FLAG_DONE; });
 
-            // GET /api/splash/page — 自定义整页启动页（.cell/splash/index.html）
-            // 页面把它放进同源 iframe，整屏铺满；不存在时前端用内置动画。
+            // GET /api/splash/page — a whole-page splash, framed by the page
             ros.on("api/splash/page", [this](std::string &req, std::string &out, const std::map<std::string, std::string> &) -> int
                    {
-                if (std::string bad = check_request(req, "GET"); !bad.empty())
-                {
-                    out = std::move(bad);
+                if (!gate(req, out, "GET"))
                     return rt::FLAG_DONE;
-                }
-                std::string html;
-                if (!read_small_file(app::prefs::splash_dir() / "index.html", 4u * 1024 * 1024, html))
-                {
-                    out = text_response("404 Not Found", "no custom splash page");
-                    return rt::FLAG_DONE;
-                }
-                out = http_response("200 OK", "text/html; charset=utf-8", html);
-                size_t head = out.find("\r\n\r\n");
-                out.insert(head, "\r\nCache-Control: no-store");
+                std::string page = file_response(app::prefs::splash_dir() / "index.html", "text/html; charset=utf-8", 4u * 1024 * 1024);
+                out = page.empty() ? text_response("404 Not Found", "no custom splash page") : std::move(page);
                 return rt::FLAG_DONE; });
 
             // POST /api/cmd/:name — the command bus
             ros.on("api/cmd/:name", [this](std::string &req, std::string &out, const std::map<std::string, std::string> &params) -> int
                    {
-                if (std::string bad = check_request(req, "POST"); !bad.empty())
-                {
-                    out = std::move(bad);
+                if (!gate(req, out, "POST"))
                     return rt::FLAG_DONE;
-                }
-                std::string method, path, body;
-                parse_request(req, method, path, body);
-                std::string cmd = params.count("name") ? params.at("name") : "";
+                const std::string body = request_body(req);
+                const auto it = params.find("name");
+                const std::string cmd = it == params.end() ? std::string{} : it->second;
                 nlohmann::json args = nlohmann::json::object();
                 if (!body.empty())
-                {
-                    auto j = nlohmann::json::parse(body, nullptr, false);
-                    if (j.is_object())
+                    if (auto j = nlohmann::json::parse(body, nullptr, false); j.is_object())
                         args = std::move(j);
-                }
                 out = http_json(core.exec_command(cmd, args));
                 return rt::FLAG_DONE; });
 
-            // GET /api/state — full snapshot
+            // GET /api/state — the full snapshot
             ros.on("api/state", [this](std::string &req, std::string &out, const std::map<std::string, std::string> &) -> int
                    {
-                if (std::string bad = check_request(req, "GET"); !bad.empty())
-                {
-                    out = std::move(bad);
-                    return rt::FLAG_DONE;
-                }
-                out = http_json(core.exec_command("state", nlohmann::json::object()));
+                if (gate(req, out, "GET"))
+                    out = http_json(core.exec_command("state", nlohmann::json::object()));
                 return rt::FLAG_DONE; });
 
             // GET /api/events — SSE stream. The handler runs on its own worker
@@ -525,19 +409,7 @@ namespace app
                         std::deque<std::string> batch;
                         batch.swap(conn->q);
                         lk.unlock();
-                        bool failed = false;
-                        for (auto &line : batch)
-                        {
-                            try
-                            {
-                                conn->write("data: " + line + "\n\n");
-                            }
-                            catch (...)
-                            {
-                                failed = true;
-                                break;
-                            }
-                        }
+                        const bool failed = !write_batch(batch, conn->write);
                         lk.lock();
                         if (failed)
                         {
@@ -587,15 +459,14 @@ namespace app
                 return std::format("cannot listen on 127.0.0.1:{}: {}", port, e.what());
             }
             // port 0 means "let the OS pick": the Host/Origin gate and the page's
-            // own URLs must use the port that was actually bound, not the request.
+            // own URLs must use the port actually bound, not the request.
             bound_port = server->local_port();
             if (bound_port == 0)
             {
                 server.reset();
                 return "cannot determine the bound HTTP port";
             }
-            if (n_threads < 1)
-                n_threads = 1;
+            n_threads = std::max(n_threads, 1);
             work.emplace(asio::make_work_guard(io)); // see the member comment
             threads.emplace_back([this]
                                  { server->run(ros); });
@@ -603,6 +474,24 @@ namespace app
                 threads.emplace_back([this]
                                      { io.run(); });
             return "";
+        }
+
+        // Writes one drained batch; false as soon as the client is gone.
+        template <typename Write>
+        static bool write_batch(std::deque<std::string> &batch, const Write &write)
+        {
+            for (auto &line : batch)
+            {
+                try
+                {
+                    write("data: " + line + "\n\n");
+                }
+                catch (...)
+                {
+                    return false;
+                }
+            }
+            return true;
         }
 
         void stop()

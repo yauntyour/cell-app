@@ -2,6 +2,7 @@
 .vscode
 bin
 build
+build-check
 _scratch
 .cell
 .workbuddy-ai

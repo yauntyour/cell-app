@@ -571,25 +571,13 @@ namespace app
             return true;
         }
 
-        static UINT hit_code(const std::string &dir)
+        static UINT hit_code(std::string_view dir)
         {
-            if (dir == "n")
-                return HTTOP;
-            if (dir == "s")
-                return HTBOTTOM;
-            if (dir == "w")
-                return HTLEFT;
-            if (dir == "e")
-                return HTRIGHT;
-            if (dir == "nw")
-                return HTTOPLEFT;
-            if (dir == "ne")
-                return HTTOPRIGHT;
-            if (dir == "sw")
-                return HTBOTTOMLEFT;
-            if (dir == "se")
-                return HTBOTTOMRIGHT;
-            return 0;
+            static constexpr std::pair<std::string_view, UINT> kHit[] = {
+                {"n", HTTOP}, {"s", HTBOTTOM}, {"w", HTLEFT}, {"e", HTRIGHT},
+                {"nw", HTTOPLEFT}, {"ne", HTTOPRIGHT}, {"sw", HTBOTTOMLEFT}, {"se", HTBOTTOMRIGHT}};
+            const auto it = std::ranges::find(kHit, dir, &std::pair<std::string_view, UINT>::first);
+            return it == std::end(kHit) ? 0u : it->second;
         }
 
         static std::string state_json(HWND hwnd)
@@ -632,12 +620,14 @@ namespace app
                 SendMessageW(hwnd, WM_NCLBUTTONDOWN, hit, MAKELPARAM(pt.x, pt.y));
                 return state_json(hwnd);
             }
-            if (what == "min")
-                ShowWindow(hwnd, SW_MINIMIZE);
-            else if (what == "max")
-                ShowWindow(hwnd, SW_MAXIMIZE);
-            else if (what == "restore")
-                ShowWindow(hwnd, SW_RESTORE);
+            if (what == "min" || what == "max" || what == "restore")
+            {
+                static constexpr std::pair<std::string_view, int> kShow[] = {
+                    {"min", SW_MINIMIZE}, {"max", SW_MAXIMIZE}, {"restore", SW_RESTORE}};
+                const auto it = std::ranges::find(kShow, std::string_view{what},
+                                                  &std::pair<std::string_view, int>::first);
+                ShowWindow(hwnd, it->second);
+            }
             else if (what == "toggle")
                 ShowWindow(hwnd, IsZoomed(hwnd) ? SW_RESTORE : SW_MAXIMIZE);
             else if (what == "close")
@@ -1399,6 +1389,12 @@ namespace app
                 w.set_title("cell");
                 w.set_size(900, 600, WEBVIEW_HINT_MIN);
                 w.set_size(1160, 800, WEBVIEW_HINT_NONE);
+                // the native window handle, or nullptr before the window exists
+                auto native = [&w]() -> void *
+                {
+                    const auto h = w.window();
+                    return h.ok() ? reinterpret_cast<void *>(h.value()) : nullptr;
+                };
 #ifdef _WIN32
                 // 页面底色必须在导航之前定下来：alpha=0 的第一帧会让窗口最上面
                 // 几像素留成白色（见 frame::page_background）。先铺实色，页面
@@ -1520,36 +1516,26 @@ namespace app
                 // host_pick_folder — native folder picker for the "open
                 // workspace" dialog. Synchronous on purpose: the modal
                 // dialog must own the UI thread's message loop while up.
-                w.bind("host_pick_folder", [&w](std::string) -> std::string
-                       {
-                    HWND owner = nullptr;
-                    if (auto win = w.window(); win.ok())
-                        owner = reinterpret_cast<HWND>(win.value());
-                    return pick_folder(owner); });
+                w.bind("host_pick_folder", [&](std::string) -> std::string
+                       { return pick_folder(static_cast<HWND>(native())); });
 
-                // host_pick_splash — 启动页自定义图片的选择框：选中的图被复制到
-                // .cell/splash/，返回文件名（页面随后用 prefs.set 记住它）。
-                w.bind("host_pick_splash", [&w](std::string) -> std::string
-                       {
-                    HWND owner = nullptr;
-                    if (auto win = w.window(); win.ok())
-                        owner = reinterpret_cast<HWND>(win.value());
-                    return pick_splash_image(owner); });
+                // host_pick_splash — the custom splash image picker: the chosen
+                // file is copied into .cell/splash/ and its name returned (the
+                // page then records it with prefs.set).
+                w.bind("host_pick_splash", [&](std::string) -> std::string
+                       { return pick_splash_image(static_cast<HWND>(native())); });
 
-                // host_win — 无边框窗口的窗口操作。页面自绘标题栏，最小化 /
-                // 最大化 / 关闭 / 拖拽 / 缩放都从这里进系统（见 frame）。
-                w.bind("host_win", [&w](std::string args) -> std::string
-                       {
-                    HWND hwnd = nullptr;
-                    if (auto win = w.window(); win.ok())
-                        hwnd = reinterpret_cast<HWND>(win.value());
-                    return frame::op(hwnd, args); });
+                // host_win — the borderless window's operations. The page draws
+                // its own title bar, so minimise / maximise / close / drag /
+                // resize all come through here into the system (see frame).
+                w.bind("host_win", [&](std::string args) -> std::string
+                       { return frame::op(static_cast<HWND>(native()), args); });
 #endif
                 // host_open_url — the update chip: the page hands the release
                 // link over and the shell pops the user's default browser.
                 // A sync binding receives the raw JSON argument array
                 // ("[\"https://…\"]"), not the unwrapped first argument.
-                w.bind("host_open_url", [&w](std::string args) -> std::string
+                w.bind("host_open_url", [&w, &native](std::string args) -> std::string
                        {
                     std::string url;
                     auto a = nlohmann::json::parse(args, nullptr, false);
@@ -1557,9 +1543,7 @@ namespace app
                         url = a[0].get<std::string>();
                     else if (a.is_string())
                         url = a.get<std::string>();
-                    void *owner = nullptr;
-                    if (auto win = w.window(); win.ok())
-                        owner = reinterpret_cast<void *>(win.value());
+                    void *owner = native();
                     return open_url(url, owner) ? "{\"ok\":true}" : "{\"ok\":false}"; });
 
                 // 启动页的开关必须在页面首次绘制前生效：页面里 #splash 是静
@@ -1614,17 +1598,15 @@ namespace app
                 // not leave an icon (or a close that hides) behind
                 if (!smoke)
                 {
-                    HWND hwnd = nullptr;
-                    if (auto win = w.window(); win.ok())
-                        hwnd = reinterpret_cast<HWND>(win.value());
-                    // 设置 → 关于 → 桌面 → 关闭窗口后驻留托盘: on parks the app
-                    // in the notification area, off makes a close quit like any
-                    // other window. Flips at runtime dispatch to the UI thread.
+                    const HWND hwnd = static_cast<HWND>(native());
+                    // Settings → About → Desktop → keep running in the tray: on
+                    // parks the app in the notification area, off makes a close
+                    // quit like any other window. Runtime flips run on the UI thread.
                     core.on_tray = [&w](bool on)
                     { w.dispatch([on] { tray::set_enabled(on); }); };
-                    // 真·无边框：页面自绘标题栏，系统标题栏在这里被去掉。
-                    // 必须在 tray::attach 之前 —— tray 的过程会链到这里，再链回
-                    // webview 自己的过程。
+                    // Borderless: the page draws its own title bar, so the system
+                    // one goes first - tray::attach chains onto our procedure and
+                    // then onto the webview's.
                     if (!frame::install(hwnd, [&w](const std::string &js)
                                         { w.eval(js); }))
                         log.warn("app", "frame: could not go borderless - keeping the system title bar");

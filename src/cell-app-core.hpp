@@ -23,10 +23,14 @@
 // Included by cell-app.cpp (desktop) and cell-app-http.hpp (service).
 #pragma once
 
+#include <atomic>
 #include <condition_variable>
 #include <deque>
 #include <map>
+#include <memory>
+#include <mutex>
 #include <set>
+#include <vector>
 
 #ifdef _WIN32
 #include <shellapi.h> // ShellExecuteW — the Skills page's "show in file manager"
@@ -40,6 +44,11 @@
 
 namespace app
 {
+    // the one response envelope every command returns (cell-app-util.hpp)
+    using js::elide;
+    using js::fail;
+    using js::ok;
+
     // =====================================================================
     //  prefs — the few preferences the SHELL owns. They live next to (not
     //  inside) cell.cpp's config.json: that file belongs to the agent core,
@@ -313,38 +322,42 @@ namespace app
     // =====================================================================
     //  event_bus — serialized JSON events, delivered to every registered
     //  sink. Publish never blocks on a slow sink: each sink owns its own
-    //  queueing. A throwing sink is dropped silently (it unregisters
-    //  itself).
+    //  queueing, and a throwing sink is dropped silently.
+    //
+    //  post() is the hot path (every token, tool result and status line goes
+    //  through it), so the sink table is an immutable snapshot: publishers read
+    //  one atomic pointer and iterate without locking or copying, and the rare
+    //  add/remove rebuilds the snapshot instead.
     // =====================================================================
     class event_bus
     {
     public:
         using sink_fn = std::function<void(const std::string &json_line)>;
+
         int add(sink_fn fn)
         {
-            std::lock_guard<std::mutex> lk(mx_);
-            int id = next_++;
-            sinks_.emplace(id, std::move(fn));
+            std::lock_guard<std::mutex> lk(write_mx_);
+            auto next = std::make_shared<sinks>(*sinks_.load(std::memory_order_acquire));
+            const int id = next_++;
+            next->emplace_back(id, std::move(fn));
+            sinks_.store(std::move(next), std::memory_order_release);
             return id;
         }
         void remove(int id)
         {
-            std::lock_guard<std::mutex> lk(mx_);
-            sinks_.erase(id);
+            std::lock_guard<std::mutex> lk(write_mx_);
+            auto next = std::make_shared<sinks>(*sinks_.load(std::memory_order_acquire));
+            if (!std::erase_if(*next, [id](const auto &s)
+                               { return s.first == id; }))
+                return;
+            sinks_.store(std::move(next), std::memory_order_release);
         }
         void post(const nlohmann::json &ev)
         {
             // non-UTF-8 bytes must not take the whole event down
-            std::string line = ev.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
-            std::vector<sink_fn> copy;
-            {
-                std::lock_guard<std::mutex> lk(mx_);
-                copy.reserve(sinks_.size());
-                for (auto &[id, fn] : sinks_)
-                    copy.push_back(fn);
-            }
-            for (auto &fn : copy)
-            {
+            const std::string line = ev.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
+            const auto snapshot = sinks_.load(std::memory_order_acquire);
+            for (const auto &[id, fn] : *snapshot)
                 try
                 {
                     fn(line);
@@ -352,12 +365,12 @@ namespace app
                 catch (...)
                 {
                 }
-            }
         }
 
     private:
-        std::mutex mx_;
-        std::map<int, sink_fn> sinks_;
+        using sinks = std::vector<std::pair<int, sink_fn>>;
+        std::mutex write_mx_; // add/remove only; post() never takes it
+        std::atomic<std::shared_ptr<const sinks>> sinks_{std::make_shared<const sinks>()};
         int next_ = 1;
     };
 
@@ -1772,6 +1785,40 @@ namespace app
             auto it = ctxs.find(ws);
             return it == ctxs.end() ? nullptr : it->second.get();
         }
+        // Quiesce and destroy one context (workspace.close / workspace.delete).
+        // Activity goes first: a running turn would keep the worker busy, and a
+        // running teamwork job holds a raw pointer into this workspace's engine,
+        // so destroying the context under it would be a use-after-free. Both are
+        // asked to stop within a bounded grace period.
+        // unload() writes the in-memory transcript back, which is why the caller
+        // must delete the session records AFTER this returns (the other order
+        // recreates the directory it just removed).
+        // Returns the refusal reason, or "" once the context is gone.
+        // Caller holds cmd_mx.
+        std::string retire_workspace(workspace_ctx &c, const std::string &ws, std::string_view retrying)
+        {
+            deny_pending_approvals(c);
+            if (!stop_turn_and_wait(c, std::chrono::seconds(10)))
+                return std::format("a turn is still running - try {} again in a moment", retrying);
+            if (!stop_workspace_jobs_and_wait(ws, std::chrono::seconds(15)))
+                return std::format("a teamwork job is still stopping - try {} again in a moment", retrying);
+            c.stop.store(true);
+            {
+                std::lock_guard<std::mutex> lk(c.qmx);
+                c.quit = true;
+            }
+            c.qcv.notify_all();
+            if (c.worker.joinable())
+                c.worker.join();
+            c.h.now().unload();
+            cell::async_io::flush();
+            std::lock_guard<std::mutex> life(ctx_life_mx);
+            std::lock_guard<std::mutex> lk(ctx_mx);
+            ctxs.erase(ws);
+            if (active_ws == ws)
+                active_ws = ctxs.empty() ? "" : ctxs.begin()->first;
+            return {};
+        }
         workspace_ctx *target_ctx(const nlohmann::json &args)
         {
             std::string ws = args.value("ws", "");
@@ -2771,15 +2818,6 @@ namespace app
                     results.push_back(content_text(nlohmann::json::object({{"content", *c}})));
             }
         }
-        static std::string cap_text(std::string s, size_t cap = 8000)
-        {
-            if (s.size() <= cap)
-                return s;
-            size_t cut = cap;
-            while (cut > 0 && ((unsigned char)s[cut] & 0xC0) == 0x80)
-                cut--; // never split a UTF-8 sequence
-            return s.substr(0, cut) + "\n…";
-        }
         // --------------------------------------------------------------
         //  compaction summary (see cell::engine::runner::compact and the
         //  teamwork worker path): the summary is stored as an ordinary
@@ -2833,14 +2871,14 @@ namespace app
                         while (!pre.empty() && (pre.back() == '\n' || pre.back() == ' '))
                             pre.pop_back();
                         if (!pre.empty())
-                            out.push_back({{"role", "system"}, {"kind", "system"}, {"text", cap_text(pre)}});
+                            out.push_back({{"role", "system"}, {"kind", "system"}, {"text", elide(pre)}});
                         // 摘要卡片是用户主动展开阅读的上下文，不能按普通正文
                         // 的 cap 截断（中文 8KB ≈ 2.7K 字符，长摘要会中途断掉）
                         out.push_back({{"role", "system"}, {"kind", "summary"}, {"text", text.substr(at)}});
                         continue;
                     }
                     if (!text.empty())
-                        out.push_back({{"role", "system"}, {"kind", "system"}, {"text", cap_text(text)}});
+                        out.push_back({{"role", "system"}, {"kind", "system"}, {"text", elide(text)}});
                     continue;
                 }
                 if (role == "user" || role == "tool")
@@ -2853,12 +2891,12 @@ namespace app
                     {
                         for (auto &r : results)
                             if (!r.empty())
-                                out.push_back({{"role", "tool"}, {"kind", "tool_result"}, {"text", cap_text(r)}});
+                                out.push_back({{"role", "tool"}, {"kind", "tool_result"}, {"text", elide(r)}});
                         continue;
                     }
                     std::string text = content_text(m);
                     if (!text.empty())
-                        out.push_back({{"role", "user"}, {"kind", "user"}, {"text", cap_text(text)}});
+                        out.push_back({{"role", "user"}, {"kind", "user"}, {"text", elide(text)}});
                     continue;
                 }
                 if (role != "assistant")
@@ -2879,7 +2917,7 @@ namespace app
                         {
                             std::string body = b.value(bt, std::string());
                             if (!body.empty())
-                                out.push_back({{"role", "assistant"}, {"kind", "reasoning"}, {"text", cap_text(body)}});
+                                out.push_back({{"role", "assistant"}, {"kind", "reasoning"}, {"text", elide(body)}});
                             continue;
                         }
                         if (bt != "text")
@@ -2892,11 +2930,11 @@ namespace app
                             while (!pre.empty() && (pre.back() == '\n' || pre.back() == ' '))
                                 pre.pop_back();
                             if (!pre.empty())
-                                out.push_back({{"role", "assistant"}, {"kind", "assistant"}, {"text", cap_text(pre)}});
+                                out.push_back({{"role", "assistant"}, {"kind", "assistant"}, {"text", elide(pre)}});
                             out.push_back({{"role", "assistant"}, {"kind", "summary"}, {"text", text.substr(at)}});
                         }
                         else if (!text.empty())
-                            out.push_back({{"role", "assistant"}, {"kind", "assistant"}, {"text", cap_text(text)}});
+                            out.push_back({{"role", "assistant"}, {"kind", "assistant"}, {"text", elide(text)}});
                     }
                 }
                 else
@@ -2911,11 +2949,11 @@ namespace app
                         while (!pre.empty() && (pre.back() == '\n' || pre.back() == ' '))
                             pre.pop_back();
                         if (!pre.empty())
-                            out.push_back({{"role", "assistant"}, {"kind", "assistant"}, {"text", cap_text(pre)}});
+                            out.push_back({{"role", "assistant"}, {"kind", "assistant"}, {"text", elide(pre)}});
                         out.push_back({{"role", "assistant"}, {"kind", "summary"}, {"text", text.substr(at)}});
                     }
                     else if (!text.empty())
-                        out.push_back({{"role", "assistant"}, {"kind", "assistant"}, {"text", cap_text(text)}});
+                        out.push_back({{"role", "assistant"}, {"kind", "assistant"}, {"text", elide(text)}});
                 }
                 auto tc = m.find("tool_calls");
                 if (tc == m.end() || !tc->is_array() || tc->empty())
@@ -2964,10 +3002,10 @@ namespace app
                 for (size_t k = 0; k < names.size(); k++)
                 {
                     nlohmann::json e = {{"role", "tool"}, {"kind", "tool"},
-                                        {"name", names[k]}, {"args", cap_text(args[k], 4000)}};
+                                        {"name", names[k]}, {"args", elide(args[k], 4000)}};
                     if (k < results.size())
                     {
-                        e["result"] = cap_text(results[k]);
+                        e["result"] = elide(results[k]);
                         e["status"] = "ok";
                     }
                     out.push_back(std::move(e));
@@ -3209,7 +3247,7 @@ namespace app
                 summary = digest_of_transcript(messages);
                 source = "digest";
             }
-            summary = cap_text(std::move(summary), 3200);
+            summary = elide(std::move(summary), 3200);
             nlohmann::json r = ok();
             r["id"] = id;
             r["ws"] = cell::session_prefix(id);
@@ -3615,7 +3653,7 @@ namespace app
                 // or mutate anything (a new workspace context would leave an
                 // unjoined worker thread behind on exit)
                 if (shutting_down.load())
-                    return ok_error("app is shutting down");
+                    return fail("app is shutting down");
                 if (on_command)
                     on_command(name);
 
@@ -3625,11 +3663,11 @@ namespace app
                     std::lock_guard<std::mutex> lk(cmd_mx);
                     std::string dir = cell::text::trim(args.value("cwd", ""));
                     if (dir.empty())
-                        return ok_error("cwd is required");
+                        return fail("cwd is required");
                     std::string err;
                     workspace_ctx *c = ensure_workspace(dir, &err);
                     if (!c)
-                        return ok_error(err);
+                        return fail(err);
                     {
                         std::lock_guard<std::mutex> lk2(ctx_mx);
                         active_ws = c->cwd_key;
@@ -3645,116 +3683,59 @@ namespace app
                 if (name == "workspace.close")
                 {
                     std::lock_guard<std::mutex> lk(cmd_mx);
-                    std::string ws = args.value("ws", "");
+                    const std::string ws = args.value("ws", "");
                     if (ws.empty())
-                        return ok_error("ws is required");
+                        return fail("ws is required");
                     workspace_ctx *c = find_ws(ws);
                     if (!c)
-                        return ok_error("unknown workspace");
-                    // quit all activity first: a running turn would keep the
-                    // worker busy, and a running teamwork job holds a raw
-                    // pointer into this workspace's engine (destroying the
-                    // context would be a use-after-free). Both are asked to
-                    // stop and given a bounded grace period.
-                    deny_pending_approvals(*c);
-                    if (!stop_turn_and_wait(*c, std::chrono::seconds(10)))
-                        return ok_error("a turn is still running - try closing again in a moment");
-                    if (!stop_workspace_jobs_and_wait(ws, std::chrono::seconds(15)))
-                        return ok_error("a teamwork job is still stopping - try closing again in a moment");
-                    c->stop.store(true);
-                    {
-                        std::lock_guard<std::mutex> lk2(c->qmx);
-                        c->quit = true;
-                    }
-                    c->qcv.notify_all();
-                    if (c->worker.joinable())
-                        c->worker.join();
-                    c->h.now().unload();
-                    cell::async_io::flush();
-                    {
-                        std::lock_guard<std::mutex> life(ctx_life_mx);
-                        std::lock_guard<std::mutex> lk2(ctx_mx);
-                        ctxs.erase(ws);
-                        if (active_ws == ws)
-                            active_ws = ctxs.empty() ? "" : ctxs.begin()->first;
-                    }
+                        return fail("unknown workspace");
+                    if (std::string why = retire_workspace(*c, ws, "closing"); !why.empty())
+                        return fail(why);
                     broadcast_state();
                     fl_publish_workspaces();
                     return ok();
                 }
-                // 删除工作区：移除它在全局数据根下的全部会话记录（sessions/<ws>）
-                // 并关闭上下文；工作区目录本身保留（源码/文件不动）。会话记录一经
-                // 删除不可恢复 —— 必须由前端显式传入 confirm == 工作区全路径才执行。
+                // Deleting a workspace drops its session records (sessions/<ws>)
+                // and closes its context; the directory itself is kept. Records
+                // are unrecoverable, so the frontend must echo the full cwd (or
+                // the key when no directory is known) as `confirm`.
                 if (name == "workspace.delete")
                 {
                     std::lock_guard<std::mutex> lk(cmd_mx);
-                    std::string ws = args.value("ws", "");
+                    const std::string ws = args.value("ws", "");
                     if (ws.empty())
-                        return ok_error("ws is required");
-                    workspace_ctx *c = find_ws(ws);
-                    // ws 只会被拼进 sessions/<ws> 路径：先卡形态（无分隔符、无点号），
-                    // 保证 remove_all 不会越出该目录
+                        return fail("ws is required");
+                    // the key only ever reaches sessions/<ws>: reject anything
+                    // that could climb out before remove_all sees the path
                     if (ws.size() > 64 || ws.find_first_of("/\\:.") != std::string::npos)
-                        return ok_error("bad workspace key");
-                    // 工作区未打开时（侧栏里属于已关闭/从未打开的工作区的分组）没有
-                    // 上下文：目录从 sessions 索引反查，与前端侧栏拿到的 cwd 同源
-                    std::string cwd = c ? c->cwd : cell::cwd_for_key(ws);
-                    // 索引缺失（目录已被移走/删除，只剩 sessions/<ws> 记录）也要能删：
-                    // 删除对象从来只是会话记录，不碰目录。确认串此时退化为 ws，
-                    // 否则这种分组会永远挂在侧栏里删不掉
+                        return fail("bad workspace key");
+                    // a sidebar group may belong to a workspace that was never
+                    // opened, so the directory comes from the session index
+                    workspace_ctx *c = find_ws(ws);
+                    const std::string cwd = c ? c->cwd : cell::cwd_for_key(ws);
                     if (args.value("confirm", "") != (cwd.empty() ? ws : cwd))
-                        return ok_error("confirm mismatch - pass confirm=<full cwd path>");
+                        return fail("confirm mismatch - pass confirm=<full cwd path>");
                     if (c)
-                    {
-                        // 先关闭并卸载上下文（同 workspace.close）：unload() 会把
-                        // 内存里的转录写回 messages.jsonl，顺序反了（先删记录）它
-                        // 会把刚删掉的会话目录重建出来 —— 侧栏分组永远删不净
-                        // 运行中的回合 / Teamwork 任务必须先停下来：后者持有
-                        // 本工作区引擎运行时的裸指针，直接销毁上下文会 UAF。
-                        deny_pending_approvals(*c);
-                        if (!stop_turn_and_wait(*c, std::chrono::seconds(10)))
-                            return ok_error("a turn is still running - try deleting again in a moment");
-                        if (!stop_workspace_jobs_and_wait(ws, std::chrono::seconds(15)))
-                            return ok_error("a teamwork job is still stopping - try deleting again in a moment");
-                        c->stop.store(true);
-                        {
-                            std::lock_guard<std::mutex> lk2(c->qmx);
-                            c->quit = true;
-                        }
-                        c->qcv.notify_all();
-                        if (c->worker.joinable())
-                            c->worker.join();
-                        c->h.now().unload();
-                        cell::async_io::flush();
-                        {
-                            std::lock_guard<std::mutex> life(ctx_life_mx);
-                            std::lock_guard<std::mutex> lk2(ctx_mx);
-                            ctxs.erase(ws);
-                            if (active_ws == ws)
-                                active_ws = ctxs.empty() ? "" : ctxs.begin()->first;
-                        }
-                    }
-                    // 移除该工作区的全部会话记录（cwd 目录本身保留）
+                        if (std::string why = retire_workspace(*c, ws, "deleting"); !why.empty())
+                            return fail(why);
                     std::error_code ec;
                     std::filesystem::remove_all(cell::root / "sessions" / ws, ec);
                     if (!ec)
                     {
-                        // 摘掉 cwd 索引（sessions/sessions.json）里它的记录：否则
-                        // cwd_for_key() 仍能反查出已删除的工作区（用户可见的
-                        // 「记录未清除」）。索引写入是异步的，flush 后再收尾。
-                        // 删不干净时保留索引，便于修复后重试删除。
+                        // drop the cwd index entry too, or cwd_for_key() keeps
+                        // resolving the deleted workspace; a partial delete keeps
+                        // the entry so the user can retry
                         cell::forget_cwd(ws);
                         cell::async_io::flush();
                     }
-                    // 摘掉可能指向它的 active_sessions 记录：否则下次打开该
-                    // 工作区会把已删除记录里的 id 当 boot
-                    for (auto it = cfg.active_sessions.begin(); it != cfg.active_sessions.end();)
-                        it = (it->first == ws) ? cfg.active_sessions.erase(it) : std::next(it);
+                    // a stale active_sessions entry would be adopted as the boot
+                    // session the next time this directory is opened
+                    std::erase_if(cfg.active_sessions, [&ws](const auto &kv)
+                                  { return kv.first == ws; });
                     save_cfg();
-                    // ctx 已关闭：即使记录没删干净，视图也要立即跟上（前端按 hello 重绘）
-                    broadcast_state();
+                    broadcast_state(); // the view redraws from hello even when records survived
                     if (ec)
-                        return ok_error("failed to delete workspace records: " + ec.message());
+                        return fail("failed to delete workspace records: " + ec.message());
                     cell::sys::logger::instance().info("ws", std::format("deleted workspace records ws={} dir_kept={}", ws, cwd));
                     return ok();
                 }
@@ -3765,7 +3746,7 @@ namespace app
                     {
                         std::lock_guard<std::mutex> lk2(ctx_mx);
                         if (!ctxs.count(ws))
-                            return ok_error("unknown workspace");
+                            return fail("unknown workspace");
                         active_ws = ws;
                     }
                     broadcast_state();
@@ -3786,17 +3767,17 @@ namespace app
                     std::lock_guard<std::mutex> lk(cmd_mx);
                     workspace_ctx *c = target_ctx(args);
                     if (!c)
-                        return ok_error("no workspace open");
+                        return fail("no workspace open");
                     std::string text = args.value("text", "");
                     if (text.empty())
-                        return ok_error("empty message");
+                        return fail("empty message");
                     // 没有模型时排队进 worker 只会让回合内部报错后结束，前端拿到
                     // 的 error 还会被 turn_end 的转录重载冲掉——直接在这里拒绝，
                     // 让调用方拿到一条明确的失败回执
                     if (!cfg.current_provider_entry())
-                        return ok_error("no provider configured - add one in settings, then pick a model");
+                        return fail("no provider configured - add one in settings, then pick a model");
                     if (cfg.current_model.empty())
-                        return ok_error("no model selected - pick one before sending");
+                        return fail("no model selected - pick one before sending");
                     cfg.active_sessions[c->cwd_key] = c->h.now().id();
                     c->queue_turn(std::move(text));
                     return ok();
@@ -3808,10 +3789,10 @@ namespace app
                     std::lock_guard<std::mutex> lk(cmd_mx);
                     workspace_ctx *c = target_ctx(args);
                     if (!c)
-                        return ok_error("no workspace open");
+                        return fail("no workspace open");
                     const std::string reason = c->h.now().interrupt_state();
                     if (reason.empty())
-                        return ok_error("no interrupted turn to resume (the last turn ended normally or the state was already cleared)");
+                        return fail("no interrupted turn to resume (the last turn ended normally or the state was already cleared)");
                     cfg.active_sessions[c->cwd_key] = c->h.now().id();
                     c->queue_turn(std::string(), true);
                     cell::sys::logger::instance().info(
@@ -3840,7 +3821,7 @@ namespace app
                         }
                     }
                     if (!c)
-                        return ok_error("no workspace open");
+                        return fail("no workspace open");
                     return ok();
                 }
                 if (name == "approve")
@@ -3851,7 +3832,7 @@ namespace app
                     if (args.contains("allow"))
                         allow = args["allow"].is_boolean() ? args["allow"].get<bool>() : args["allow"].get<int>() != 0;
                     if (id.empty())
-                        return ok_error("missing approval id");
+                        return fail("missing approval id");
                     resolve_approval(ws, id, allow);
                     return ok();
                 }
@@ -3865,7 +3846,7 @@ namespace app
                     {
                         workspace_ctx *c = find_ws(ws);
                         if (!c)
-                            return ok_error("unknown workspace");
+                            return fail("unknown workspace");
                         return ok_with(build_state_for(c, true));
                     }
                     return ok_with(build_state(true));
@@ -3890,7 +3871,7 @@ namespace app
                     if (name == "flowlink.enable")
                         patch["enabled"] = true;
                     if (!patch.empty() && !cell::flowlink::patch_settings(patch))
-                        return ok_error("could not write links.json");
+                        return fail("could not write links.json");
                     // 权限开关只改变「谁可以做什么」，不碰 socket：重建服务会断掉
                     // 正在跑的远程回合，也会让已配对设备重连一次
                     bool perm_only = !patch.empty();
@@ -3931,7 +3912,7 @@ namespace app
                     }
                     std::string err;
                     if (!fl_start(err))
-                        return ok_error(err);
+                        return fail(err);
                     fl_tools_dirty();
                     return ok_with(fl_status());
                 }
@@ -3947,13 +3928,13 @@ namespace app
                 if (name == "flowlink.discovery")
                 {
                     if (!fl_on())
-                        return ok_error("FlowLink is off — enable it first");
+                        return fail("FlowLink is off — enable it first");
                     auto svc = cell::flowlink::service_instance();
                     if (!svc)
-                        return ok_error("FlowLink is off");
+                        return fail("FlowLink is off");
                     std::string derr;
                     if (!svc->set_discovery(args.value("on", true), derr))
-                        return ok_error(derr);
+                        return fail(derr);
                     return ok_with(fl_status());
                 }
                 // "Scan Links": probe the network and hand back everything we
@@ -3962,7 +3943,7 @@ namespace app
                 if (name == "flowlink.scan")
                 {
                     if (!fl_on())
-                        return ok_error("FlowLink is off — enable it first");
+                        return fail("FlowLink is off — enable it first");
                     auto svc = cell::flowlink::service_instance();
                     if (svc)
                     {
@@ -3987,14 +3968,14 @@ namespace app
                 if (name == "flowlink.probe")
                 {
                     if (!fl_on())
-                        return ok_error("FlowLink is off — enable it first");
+                        return fail("FlowLink is off — enable it first");
                     auto svc = cell::flowlink::service_instance();
                     if (!svc)
-                        return ok_error("FlowLink is off");
+                        return fail("FlowLink is off");
                     const std::string addr = args.value("addr", std::string{});
                     nlohmann::json r = svc->probe(addr);
                     if (!r.value("ok", false))
-                        return ok_error(r.value("error", "probe failed"));
+                        return fail(r.value("error", "probe failed"));
                     nlohmann::json st = ok_with(fl_status());
                     st["devices"] = fl_devices();
                     // keep the probe's own {addr,port} out of the status fields —
@@ -4008,10 +3989,10 @@ namespace app
                     name == "flowlink.disconnect" || name == "flowlink.share" || name == "flowlink.send")
                 {
                     if (!fl_on())
-                        return ok_error("FlowLink is off — enable it first");
+                        return fail("FlowLink is off — enable it first");
                     auto svc = cell::flowlink::service_instance();
                     if (!svc)
-                        return ok_error("FlowLink is off");
+                        return fail("FlowLink is off");
                     try
                     {
                         // pairing answers with the fresh code; hand the page a
@@ -4023,7 +4004,7 @@ namespace app
                             {
                                 nlohmann::json r = svc->pair_begin(args.value("ttl", 300));
                                 if (!r.value("ok", false))
-                                    return ok_error(r.value("error", std::string("pairing could not start")));
+                                    return fail(r.value("error", std::string("pairing could not start")));
                                 st = fl_status();
                                 st["pairing"] = {{"open", true}, {"state", "waiting"},
                                                  {"code", r.value("code", "")},
@@ -4044,7 +4025,7 @@ namespace app
                             nlohmann::json r = svc->pair_join(args.value("code", ""),
                                                               args.value("addr", ""), err);
                             if (!err.empty())
-                                return ok_error(err);
+                                return fail(err);
                             r["ok"] = true;
                             // mutual pairing: the link exists only after the other
                             // side types OUR code — `pending` says so
@@ -4063,7 +4044,7 @@ namespace app
                             nlohmann::json r = svc->pair_approve(args.value("code", ""),
                                                                  args.value("client_id", ""), err);
                             if (!err.empty())
-                                return ok_error(err);
+                                return fail(err);
                             nlohmann::json st = fl_status();
                             st["paired"] = r;
                             return ok_with(st);
@@ -4072,12 +4053,12 @@ namespace app
                         if (name == "flowlink.disconnect" || name == "flowlink.forget")
                         {
                             if (id.empty())
-                                return ok_error("unknown link");
+                                return fail("unknown link");
                             std::string err;
                             const bool good = name == "flowlink.disconnect" ? svc->disconnect(id, err)
                                                                             : svc->forget(id, err);
                             if (!good)
-                                return ok_error(err);
+                                return fail(err);
                             return ok_with(fl_status());
                         }
                         // share / send: one message (a conversation, or text
@@ -4099,7 +4080,7 @@ namespace app
                             refs.push_back(args.value("cell", std::string{}));
                         }
                         if (refs.empty())
-                            return ok_error("no recipient — pick at least one cell");
+                            return fail("no recipient — pick at least one cell");
 
                         // ---- the payload ------------------------------------
                         // `messages` is the only thing a peer stores, and the
@@ -4138,9 +4119,9 @@ namespace app
                                     all_media = false;
                             }
                             if (total > 32u * 1024 * 1024)
-                                return ok_error("attachments are too large (32 MiB per message)");
+                                return fail("attachments are too large (32 MiB per message)");
                             if (body.empty() && files == 0)
-                                return ok_error("send needs a body or an attachment");
+                                return fail("send needs a body or an attachment");
                             if (!body.empty())
                                 msgs.push_back({{"role", "user"}, {"text", body}});
                             for (const auto &a : atts)
@@ -4176,10 +4157,10 @@ namespace app
                                     sid = c->h.now().id();
                             }
                             if (sid.empty())
-                                return ok_error("no session to share");
+                                return fail("no session to share");
                             msgs = cell::flowlink::transcript_json(sid);
                             if (msgs.empty())
-                                return ok_error("this session has no shareable messages yet");
+                                return fail("this session has no shareable messages yet");
                             kind = "session";
                             if (subject.empty())
                                 subject = "Shared conversation";
@@ -4246,7 +4227,7 @@ namespace app
                                               {"preview", preview}});
                         }
                         if (sent.empty())
-                            return ok_error(first_err.empty() ? "nothing was delivered" : first_err);
+                            return fail(first_err.empty() ? "nothing was delivered" : first_err);
                         nlohmann::json out = ok();
                         out["sent"] = sent;
                         out["failed"] = failed;
@@ -4255,7 +4236,7 @@ namespace app
                     }
                     catch (const std::exception &e)
                     {
-                        return ok_error(std::string("FlowLink: ") + e.what());
+                        return fail(std::string("FlowLink: ") + e.what());
                     }
                 }
                 // ---- transfers (the "传输列表" page) ------------------------
@@ -4270,7 +4251,7 @@ namespace app
                     const std::string id = args.value("id", "");
                     nlohmann::json t = cell::flowlink::read_transfer(id);
                     if (t.empty())
-                        return ok_error("no such transfer");
+                        return fail("no such transfer");
                     cell::flowlink::store st{cell::root};
                     (void)st.mark_transmission(id, true);
                     return ok_with(t);
@@ -4282,7 +4263,7 @@ namespace app
                     if (name == "flowlink.transfer.drop")
                     {
                         if (!st.drop_transmission(id))
-                            return ok_error("no such transfer");
+                            return fail("no such transfer");
                     }
                     else
                         (void)st.mark_transmission(id, args.value("read", true));
@@ -4305,7 +4286,7 @@ namespace app
                 {
                     const std::string id = args.value("id", "");
                     if (!fl_outbox_drop(id))
-                        return ok_error("no such sent item");
+                        return fail("no such sent item");
                     nlohmann::json items = fl_outbox_read();
                     std::reverse(items.begin(), items.end());
                     return ok_with(nlohmann::json{{"items", items}});
@@ -4333,16 +4314,16 @@ namespace app
                 {
                     std::string gerr;
                     if (!fl_can("access_workspace", gerr))
-                        return ok_error(gerr);
+                        return fail(gerr);
                 }
                 if (name == "flowlink.ws.remote")
                 {
                     if (!fl_on())
-                        return ok_error("FlowLink is off — enable it first");
+                        return fail("FlowLink is off — enable it first");
                     auto svc = cell::flowlink::service_instance();
                     const std::string peer = cell::flowlink::resolve_cell(args.value("cell", ""));
                     if (!svc || peer.empty())
-                        return ok_error("unknown cell");
+                        return fail("unknown cell");
                     // the peer pushes its list on every change; the cache renders
                     // instantly and survives a restart, the RPC is the fallback
                     // for a cell that has not published yet
@@ -4354,7 +4335,7 @@ namespace app
                         // 空列表和对端不可达是两件事：把错误交回页面，否则挑选页
                         // 只会说「对端没有打开工作区」，让人查错方向
                         if (!err.empty())
-                            return ok_error(err);
+                            return fail(err);
                         cached = r.value("workspaces", nlohmann::json::array());
                     }
                     nlohmann::json out = ok();
@@ -4369,18 +4350,18 @@ namespace app
                 if (name == "flowlink.peer.addr")
                 {
                     if (!fl_on())
-                        return ok_error("FlowLink is off — enable it first");
+                        return fail("FlowLink is off — enable it first");
                     auto svc = cell::flowlink::service_instance();
                     if (!svc)
-                        return ok_error("FlowLink is off");
+                        return fail("FlowLink is off");
                     const std::string peer = cell::flowlink::resolve_cell(args.value("cell", ""));
                     if (peer.empty())
-                        return ok_error("unknown cell");
+                        return fail("unknown cell");
                     const std::string addr = args.value("addr", "");
                     const int port = (int)std::clamp(args.value("port", 0LL), 0LL, 65535LL);
                     std::string err;
                     if (!svc->set_peer_addr(peer, addr, (std::uint16_t)port, err))
-                        return ok_error(err);
+                        return fail(err);
                     // dial right away: the point of pinning an address is to get
                     // the link back now, not at the next probe round
                     std::string dial_err;
@@ -4395,64 +4376,64 @@ namespace app
                     name == "flowlink.ws.state")
                 {
                     if (!fl_on())
-                        return ok_error("FlowLink is off — enable it first");
+                        return fail("FlowLink is off — enable it first");
                     auto svc = cell::flowlink::service_instance();
                     const std::string peer = cell::flowlink::resolve_cell(args.value("cell", ""));
                     const std::string cwd = args.value("cwd", "");
                     if (!svc || peer.empty())
-                        return ok_error("unknown cell");
+                        return fail("unknown cell");
                     if (cwd.empty())
-                        return ok_error("cwd is required");
+                        return fail("cwd is required");
                     std::string err;
                     nlohmann::json p{{"cwd", cwd}};
                     if (name == "flowlink.ws.history")
                     {
                         p["id"] = args.value("session", args.value("id", ""));
                         if (!cell::is_valid_session_id(p.value("id", "")))
-                            return ok_error("a valid session id is required");
+                            return fail("a valid session id is required");
                     }
                     const char *peer_method = name == "flowlink.ws.sessions" ? "ws.sessions"
                                               : name == "flowlink.ws.state"  ? "ws.state"
                                                                              : "ws.history";
                     nlohmann::json r = svc->call(peer, peer_method, p, 20000, err);
                     if (!err.empty())
-                        return ok_error(err);
+                        return fail(err);
                     return ok_with(r);
                 }
                 if (name == "flowlink.ws.watch" || name == "flowlink.ws.unwatch")
                 {
                     if (!fl_on())
-                        return ok_error("FlowLink is off — enable it first");
+                        return fail("FlowLink is off — enable it first");
                     auto svc = cell::flowlink::service_instance();
                     const std::string peer = cell::flowlink::resolve_cell(args.value("cell", ""));
                     const std::string cwd = args.value("cwd", "");
                     if (!svc || peer.empty() || cwd.empty())
-                        return ok_error("cell and cwd are required");
+                        return fail("cell and cwd are required");
                     std::string err;
                     nlohmann::json r = svc->call(peer, name == "flowlink.ws.watch" ? "ws.watch" : "ws.unwatch",
                                                  {{"cwd", cwd}}, 15000, err);
                     if (!err.empty())
-                        return ok_error(err);
+                        return fail(err);
                     return ok_with(r);
                 }
                 if (name == "flowlink.ws.add" || name == "flowlink.ws.remove")
                 {
                     if (!fl_on())
-                        return ok_error("FlowLink is off — enable it first");
+                        return fail("FlowLink is off — enable it first");
                     auto svc = cell::flowlink::service_instance();
                     if (!svc)
-                        return ok_error("FlowLink is off");
+                        return fail("FlowLink is off");
                     const std::string peer = cell::flowlink::resolve_cell(args.value("cell", ""));
                     if (peer.empty())
-                        return ok_error("unknown cell");
+                        return fail("unknown cell");
                     if (name == "flowlink.ws.add")
                     {
                         std::string err;
                         if (!svc->add_workspace(peer, args.value("cwd", ""), args.value("name", ""), err))
-                            return ok_error(err);
+                            return fail(err);
                     }
                     else if (!svc->remove_workspace(peer, args.value("cwd", "")))
-                        return ok_error("not in the FlowLink workspace list");
+                        return fail("not in the FlowLink workspace list");
                     nlohmann::json r = ok();
                     r["workspaces"] = cell::flowlink::workspaces();
                     return r;
@@ -4460,20 +4441,20 @@ namespace app
                 if (name == "flowlink.ws.open")
                 {
                     if (!fl_on())
-                        return ok_error("FlowLink is off — enable it first");
+                        return fail("FlowLink is off — enable it first");
                     const std::string peer = cell::flowlink::resolve_cell(args.value("cell", ""));
                     const std::string cwd = args.value("cwd", "");
                     if (peer.empty() || cwd.empty())
-                        return ok_error("cell and cwd are required");
+                        return fail("cell and cwd are required");
                     auto svc = cell::flowlink::service_instance();
                     if (!svc)
-                        return ok_error("FlowLink is off");
+                        return fail("FlowLink is off");
                     // is the peer awake? (a remote workspace with no link is a
                     // dead tab — say so instead of opening one)
                     std::string err;
                     nlohmann::json r = svc->call(peer, "ws.list", nlohmann::json::object(), 12000, err);
                     if (!err.empty())
-                        return ok_error(err);
+                        return fail(err);
                     nlohmann::json out = ok();
                     out["cell"] = peer;
                     out["cwd"] = cwd;
@@ -4484,18 +4465,18 @@ namespace app
                 if (name == "flowlink.ws.send" || name == "flowlink.ws.stop")
                 {
                     if (!fl_on())
-                        return ok_error("FlowLink is off — enable it first");
+                        return fail("FlowLink is off — enable it first");
                     auto svc = cell::flowlink::service_instance();
                     const std::string peer = cell::flowlink::resolve_cell(args.value("cell", ""));
                     if (!svc || peer.empty())
-                        return ok_error("unknown cell");
+                        return fail("unknown cell");
                     const std::string rid = args.value("rid", "");
                     std::string err;
                     if (name == "flowlink.ws.stop")
                     {
                         nlohmann::json r = svc->call(peer, "agent.stop", {{"rid", rid}}, 8000, err);
                         if (!err.empty())
-                            return ok_error(err);
+                            return fail(err);
                         fl_remote_forget(rid);
                         return ok_with(r);
                     }
@@ -4506,7 +4487,7 @@ namespace app
                                                   {"session", args.value("session", "")}},
                                                  20000, err);
                     if (!err.empty())
-                        return ok_error(err);
+                        return fail(err);
                     return ok_with(r);
                 }
                 // The knobs that decide HOW a remote turn runs (provider, model,
@@ -4519,20 +4500,20 @@ namespace app
                 if (name == "flowlink.ws.config" || name == "flowlink.ws.config.set")
                 {
                     if (!fl_on())
-                        return ok_error("FlowLink is off — enable it first");
+                        return fail("FlowLink is off — enable it first");
                     auto svc = cell::flowlink::service_instance();
                     const std::string peer = cell::flowlink::resolve_cell(args.value("cell", ""));
                     if (!svc || peer.empty())
-                        return ok_error("unknown cell");
+                        return fail("unknown cell");
                     std::string err;
                     if (name == "flowlink.ws.config.set")
                     {
                         nlohmann::json patch = args.value("patch", nlohmann::json::object());
                         if (!patch.is_object())
-                            return ok_error("patch must be an object");
+                            return fail("patch must be an object");
                         nlohmann::json r = svc->call(peer, "ws.config.set", {{"patch", patch}}, 15000, err);
                         if (!err.empty())
-                            return ok_error(err);
+                            return fail(err);
                         nlohmann::json out = ok_with(r);
                         out["cell"] = peer;
                         return out;
@@ -4543,7 +4524,7 @@ namespace app
                     nlohmann::json r = svc->call(peer, "ws.config", nlohmann::json::object(),
                                                  want_models ? 60000 : 12000, err);
                     if (!err.empty())
-                        return ok_error(err);
+                        return fail(err);
                     nlohmann::json out = ok_with(r);
                     out["cell"] = peer;
                     if (want_models)
@@ -4564,14 +4545,14 @@ namespace app
                 if (name == "flowlink.ws.call")
                 {
                     if (!fl_on())
-                        return ok_error("FlowLink is off — enable it first");
+                        return fail("FlowLink is off — enable it first");
                     auto svc = cell::flowlink::service_instance();
                     const std::string peer = cell::flowlink::resolve_cell(args.value("cell", ""));
                     if (!svc || peer.empty())
-                        return ok_error("unknown cell");
+                        return fail("unknown cell");
                     const std::string m = cell::text::trim(args.value("method", ""));
                     if (m.empty())
-                        return ok_error("method is required");
+                        return fail("method is required");
                     nlohmann::json p{{"method", m}, {"cwd", args.value("cwd", "")}};
                     if (args.contains("args"))
                         p["args"] = args["args"];
@@ -4583,7 +4564,7 @@ namespace app
                     std::string err;
                     nlohmann::json r = svc->call(peer, "ws.call", p, timeout, err);
                     if (!err.empty())
-                        return ok_error(err);
+                        return fail(err);
                     // the peer's own verdict travels unchanged: a panel that
                     // asked for a file the peer cannot read must see that error,
                     // not a hollow ok:true
@@ -4608,26 +4589,26 @@ namespace app
                         toks.insert(toks.begin(), "/link");
                     bool good = true;
                     const std::string text = cell::flowlink::run(toks, sid, good);
-                    nlohmann::json r = good ? ok() : ok_error(text);
+                    nlohmann::json r = good ? ok() : fail(text);
                     r["text"] = text;
                     return r;
                 }
                 if (name == "flowlink.remote.ls" || name == "flowlink.remote.read")
                 {
                     if (!fl_on())
-                        return ok_error("FlowLink is off — enable it first");
+                        return fail("FlowLink is off — enable it first");
                     const std::string peer = cell::flowlink::resolve_cell(args.value("cell", args.value("peer", "")));
                     if (peer.empty())
-                        return ok_error("unknown cell");
+                        return fail("unknown cell");
                     auto svc = cell::flowlink::service_instance();
                     if (!svc)
-                        return ok_error("FlowLink is off");
+                        return fail("FlowLink is off");
                     std::string err;
                     nlohmann::json r = svc->call(peer,
                                                  name == "flowlink.remote.ls" ? "fs.ls" : "fs.read",
                                                  {{"path", args.value("path", ".")}}, 30000, err);
                     if (!err.empty())
-                        return ok_error(err);
+                        return fail(err);
                     return ok_with(nlohmann::json{{"remote", r}});
                 }
                 // ---- background tasks --------------------------------------
@@ -4642,7 +4623,7 @@ namespace app
                 {
                     std::string id = args.value("id", "");
                     if (id.empty())
-                        return ok_error("id is required");
+                        return fail("id is required");
                     // kill FIRST: the snapshot below must already show the task as
                     // finished, or the panel would repaint a stale "running" row
                     std::string msg = cell::bg::kill(id);
@@ -4654,7 +4635,7 @@ namespace app
                 {
                     std::string id = args.value("id", "");
                     if (id.empty())
-                        return ok_error("id is required");
+                        return fail("id is required");
                     return ok_with(nlohmann::json{{"text", cell::bg::tail_of(id)}});
                 }
                 // ---- shell preferences -------------------------------------
@@ -4665,7 +4646,7 @@ namespace app
                     std::lock_guard<std::mutex> lk(cmd_mx);
                     nlohmann::json patch = args.value("patch", nlohmann::json::object());
                     if (!patch.is_object())
-                        return ok_error("patch must be an object");
+                        return fail("patch must be an object");
                     prefs::shell next = prefs;
                     if (patch.contains("tray"))
                         next.tray = patch["tray"].get<bool>();
@@ -4697,7 +4678,7 @@ namespace app
                         }
                     }
                     if (!prefs::save(next))
-                        return ok_error("could not write cell-app.json");
+                        return fail("could not write cell-app.json");
                     const bool tray_changed = next.tray != prefs.tray;
                     const bool update_just_on = next.update_check && !prefs.update_check;
                     prefs = next;
@@ -4723,7 +4704,7 @@ namespace app
                     std::lock_guard<std::mutex> lk(cmd_mx);
                     std::string why;
                     if (config_change_blocked(why))
-                        return ok_error(why);
+                        return fail(why);
                     return apply_settings(args.value("patch", nlohmann::json::object()));
                 }
                 if (name == "providers.add")
@@ -4731,7 +4712,7 @@ namespace app
                     std::lock_guard<std::mutex> lk(cmd_mx);
                     std::string why;
                     if (config_change_blocked(why))
-                        return ok_error(why);
+                        return fail(why);
                     return providers_add(args);
                 }
                 if (name == "providers.rm")
@@ -4739,7 +4720,7 @@ namespace app
                     std::lock_guard<std::mutex> lk(cmd_mx);
                     std::string why;
                     if (config_change_blocked(why))
-                        return ok_error(why);
+                        return fail(why);
                     return providers_rm(args.value("name", ""));
                 }
                 if (name == "providers.select")
@@ -4747,7 +4728,7 @@ namespace app
                     std::lock_guard<std::mutex> lk(cmd_mx);
                     std::string why;
                     if (config_change_blocked(why))
-                        return ok_error(why);
+                        return fail(why);
                     return providers_select(args.value("name", ""));
                 }
                 if (name == "provider.set_key")
@@ -4755,7 +4736,7 @@ namespace app
                     std::lock_guard<std::mutex> lk(cmd_mx);
                     std::string why;
                     if (config_change_blocked(why))
-                        return ok_error(why);
+                        return fail(why);
                     return provider_set_key(args.value("name", ""), args.value("key", ""));
                 }
                 if (name == "models.fetch")
@@ -4768,10 +4749,10 @@ namespace app
                     std::lock_guard<std::mutex> lk(cmd_mx);
                     std::string why;
                     if (config_change_blocked(why))
-                        return ok_error(why);
+                        return fail(why);
                     std::string m = args.value("model", "");
                     if (m.empty())
-                        return ok_error("empty model name");
+                        return fail("empty model name");
                     cfg.current_model = m;
                     save_cfg();
                     return ok();
@@ -4794,7 +4775,7 @@ namespace app
                     std::string id = args.value("id", "");
                     std::string ws = args.value("ws", "");
                     if (id.empty() || !cell::is_valid_session_id(id))
-                        return ok_error("invalid session id");
+                        return fail("invalid session id");
                     if (ws.empty())
                         ws = cell::session_prefix(id);
                     workspace_ctx *c = find_ws(ws);
@@ -4804,14 +4785,14 @@ namespace app
                         // context yet: open it on demand from the cwd index
                         std::string dir = cell::cwd_for_key(ws);
                         if (dir.empty())
-                            return ok_error("unknown session group");
+                            return fail("unknown session group");
                         std::string err;
                         c = ensure_workspace(dir, &err, id);
                         if (!c)
-                            return ok_error(err);
+                            return fail(err);
                     }
                     if (c->busy.load())
-                        return ok_error("a turn is running - wait for it to finish");
+                        return fail("a turn is running - wait for it to finish");
                     if (c->h.now().id() != id)
                     {
                         c->h.now().unload();
@@ -4834,9 +4815,9 @@ namespace app
                     std::lock_guard<std::mutex> lk(cmd_mx);
                     workspace_ctx *c = target_ctx(args);
                     if (!c)
-                        return ok_error("no workspace open");
+                        return fail("no workspace open");
                     if (c->busy.load())
-                        return ok_error("a turn is running - wait for it to finish");
+                        return fail("a turn is running - wait for it to finish");
                     std::string old_id = c->h.now().id();
                     c->h.now().unload();
                     cell::async_io::flush(); // the old session must survive a crash
@@ -4854,14 +4835,14 @@ namespace app
                     std::lock_guard<std::mutex> lk(cmd_mx);
                     workspace_ctx *c = target_ctx(args);
                     if (!c)
-                        return ok_error("no workspace open");
+                        return fail("no workspace open");
                     // 清空必须等回合真正结束：否则引擎线程会继续往刚清空的
                     // messages 数组里写（数据竞争 + 半截回合落盘）
                     deny_pending_approvals(*c);
                     if (!stop_turn_and_wait(*c, std::chrono::seconds(10)))
-                        return ok_error("a turn is still running - try clearing again in a moment");
+                        return fail("a turn is still running - try clearing again in a moment");
                     if (!stop_session_jobs_and_wait(c->h.now().id(), std::chrono::seconds(15)))
-                        return ok_error("a teamwork job is still stopping - try clearing again in a moment");
+                        return fail("a teamwork job is still stopping - try clearing again in a moment");
                     long long before = (long long)c->h.now().msg().size();
                     c->h.now().msg().clear();
                     c->h.now().clear_interrupt(); // 可恢复的半截回合已不存在
@@ -4903,13 +4884,13 @@ namespace app
                     std::lock_guard<std::mutex> lk(cmd_mx);
                     workspace_ctx *c = target_ctx(args);
                     if (!c)
-                        return ok_error("no workspace open");
+                        return fail("no workspace open");
                     {
                         // busy 由 worker 在 qmx 内置位：同一把锁里判断，避免
                         // 「刚取到回合还没置 busy」的缝
                         std::lock_guard<std::mutex> qlk(c->qmx);
                         if (c->busy.load())
-                            return ok_error("a turn is running - try /compact again when it finishes");
+                            return fail("a turn is running - try /compact again when it finishes");
                         if (c->compact_req.load())
                             return ok(); // 已在队列里，重复点只算一次
                         c->compact_req.store(true);
@@ -4935,14 +4916,14 @@ namespace app
                     std::lock_guard<std::mutex> lk(cmd_mx);
                     const std::string sname = cell::text::trim(args.value("name", ""));
                     if (sname.empty())
-                        return ok_error("name is required");
+                        return fail("name is required");
                     auto all = cell::skills::list();
                     const cell::skills::skill *sk = cell::skills::find(all, sname);
                     if (!sk)
-                        return ok_error("skill not found: " + sname);
+                        return fail("skill not found: " + sname);
                     std::string body;
                     if (!cell::skills::content(*sk, body))
-                        return ok_error("failed to read skill: " + sname);
+                        return fail("failed to read skill: " + sname);
                     nlohmann::json r = ok();
                     r["name"] = sk->name;
                     r["description"] = sk->description;
@@ -4961,15 +4942,15 @@ namespace app
                         std::error_code ec;
                         std::filesystem::create_directories(dir, ec);
                         if (!reveal_path(dir, false))
-                            return ok_error("failed to open the skills folder");
+                            return fail("failed to open the skills folder");
                         return ok();
                     }
                     auto all = cell::skills::list();
                     const cell::skills::skill *sk = cell::skills::find(all, sname);
                     if (!sk)
-                        return ok_error("skill not found: " + sname);
+                        return fail("skill not found: " + sname);
                     if (!reveal_path(dir / sk->file, true))
-                        return ok_error("failed to open the skill folder");
+                        return fail("failed to open the skill folder");
                     return ok();
                 }
                 // 把技能正文注入当前会话的 system 块（对齐 CLI /skill NAME）：
@@ -4979,19 +4960,19 @@ namespace app
                     std::lock_guard<std::mutex> lk(cmd_mx);
                     workspace_ctx *c = target_ctx(args);
                     if (!c)
-                        return ok_error("no workspace open");
+                        return fail("no workspace open");
                     std::string sname = cell::text::trim(args.value("name", ""));
                     if (sname.empty())
-                        return ok_error("name is required");
+                        return fail("name is required");
                     if (c->busy.load())
-                        return ok_error("a turn is running - try /skill again when it finishes");
+                        return fail("a turn is running - try /skill again when it finishes");
                     auto all = cell::skills::list();
                     const cell::skills::skill *sk = cell::skills::find(all, sname);
                     if (!sk)
-                        return ok_error("skill not found: " + sname);
+                        return fail("skill not found: " + sname);
                     std::string body;
                     if (!cell::skills::content(*sk, body))
-                        return ok_error("failed to read skill: " + sname);
+                        return fail("failed to read skill: " + sname);
                     // skill 名来自 front matter，按不可信处理（去掉控制/ANSI 字符）
                     std::string disp = cell::text::display_safe(sk->name);
                     c->h.now().msg().push_back(
@@ -5016,11 +4997,11 @@ namespace app
                     std::lock_guard<std::mutex> lk(cmd_mx);
                     workspace_ctx *c = target_ctx(args);
                     if (!c)
-                        return ok_error("no workspace open");
+                        return fail("no workspace open");
                     {
                         std::lock_guard<std::mutex> qlk(c->qmx);
                         if (c->busy.load() || !c->turns.empty())
-                            return ok_error("a turn is running - wait for it to finish");
+                            return fail("a turn is running - wait for it to finish");
                     }
                     c->h.now().unload();
                     cell::async_io::flush(); // /save 保证立即落盘
@@ -5038,11 +5019,11 @@ namespace app
                     std::lock_guard<std::mutex> lk(cmd_mx);
                     workspace_ctx *c = target_ctx(args);
                     if (!c)
-                        return ok_error("no workspace open");
+                        return fail("no workspace open");
                     {
                         std::lock_guard<std::mutex> qlk(c->qmx);
                         if (c->busy.load() || !c->turns.empty())
-                            return ok_error("a turn is running - wait for it to finish");
+                            return fail("a turn is running - wait for it to finish");
                     }
                     nlohmann::json msgs = c->h.now().msg();
                     std::string what = c->h.now().id();
@@ -5053,17 +5034,17 @@ namespace app
                         std::string serr;
                         std::filesystem::path hit;
                         if (!cell::chat::resolve_saved(c->h.now().directory() / "saved", saved_name, hit, serr))
-                            return ok_error(serr);
+                            return fail(serr);
                         // notice-*.jsonl 是通知快照（{id,from,topic,body,state}），不是消息
                         // 转录；按消息解析会得到一张垃圾页，直接拒掉
                         if (hit.filename().string().rfind("notice-", 0) == 0)
-                            return ok_error("saved archive " + hit.filename().string() +
+                            return fail("saved archive " + hit.filename().string() +
                                             " is a notice snapshot, not a transcript");
                         std::ifstream f(hit);
                         std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
                         msgs = cell::chat::parse_messages_jsonl(text);
                         if (msgs.empty())
-                            return ok_error("saved archive " + hit.filename().string() + " is empty or unreadable");
+                            return fail("saved archive " + hit.filename().string() + " is empty or unreadable");
                         what = hit.stem().string();
                         saved_stem = what;
                     }
@@ -5090,7 +5071,7 @@ namespace app
                     cell::chat::export_context export_ctx;
                     cell::teamwork::collect_export_jobs(c->h.now().id(), export_ctx.jobs);
                     if (!cell::chat::export_transcript_html(msgs, what, out, eerr, &export_ctx))
-                        return ok_error(eerr);
+                        return fail(eerr);
                     cell::sys::logger::instance().info(
                         "sess", std::format("exported msgs={} teamwork_jobs={} to={}", msgs.size(),
                                             export_ctx.jobs.size(), out.string()));
@@ -5171,11 +5152,11 @@ namespace app
                     std::string id = args.value("id", "");
                     std::string ws = args.value("ws", "");
                     if (!cell::is_valid_session_id(id))
-                        return ok_error("invalid session id");
+                        return fail("invalid session id");
                     if (ws.empty())
                         ws = cell::session_prefix(id);
                     if (cell::session_prefix(id) != ws)
-                        return ok_error("session does not belong to this workspace");
+                        return fail("session does not belong to this workspace");
                     nlohmann::json a;
                     a["ws"] = ws;
                     workspace_ctx *c = target_ctx(a);
@@ -5187,10 +5168,10 @@ namespace app
                         std::error_code ec;
                         auto dir = cell::session_dir(id);
                         if (!std::filesystem::is_directory(dir, ec))
-                            return ok_error("session not found");
+                            return fail("session not found");
                         std::filesystem::remove_all(dir, ec);
                         if (ec)
-                            return ok_error("failed to delete session: " + ec.message());
+                            return fail("failed to delete session: " + ec.message());
                         // 摘掉可能指向它的 active_sessions 记录：否则下次打开该
                         // 工作区会把已删除的 id 当 boot，把空会话复活
                         if (auto it = cfg.active_sessions.find(ws); it != cfg.active_sessions.end() && it->second == id)
@@ -5207,9 +5188,9 @@ namespace app
                     // 否则后台/引擎线程会把刚删掉的目录重新写出来
                     deny_pending_approvals(*c);
                     if (!stop_session_jobs_and_wait(id, std::chrono::seconds(15)))
-                        return ok_error("a teamwork job is still stopping - try deleting again in a moment");
+                        return fail("a teamwork job is still stopping - try deleting again in a moment");
                     if (active && !stop_turn_and_wait(*c, std::chrono::seconds(10)))
-                        return ok_error("a turn is still running - try deleting again in a moment");
+                        return fail("a turn is still running - try deleting again in a moment");
                     // 先把当前会话落盘关闭，再删目录 —— 否则 unload/flush 会重建它
                     if (active)
                     {
@@ -5219,7 +5200,7 @@ namespace app
                     std::error_code ec;
                     std::filesystem::remove_all(cell::session_dir(id), ec);
                     if (ec)
-                        return ok_error("failed to delete session: " + ec.message());
+                        return fail("failed to delete session: " + ec.message());
                     if (active)
                     {
                         c->h.forget_current();
@@ -5242,16 +5223,16 @@ namespace app
                     {
                         workspace_ctx *c = target_ctx(args);
                         if (!c)
-                            return ok_error("no workspace open");
+                            return fail("no workspace open");
                         id = c->h.now().id();
                         ws = c->cwd_key;
                     }
                     if (!cell::is_valid_session_id(id))
-                        return ok_error("invalid session id");
+                        return fail("invalid session id");
                     if (ws.empty())
                         ws = cell::session_prefix(id);
                     if (cell::session_prefix(id) != ws)
-                        return ok_error("session does not belong to this workspace");
+                        return fail("session does not belong to this workspace");
                     cell::async_io::flush(); // the file must reflect queued writes
                     nlohmann::json messages = nlohmann::json::array(), archives = nlohmann::json::array();
                     read_session_files(id, messages, archives);
@@ -5272,14 +5253,14 @@ namespace app
                     std::string id = args.value("id", "");
                     std::string ws = args.value("ws", "");
                     if (!cell::is_valid_session_id(id))
-                        return ok_error("invalid session id");
+                        return fail("invalid session id");
                     if (ws.empty())
                         ws = cell::session_prefix(id);
                     if (cell::session_prefix(id) != ws)
-                        return ok_error("session does not belong to this workspace");
+                        return fail("session does not belong to this workspace");
                     std::error_code ec;
                     if (!std::filesystem::is_directory(cell::session_dir(id), ec))
-                        return ok_error("session not found");
+                        return fail("session not found");
                     cell::async_io::flush(); // 排队中的写入必须先落盘，否则读到半截
                     return session_digest(id);
                 }
@@ -5290,16 +5271,16 @@ namespace app
                     std::string id = args.value("id", "");
                     std::string arc = args.value("name", "");
                     if (!cell::is_valid_session_id(id))
-                        return ok_error("invalid session id");
+                        return fail("invalid session id");
                     // the archive name is a plain file name: reject path-like input
                     if (arc.empty() || arc.size() > 128 || arc.find_first_of("/\\") != std::string::npos ||
                         arc.front() == '.' || arc.find("..") != std::string::npos)
-                        return ok_error("invalid archive name");
+                        return fail("invalid archive name");
                     cell::async_io::flush();
                     std::error_code ec;
                     auto file = cell::session_dir(id) / "saved" / arc;
                     if (!std::filesystem::is_regular_file(file, ec))
-                        return ok_error("archive not found");
+                        return fail("archive not found");
                     std::ifstream f(file, std::ios::binary);
                     std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
                     nlohmann::json r = ok();
@@ -5347,16 +5328,16 @@ namespace app
                     {
                         workspace_ctx *c = target_ctx(args);
                         if (!c)
-                            return ok_error("no workspace open");
+                            return fail("no workspace open");
                         id = c->h.now().id();
                         ws = c->cwd_key;
                     }
                     if (!cell::is_valid_session_id(id))
-                        return ok_error("invalid session id");
+                        return fail("invalid session id");
                     if (ws.empty())
                         ws = cell::session_prefix(id);
                     if (cell::session_prefix(id) != ws)
-                        return ok_error("session does not belong to this workspace");
+                        return fail("session does not belong to this workspace");
                     cell::async_io::flush();
                     nlohmann::json archives = nlohmann::json::array();
                     read_session_archives(id, archives);
@@ -5514,7 +5495,7 @@ namespace app
                     std::lock_guard<std::mutex> lk(cmd_mx);
                     workspace_ctx *c = target_ctx(args);
                     if (!c)
-                        return ok_error("no workspace open");
+                        return fail("no workspace open");
                     nlohmann::json r = ok();
                     r["jobs"] = teamwork_list(*c);
                     return r;
@@ -5524,11 +5505,11 @@ namespace app
                     std::lock_guard<std::mutex> lk(cmd_mx);
                     workspace_ctx *c = target_ctx(args);
                     if (!c)
-                        return ok_error("no workspace open");
+                        return fail("no workspace open");
                     std::string report;
                     std::string err = teamwork_report(*c, args.value("job", ""), args.value("worker", ""), report);
                     if (!err.empty())
-                        return ok_error(err);
+                        return fail(err);
                     nlohmann::json r = ok();
                     r["report"] = report;
                     return r;
@@ -5538,7 +5519,7 @@ namespace app
                     std::lock_guard<std::mutex> lk(cmd_mx);
                     workspace_ctx *c = target_ctx(args);
                     if (!c)
-                        return ok_error("no workspace open");
+                        return fail("no workspace open");
                     nlohmann::json delta = nlohmann::json::array(), meta = nlohmann::json::object();
                     std::string err;
                     {
@@ -5547,7 +5528,7 @@ namespace app
                                               (size_t)args.value("since", 0), delta, meta);
                     }
                     if (!err.empty())
-                        return ok_error(err);
+                        return fail(err);
                     nlohmann::json r = ok();
                     r.update(meta);
                     r["messages"] = delta;
@@ -5558,13 +5539,13 @@ namespace app
                     std::lock_guard<std::mutex> lk(cmd_mx);
                     workspace_ctx *c = target_ctx(args);
                     if (!c)
-                        return ok_error("no workspace open");
+                        return fail("no workspace open");
                     nlohmann::json input = nlohmann::json::object();
                     for (const char *k : {"workflow", "list", "work_type", "provider", "model", "think", "editable", "edit_rules"})
                         if (args.contains(k))
                             input[k] = args[k];
                     if (!input.contains("workflow") && !input.contains("list"))
-                        return ok_error("workflow or list is required");
+                        return fail("workflow or list is required");
                     std::string out;
                     bool okc = false;
                     {
@@ -5572,7 +5553,7 @@ namespace app
                         okc = cell::teamwork::new_job(input, cfg.teamwork_max_children, out, c->h.now().id());
                     }
                     if (!okc)
-                        return ok_error(out);
+                        return fail(out);
                     bus.post({{"t", "teamwork_changed"}, {"ws", c->cwd_key}});
                     nlohmann::json r = ok();
                     r["job"] = out;
@@ -5583,10 +5564,10 @@ namespace app
                     std::lock_guard<std::mutex> lk(cmd_mx);
                     workspace_ctx *c = target_ctx(args);
                     if (!c)
-                        return ok_error("no workspace open");
+                        return fail("no workspace open");
                     std::string job_id = args.value("id", "");
                     if (job_id.empty())
-                        return ok_error("id is required");
+                        return fail("id is required");
                     std::string out;
                     bool okr = false;
                     {
@@ -5595,7 +5576,7 @@ namespace app
                     }
                     bus.post({{"t", "teamwork_changed"}, {"ws", c->cwd_key}});
                     if (!okr)
-                        return ok_error(out);
+                        return fail(out);
                     nlohmann::json r = ok();
                     r["message"] = out;
                     return r;
@@ -5609,11 +5590,11 @@ namespace app
                         std::lock_guard<std::mutex> life(ctx_life_mx);
                         workspace_ctx *c = target_ctx(args);
                         if (!c)
-                            return ok_error("no workspace open");
+                            return fail("no workspace open");
                         ws_key = c->cwd_key;
                     }
                     if (job_id.empty())
-                        return ok_error("id is required");
+                        return fail("id is required");
                     cell::teamwork::request_stop(job_id);
                     bus.post({{"t", "teamwork_changed"}, {"ws", ws_key}});
                     nlohmann::json r = ok();
@@ -5627,24 +5608,22 @@ namespace app
                     std::lock_guard<std::mutex> lk(cmd_mx);
                     workspace_ctx *c = target_ctx(args);
                     if (!c)
-                        return ok_error("no workspace open");
+                        return fail("no workspace open");
                     std::string nm = args.value("name", "file.bin");
                     std::string b64 = args.value("data_b64", "");
                     if (b64.empty())
-                        return ok_error("empty upload");
+                        return fail("empty upload");
                     std::string safe;
                     for (char ch : nm)
                         if ((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '.' || ch == '_' || ch == '-')
                             safe += ch;
                     if (safe.empty() || safe == "." || safe == "..")
                         safe = "upload.bin";
-                    // the app's own decoder: cell.cpp keeps its base64 helper
-                    // file-local now, so the vault namespace no longer exports one
                     std::string raw;
-                    if (!term::b64_decode(b64, raw) || raw.empty())
-                        return ok_error("bad base64 payload");
+                    if (!b64_decode(b64, raw) || raw.empty()) // cell.cpp's libsodium codec
+                        return fail("bad base64 payload");
                     if (raw.size() > 48u * 1024 * 1024)
-                        return ok_error("upload too large (48 MiB max)");
+                        return fail("upload too large (48 MiB max)");
                     std::error_code ec;
                     auto dir = std::filesystem::path(c->cwd) / ".cell" / "uploads";
                     std::filesystem::create_directories(dir, ec);
@@ -5654,7 +5633,7 @@ namespace app
                     auto path = dir / std::format("{}-{}", stamp, safe);
                     std::ofstream out(path, std::ios::binary);
                     if (!out)
-                        return ok_error("cannot write the upload");
+                        return fail("cannot write the upload");
                     out.write(raw.data(), (std::streamsize)raw.size());
                     out.close();
                     nlohmann::json r = ok();
@@ -5670,7 +5649,7 @@ namespace app
                     std::lock_guard<std::mutex> lk(cmd_mx);
                     workspace_ctx *c = target_ctx(args);
                     if (!c)
-                        return ok_error("no workspace open");
+                        return fail("no workspace open");
                     nlohmann::json arr = nlohmann::json::array();
                     std::filesystem::path base = cell::session_dir(c->h.now().id()) / "notices";
                     std::error_code ec;
@@ -5721,13 +5700,13 @@ namespace app
                     std::lock_guard<std::mutex> lk(cmd_mx);
                     workspace_ctx *c = target_ctx(args);
                     if (!c)
-                        return ok_error("no workspace open");
+                        return fail("no workspace open");
                     size_t dropped = cell::notice::clear(c->h.now().id());
                     std::filesystem::path archived;
                     std::string nerr;
                     size_t seen = cell::notice::clear_seen(c->h.now().id(), archived, nerr);
                     if (!nerr.empty())
-                        return ok_error(nerr);
+                        return fail(nerr);
                     nlohmann::json r = ok();
                     r["dropped"] = dropped;
                     r["seen"] = seen;
@@ -5744,19 +5723,19 @@ namespace app
                     std::lock_guard<std::mutex> lk(cmd_mx);
                     workspace_ctx *c = target_ctx(args);
                     if (!c)
-                        return ok_error("no workspace open");
+                        return fail("no workspace open");
                     std::string body = args.value("body", "");
                     if (body.empty())
-                        return ok_error("通知内容不能为空");
+                        return fail("通知内容不能为空");
                     std::string cur = c->h.now().id();
                     auto tgt = cell::notice::resolve_session(args.value("session", ""), cur);
                     if (tgt.state == cell::notice::target_state::ambiguous ||
                         tgt.state == cell::notice::target_state::none)
-                        return ok_error(tgt.error);
+                        return fail(tgt.error);
                     std::string err, id;
                     if (!cell::notice::send_to(tgt.id, args.value("from", "user"), args.value("topic", ""),
                                                body, err, &id, false, cur))
-                        return ok_error(err);
+                        return fail(err);
                     cell::sys::logger::instance().info("notice", std::format("sent via ui id={} from_sid={} to={} chars={}",
                                                                              id, cur, tgt.id.empty() ? "(current)" : tgt.id, body.size()));
                     nlohmann::json r = ok();
@@ -5770,11 +5749,11 @@ namespace app
                 if (auto r = tools::try_handle(name, args, this); r)
                     return *r;
 
-                return ok_error("unknown command: " + name);
+                return fail("unknown command: " + name);
             }
             catch (const std::exception &e)
             {
-                return ok_error(std::string("command failed: ") + e.what());
+                return fail(std::string("command failed: ") + e.what());
             }
         }
 
@@ -5788,8 +5767,6 @@ namespace app
         }
 
     private:
-        static nlohmann::json ok() { return nlohmann::json{{"ok", true}}; }
-        static nlohmann::json ok_error(const std::string &e) { return nlohmann::json{{"ok", false}, {"error", e}}; }
         static nlohmann::json ok_with(nlohmann::json payload)
         {
             payload["ok"] = true;
@@ -5800,12 +5777,12 @@ namespace app
         nlohmann::json apply_settings(const nlohmann::json &p)
         {
             if (!p.is_object())
-                return ok_error("patch must be an object");
+                return fail("patch must be an object");
             if (p.contains("think_level"))
             {
                 int lv = p["think_level"].get<int>();
                 if (lv < 0 || lv > 4)
-                    return ok_error("think_level must be 0..4");
+                    return fail("think_level must be 0..4");
                 cfg.think_level = lv;
             }
             if (p.contains("tools"))
@@ -5820,7 +5797,7 @@ namespace app
                 else if (m == "full-access" || m == "full")
                     cell::box::sandbox_mode() = cell::box::SandboxMode::FullAccess;
                 else
-                    return ok_error("unknown sandbox mode: " + m);
+                    return fail("unknown sandbox mode: " + m);
                 cfg.sandbox_mode = m;
             }
             if (p.contains("autoallow"))
@@ -5839,14 +5816,14 @@ namespace app
             {
                 long long n = p["teamwork_max_children"].get<long long>();
                 if (n < 1 || n > 100)
-                    return ok_error("teamwork_max_children must be 1..100");
+                    return fail("teamwork_max_children must be 1..100");
                 cfg.teamwork_max_children = (size_t)n;
             }
             if (p.contains("max_threads"))
             {
                 long long n = p["max_threads"].get<long long>();
                 if (n < 1 || n > 16)
-                    return ok_error("max_threads must be 1..16");
+                    return fail("max_threads must be 1..16");
                 cfg.max_threads = (size_t)n;
                 cell::sys::pool_max_setting() = (size_t)n;
             }
@@ -5865,10 +5842,10 @@ namespace app
             std::string style_name = cell::text::trim(a.value("api_style", ""));
             std::string canonical = cell::config::provider_entry::parse_api_style(style_name);
             if (canonical.empty())
-                return ok_error("unknown api style: " + style_name);
+                return fail("unknown api style: " + style_name);
             std::string base = cell::text::trim(a.value("base", ""));
             if (base.empty())
-                return ok_error("api base url is required");
+                return fail("api base url is required");
             std::string name_arg = cell::text::trim(a.value("name", ""));
             std::string key = a.value("key", "");
             std::string proxy = cell::text::trim(a.value("proxy", ""));
@@ -5882,7 +5859,7 @@ namespace app
             {
                 std::string kid = "provider:" + name;
                 if (!vault.set(kid, key))
-                    return ok_error("failed to store the api key");
+                    return fail("failed to store the api key");
                 ne.key_id = kid;
             }
             cfg.providers.push_back(std::move(ne));
@@ -5900,7 +5877,7 @@ namespace app
         {
             int idx = cell::config::find(cfg, name);
             if (idx < 0)
-                return ok_error("provider not found: " + name);
+                return fail("provider not found: " + name);
             std::string kid = cfg.providers[(size_t)idx].key_id;
             if (!kid.empty() && vault.remove(kid) > 0)
                 cell::sys::logger::instance().info("vault", std::format("removed key id={}", kid));
@@ -5929,7 +5906,7 @@ namespace app
         nlohmann::json providers_select(const std::string &name)
         {
             if (cell::config::find(cfg, name) < 0)
-                return ok_error("provider not found: " + name);
+                return fail("provider not found: " + name);
             cell::config::select_provider(cfg, name);
             save_cfg();
             nlohmann::json r = ok();
@@ -5940,13 +5917,13 @@ namespace app
         {
             int idx = cell::config::find(cfg, name);
             if (idx < 0)
-                return ok_error("provider not found: " + name);
+                return fail("provider not found: " + name);
             if (key.empty())
-                return ok_error("empty key");
+                return fail("empty key");
             auto &p = cfg.providers[(size_t)idx];
             std::string kid = p.key_id.empty() ? "provider:" + p.name : p.key_id;
             if (!vault.set(kid, key))
-                return ok_error("failed to store the api key");
+                return fail("failed to store the api key");
             p.key_id = kid;
             save_cfg();
             cell::sys::logger::instance().info("provider", std::format("key updated name={} via ui", name));
@@ -5973,7 +5950,7 @@ namespace app
         {
             const cell::config::provider_entry *p = cfg.current_provider_entry();
             if (!p)
-                return ok_error("no provider configured");
+                return fail("no provider configured");
             // the resolved CA bundle is the usual suspect when a probe fails, so
             // record it once: a static libcurl's baked-in path is a POSIX one and
             // simply does not exist on Windows (see cell::net::ca_bundle)
@@ -6012,7 +5989,7 @@ namespace app
             }
             curl_easy_cleanup(c);
             if (!got)
-                return ok_error(err.empty() ? "request failed" : err);
+                return fail(err.empty() ? "request failed" : err);
             nlohmann::json models = nlohmann::json::array();
             try
             {
@@ -6024,7 +6001,7 @@ namespace app
             }
             catch (const std::exception &e)
             {
-                return ok_error(std::format("response parse error: {}", e.what()));
+                return fail(std::format("response parse error: {}", e.what()));
             }
             nlohmann::json r = ok();
             r["models"] = models;

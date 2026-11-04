@@ -2,65 +2,37 @@
 //  cell-app-tools.hpp — desktop-workbench commands behind the command bus
 // ============================================================================
 //
-//  The shell exposes the agent runtime through one JSON command bus
-//  (app_core::exec_command). This header adds the commands the desktop
-//  workbench needs on top of the agent verbs:
+//  app_core::exec_command adds the desktop verbs on top of the agent's own
+//  (docs/api-tools.md is the contract):
 //
-//      git.status          worktree state + changed files + worktree list
-//      git.worktrees       worktree inventory
-//      git.worktree.add    create a worktree (new or existing branch)
-//      git.worktree.remove remove a worktree
-//      git.branches        local branches + current branch
-//      git.log             recent commits
-//      git.numstat         per-file added/deleted line counts
-//      git.diff            diff text (worktree or index)
-//      git.init            initialise a repository
-//      fs.list             one directory of the workspace
-//      fs.read             a text file (bounded, binary-aware)
-//      fs.find             file search under the workspace
-//      term.exec           run a shell command in the workspace (one shot)
-//      term.open           start/reattach a real terminal (pty shell) for a ws
-//      term.input          write bytes to a terminal session
-//      term.resize         resize the pty
-//      term.close          end a terminal session
-//      term.list           live terminal sessions
+//      git.status | worktrees | worktree.add | worktree.remove | branches
+//      git.log | numstat | diff | init
+//      fs.list | read | find
+//      term.exec | open | input | resize | close | list
 //
 //  Every command takes an optional "ws" (workspace key, default: the active
-//  workspace) and an optional "cwd" (absolute directory, default: that
-//  workspace's cwd). "cwd" makes the commands work on a directory that is not
-//  open as a workspace, which is what the Git panel does while browsing.
+//  one) and an optional "cwd" (absolute directory, default: that workspace's
+//  cwd) — "cwd" is what lets the Git panel browse a directory that is not open
+//  as a workspace. A response is {"ok":true,…} or {"ok":false,"error":"…"}.
 //
-//  Response protocol: {"ok":true,...} or {"ok":false,"error":"..."}. The exact
-//  shapes are documented in docs/api-tools.md (contract: docs/ui-redesign.md 6).
+//  Isolation: fs.* resolve every path against the base, canonicalise it
+//  (symlinks/junctions included) and refuse anything outside; git.* validate
+//  branch names against a whitelist and quote every argument; child processes
+//  go through cell::plat::spawn_cmd (timeout, whole-tree kill, bounded
+//  capture), with the outputs capped again here.
 //
-//  Isolation / safety:
-//    * fs.*  resolve every path against the workspace cwd, canonicalise it
-//            (symlinks/junctions included) and refuse anything outside
-//            (no "..", no absolute escape);
-//    * git.* validate branch names against a strict whitelist and quote every
-//            argument they hand to the shell; diff paths must stay in the repo;
-//    * child processes go through cell::plat::spawn_cmd — the same runner as
-//            the agent's exec tool (timeout, whole-process-tree kill, bounded
-//            capture); outputs are additionally capped here (diff/term 256 KiB,
-//            fs.read 512 KiB / 5000 lines).
-//
-//  Include order: this header is included by cell-app-core.hpp, which the
-//  application includes AFTER cell.cpp (cell::plat::spawn_cmd lives there).
-//  It purposely does not include cell.cpp itself.
+//  Included by cell-app-core.hpp, i.e. after cell.cpp (cell::plat, cell::text).
 // ============================================================================
 #pragma once
 
 #include <algorithm>
 #include <atomic>
-#include <cctype>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
-#include <cstring>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
-#include <limits>
 #include <map>
 #include <mutex>
 #include <optional>
@@ -70,178 +42,21 @@
 #include <utility>
 #include <vector>
 
-#include <nlohmann/json.hpp>
-
-// real interactive terminal sessions (term.open/input/resize/close/list)
-#include "cell-app-term.hpp"
+#include "cell-app-term.hpp" // term.open/input/resize/close/list
+#include "cell-app-util.hpp"
 
 namespace app::tools
 {
     namespace fs = std::filesystem;
     using json = nlohmann::json;
-
-    // =====================================================================
-    //  small text / JSON helpers
-    // =====================================================================
-    inline json jok() { return json{{"ok", true}}; }
-    inline json jerr(const std::string &e) { return json{{"ok", false}, {"error", e}}; }
-
-    inline std::string trim_copy(std::string_view s)
-    {
-        size_t b = 0, e = s.size();
-        while (b < e && std::isspace((unsigned char)s[b]))
-            ++b;
-        while (e > b && std::isspace((unsigned char)s[e - 1]))
-            --e;
-        return std::string(s.substr(b, e - b));
-    }
-
-    inline std::string lower_ascii(std::string s)
-    {
-        for (char &c : s)
-            if (c >= 'A' && c <= 'Z')
-                c = char(c - 'A' + 'a');
-        return s;
-    }
-
-    inline bool starts_with(const std::string &s, const char *prefix)
-    {
-        return s.rfind(prefix, 0) == 0;
-    }
-
-    inline bool ends_with(const std::string &s, const char *suffix)
-    {
-        size_t n = std::strlen(suffix);
-        return s.size() >= n && s.compare(s.size() - n, n, suffix) == 0;
-    }
-
-    // Cut a string to cap bytes without slicing a UTF-8 sequence in half.
-    // Returns true when something was cut.
-    inline bool cap_text(std::string &s, size_t cap)
-    {
-        if (s.size() <= cap)
-            return false;
-        s.resize(cap);
-        while (!s.empty() && ((unsigned char)s.back() & 0xC0) == 0x80)
-            s.pop_back();
-        return true;
-    }
-
-    inline std::string jstr(const json &o, const char *key, std::string def = {})
-    {
-        if (!o.is_object())
-            return def;
-        auto it = o.find(key);
-        if (it == o.end() || !it->is_string())
-            return def;
-        return it->get<std::string>();
-    }
-
-    inline long long jint(const json &o, const char *key, long long def)
-    {
-        if (!o.is_object())
-            return def;
-        auto it = o.find(key);
-        if (it == o.end())
-            return def;
-        try
-        {
-            if (it->is_number_unsigned())
-            {
-                unsigned long long v = it->get<unsigned long long>();
-                return v > (unsigned long long)std::numeric_limits<long long>::max() ? def : (long long)v;
-            }
-            if (it->is_number_integer())
-                return it->get<long long>();
-            if (it->is_number_float())
-                return (long long)it->get<double>();
-            if (it->is_boolean())
-                return it->get<bool>() ? 1 : 0;
-            if (it->is_string())
-                return std::stoll(trim_copy(it->get<std::string>()));
-        }
-        catch (const std::exception &)
-        {
-        }
-        return def;
-    }
-
-    inline double jnum(const json &o, const char *key, double def)
-    {
-        if (!o.is_object())
-            return def;
-        auto it = o.find(key);
-        if (it == o.end())
-            return def;
-        try
-        {
-            if (it->is_number())
-                return it->get<double>();
-            if (it->is_string())
-                return std::stod(trim_copy(it->get<std::string>()));
-        }
-        catch (const std::exception &)
-        {
-        }
-        return def;
-    }
-
-    inline bool jbool(const json &o, const char *key, bool def)
-    {
-        if (!o.is_object())
-            return def;
-        auto it = o.find(key);
-        if (it == o.end())
-            return def;
-        if (it->is_boolean())
-            return it->get<bool>();
-        if (it->is_number())
-            return it->get<double>() != 0.0;
-        if (it->is_string())
-        {
-            std::string s = lower_ascii(trim_copy(it->get<std::string>()));
-            if (s == "1" || s == "true" || s == "yes" || s == "on")
-                return true;
-            if (s == "0" || s == "false" || s == "no" || s == "off")
-                return false;
-        }
-        return def;
-    }
-
-    inline std::vector<std::string> split_lines(const std::string &s)
-    {
-        std::vector<std::string> out;
-        size_t pos = 0;
-        while (pos < s.size())
-        {
-            size_t nl = s.find('\n', pos);
-            std::string line = nl == std::string::npos ? s.substr(pos) : s.substr(pos, nl - pos);
-            pos = nl == std::string::npos ? s.size() : nl + 1;
-            if (!line.empty() && line.back() == '\r')
-                line.pop_back();
-            out.push_back(std::move(line));
-        }
-        return out;
-    }
-
-    inline long long to_ll(const std::string &s)
-    {
-        try
-        {
-            return std::stoll(s);
-        }
-        catch (const std::exception &)
-        {
-            return 0;
-        }
-    }
+    using js::cap_text, js::clamp_int, js::fail, js::jbool, js::jint, js::jnum, js::jstr, js::ok, js::to_ll;
 
     // "2026-10-17T09:07:31Z" (UTC) for an epoch second; empty for unknown.
     inline std::string iso_utc(long long epoch)
     {
         if (epoch <= 0)
             return {};
-        std::time_t t = (std::time_t)epoch;
+        const std::time_t t = (std::time_t)epoch;
         std::tm tmv{};
 #ifdef _WIN32
         if (gmtime_s(&tmv, &t) != 0)
@@ -250,35 +65,31 @@ namespace app::tools
         if (!gmtime_r(&t, &tmv))
             return {};
 #endif
-        char buf[40];
-        std::snprintf(buf, sizeof buf, "%04d-%02d-%02dT%02d:%02d:%02dZ",
-                      tmv.tm_year + 1900, tmv.tm_mon + 1, tmv.tm_mday,
-                      tmv.tm_hour, tmv.tm_min, tmv.tm_sec);
-        return buf;
+        return std::format("{:04d}-{:02d}-{:02d}T{:02d}:{:02d}:{:02d}Z", tmv.tm_year + 1900, tmv.tm_mon + 1,
+                           tmv.tm_mday, tmv.tm_hour, tmv.tm_min, tmv.tm_sec);
     }
 
-    // Chinese relative time for the commit list / worktree badges.
+    // The commit list and the worktree badges show Chinese relative times.
     inline std::string rel_time(long long epoch)
     {
         if (epoch <= 0)
             return {};
-        long long now = (long long)std::chrono::duration_cast<std::chrono::seconds>(
-                            std::chrono::system_clock::now().time_since_epoch())
-                            .count();
-        long long d = now - epoch;
-        if (d < 0)
-            d = 0;
-        if (d < 60)
+        const long long now = (long long)std::chrono::duration_cast<std::chrono::seconds>(
+                                  std::chrono::system_clock::now().time_since_epoch())
+                                  .count();
+        const long long d = std::max(0LL, now - epoch);
+        constexpr long long kMin = 60, kHour = 3600, kDay = 86400;
+        if (d < kMin)
             return "刚刚";
-        if (d < 3600)
-            return std::to_string(d / 60) + " 分钟前";
-        if (d < 86400)
-            return std::to_string(d / 3600) + " 小时前";
-        if (d < 86400LL * 30)
-            return std::to_string(d / 86400) + " 天前";
-        if (d < 86400LL * 365)
-            return std::to_string(d / (86400LL * 30)) + " 个月前";
-        return std::to_string(d / (86400LL * 365)) + " 年前";
+        if (d < kHour)
+            return std::format("{} 分钟前", d / kMin);
+        if (d < kDay)
+            return std::format("{} 小时前", d / kHour);
+        if (d < kDay * 30)
+            return std::format("{} 天前", d / kDay);
+        if (d < kDay * 365)
+            return std::format("{} 个月前", d / (kDay * 30));
+        return std::format("{} 年前", d / (kDay * 365));
     }
 
     // =====================================================================
@@ -288,93 +99,78 @@ namespace app::tools
     {
         std::string s = p.lexically_normal().generic_string();
 #ifdef _WIN32
-        s = lower_ascii(std::move(s));
+        cell::lower_ascii(s); // case-insensitive file system
 #endif
         return s;
     }
 
-    // Native-style string (backslashes on Windows), used for absolute paths in
-    // JSON so the frontend sees the same shape as workspace.cwd.
-    inline std::string native_str(const fs::path &p)
+    // Native separators, so the frontend sees the same shape as workspace.cwd.
+    inline std::string native_str(fs::path p)
     {
-        fs::path q = p;
 #ifdef _WIN32
-        q.make_preferred();
+        p.make_preferred();
 #endif
-        return q.lexically_normal().string();
+        return p.lexically_normal().string();
     }
 
+    // p is `root` or a path below it (both already normalised by norm_key).
     inline bool path_under(const fs::path &root, const fs::path &p)
     {
-        std::string r = norm_key(root);
-        std::string q = norm_key(p);
-        while (!r.empty() && r.back() == '/')
-            r.pop_back();
-        if (q == r)
-            return true;
-        return q.size() > r.size() && q.compare(0, r.size(), r) == 0 && q[r.size()] == '/';
+        const std::string r = norm_key(root), q = norm_key(p);
+        return q == r || (q.size() > r.size() && q[r.size()] == '/' && q.starts_with(r));
     }
 
-    // Path of p relative to base (generic, '/'), empty for base itself.
+    // p relative to base (generic '/'), empty for base itself.
     inline std::string rel_display(const fs::path &base, const fs::path &p)
     {
         std::error_code ec;
-        fs::path r = fs::relative(p, base, ec);
-        if (ec || r.empty())
-            return {};
-        std::string s = r.generic_string();
-        return s == "." ? std::string() : s;
+        const fs::path r = fs::relative(p, base, ec);
+        const std::string s = ec || r.empty() ? std::string{} : r.generic_string();
+        return s == "." ? std::string{} : s;
     }
 
-    // Resolve the command's working directory: args.cwd, else the cwd of the
-    // workspace selected by the caller (dispatch passes it in).
-    inline bool resolve_base(const json &args, const std::string &default_cwd,
-                             fs::path &out, std::string &err)
+    // The command's working directory: args.cwd, else the cwd of the workspace
+    // the caller selected (dispatch passes it in).
+    inline bool resolve_base(const json &args, const std::string &default_cwd, fs::path &out, std::string &err)
     {
-        std::string s = trim_copy(jstr(args, "cwd"));
+        std::string s = cell::text::trim(jstr(args, "cwd"));
         if (s.empty())
-            s = trim_copy(default_cwd);
+            s = cell::text::trim(default_cwd);
         if (s.empty())
         {
             err = "no workspace open - pass cwd";
             return false;
         }
         std::error_code ec;
-        fs::path p = fs::path(s);
+        fs::path p = s;
         if (p.is_relative())
-        {
-            if (!default_cwd.empty())
-                p = fs::path(default_cwd) / p;
-            else
-                p = fs::absolute(p, ec);
-        }
+            p = default_cwd.empty() ? fs::absolute(p, ec) : fs::path(default_cwd) / p;
         if (!fs::is_directory(p, ec))
         {
             err = "not a directory: " + s;
             return false;
         }
-        fs::path canon = fs::weakly_canonical(p, ec);
+        const fs::path canon = fs::weakly_canonical(p, ec);
         out = ec ? p.lexically_normal() : canon;
         return true;
     }
 
-    // Resolve a client path inside base. Absolute paths are accepted only when
-    // they stay inside base; ".." escapes are rejected after canonicalisation
-    // (which also defeats symlinks/junctions pointing out).
-    inline bool resolve_inside(const fs::path &base, const std::string &rel,
-                               bool must_exist, fs::path &out, std::string &err)
+    // A client path inside base. Absolute paths are accepted only while they
+    // stay inside base; ".." escapes are rejected after canonicalisation, which
+    // also defeats symlinks/junctions pointing out.
+    inline bool resolve_inside(const fs::path &base, const std::string &rel, bool must_exist, fs::path &out, std::string &err)
     {
-        std::string s = trim_copy(rel);
+        const std::string s = cell::text::trim(rel);
         if (s.empty())
         {
             out = base;
             return true;
         }
-        fs::path p = fs::path(s);
+        fs::path p = s;
         if (p.is_relative())
             p = base / p;
         std::error_code ec;
-        fs::path canon = fs::weakly_canonical(p, ec);
+        const fs::path canon = fs::weakly_canonical(p, ec);
         if (ec)
         {
             err = "invalid path: " + s;
@@ -397,15 +193,14 @@ namespace app::tools
     inline long long file_mtime_epoch(const fs::path &p)
     {
         std::error_code ec;
-        auto ft = fs::last_write_time(p, ec);
+        const auto ft = fs::last_write_time(p, ec);
         if (ec)
             return 0;
-        auto now_ft = fs::file_time_type::clock::now();
-        long long age = (long long)std::chrono::duration_cast<std::chrono::seconds>(now_ft - ft).count();
-        long long now = (long long)std::chrono::duration_cast<std::chrono::seconds>(
-                            std::chrono::system_clock::now().time_since_epoch())
-                            .count();
-        return now - age;
+        const auto age = std::chrono::duration_cast<std::chrono::seconds>(fs::file_time_type::clock::now() - ft);
+        return (long long)std::chrono::duration_cast<std::chrono::seconds>(
+                   std::chrono::system_clock::now().time_since_epoch())
+                   .count() -
+               (long long)age.count();
     }
 
     // =====================================================================
@@ -467,7 +262,7 @@ namespace app::tools
 
     inline std::string git_error_text(const proc &r)
     {
-        std::string s = trim_copy(r.err.empty() ? r.out : r.err);
+        std::string s = cell::text::trim(r.err.empty() ? r.out : r.err);
         if (s.empty())
             s = "git failed (exit " + std::to_string(r.code) + ")";
         cap_text(s, 2000);
@@ -493,18 +288,32 @@ namespace app::tools
             ri.error = "git is not available (failed to start)";
             return ri;
         }
-        std::string top = trim_copy(r.out);
+        const std::string top = cell::text::trim(r.out);
         if (r.code != 0 || top.empty())
         {
             ri.error = r.code != 0 ? git_error_text(r) : "not a git repository";
             return ri;
         }
         std::error_code ec;
-        fs::path p = fs::path(top);
-        fs::path canon = fs::weakly_canonical(p, ec);
+        const fs::path p = top;
+        const fs::path canon = fs::weakly_canonical(p, ec);
         ri.top = ec ? p.lexically_normal() : canon;
         ri.ok = true;
         return ri;
+    }
+
+    // Every git.* command opens the same way: resolve the directory, find the
+    // worktree root. Returns the repo, or the ready-to-send error response.
+    inline std::expected<repo_info, json> repo_at(const json &args, const std::string &default_cwd)
+    {
+        fs::path base;
+        std::string err;
+        if (!resolve_base(args, default_cwd, base, err))
+            return std::unexpected(fail(err));
+        repo_info repo = find_repo(base);
+        if (!repo.ok)
+            return std::unexpected(fail(repo.error));
+        return repo;
     }
 
     struct worktree_entry
@@ -533,31 +342,31 @@ namespace app::tools
             cur = worktree_entry{};
             seen = false;
         };
-        for (auto &line : split_lines(r.out))
+        for (std::string_view line : cell::text::lines(r.out))
         {
             if (line.empty())
             {
                 flush();
                 continue;
             }
-            if (starts_with(line, "worktree "))
+            if (line.starts_with("worktree "))
             {
                 cur.path = line.substr(9);
                 seen = true;
             }
-            else if (starts_with(line, "HEAD "))
+            else if (line.starts_with("HEAD "))
                 cur.head = line.substr(5);
-            else if (starts_with(line, "branch "))
+            else if (line.starts_with("branch "))
             {
                 cur.branch = line.substr(7);
-                if (starts_with(cur.branch, "refs/heads/"))
+                if (cur.branch.starts_with("refs/heads/"))
                     cur.branch = cur.branch.substr(11);
             }
             else if (line == "detached")
                 cur.detached = true;
-            else if (line == "locked" || starts_with(line, "locked "))
+            else if (line == "locked" || line.starts_with("locked "))
                 cur.locked = true;
-            else if (line == "prunable" || starts_with(line, "prunable "))
+            else if (line == "prunable" || line.starts_with("prunable "))
                 cur.prunable = true;
         }
         flush();
@@ -594,7 +403,7 @@ namespace app::tools
     inline fs::path git_common_dir(const fs::path &top)
     {
         proc r = run_git(top, "rev-parse --git-common-dir", 20.0);
-        std::string s = r.launched && r.code == 0 ? trim_copy(r.out) : std::string();
+        std::string s = r.launched && r.code == 0 ? cell::text::trim(r.out) : std::string();
         if (s.empty())
             return top / ".git";
         fs::path p = fs::path(s);
@@ -620,8 +429,8 @@ namespace app::tools
             if (f)
                 body.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
         }
-        for (auto &line : split_lines(body))
-            if (trim_copy(line) == pattern)
+        for (std::string_view line : cell::text::lines(body))
+            if (cell::text::trim(line) == pattern)
                 return;
         std::ofstream f(file, std::ios::binary | std::ios::app);
         if (!f)
@@ -667,7 +476,7 @@ namespace app::tools
             err = "branch name must not contain '..'";
             return false;
         }
-        if (ends_with(b, ".lock"))
+        if (b.ends_with(".lock"))
         {
             err = "branch name must not end with '.lock'";
             return false;
@@ -700,53 +509,35 @@ namespace app::tools
 
     // git C-quotes unusual path bytes even with core.quotepath=false; undo the
     // common escapes so the frontend sees the real path.
-    inline std::string unquote_git_path(const std::string &s)
+    inline std::string unquote_git_path(std::string_view s)
     {
         if (s.size() < 2 || s.front() != '"' || s.back() != '"')
-            return s;
+            return std::string{s};
         std::string out;
         out.reserve(s.size());
-        size_t end = s.size() - 1;
+        const size_t end = s.size() - 1;
         for (size_t i = 1; i < end; ++i)
         {
-            char c = s[i];
+            const char c = s[i];
             if (c != '\\' || i + 1 >= end)
             {
                 out.push_back(c);
                 continue;
             }
-            char e = s[++i];
+            const char e = s[++i];
             switch (e)
             {
-            case 'n':
-                out.push_back('\n');
-                break;
-            case 't':
-                out.push_back('\t');
-                break;
-            case 'r':
-                out.push_back('\r');
-                break;
-            case 'a':
-                out.push_back('\a');
-                break;
-            case 'b':
-                out.push_back('\b');
-                break;
-            case 'f':
-                out.push_back('\f');
-                break;
-            case 'v':
-                out.push_back('\v');
-                break;
-            case '\\':
-                out.push_back('\\');
-                break;
-            case '"':
-                out.push_back('"');
-                break;
+            case 'n': out.push_back('\n'); break;
+            case 't': out.push_back('\t'); break;
+            case 'r': out.push_back('\r'); break;
+            case 'a': out.push_back('\a'); break;
+            case 'b': out.push_back('\b'); break;
+            case 'f': out.push_back('\f'); break;
+            case 'v': out.push_back('\v'); break;
+            case '\\': out.push_back('\\'); break;
+            case '"': out.push_back('"'); break;
             default:
-                if (e >= '0' && e <= '7')
+                if (e >= '0' && e <= '7') // up to three octal digits: \303\251
                 {
                     int v = e - '0';
                     for (int k = 0; k < 2 && i + 1 < end && s[i + 1] >= '0' && s[i + 1] <= '7'; ++k)
@@ -760,97 +551,84 @@ namespace app::tools
         return out;
     }
 
-    // Split the first n space-separated fields off a porcelain-v2 line; the
-    // remainder (which may contain spaces) is the path.
-    inline bool split_fields(const std::string &line, size_t n,
-                             std::vector<std::string> &fields, std::string &rest)
+    // A porcelain-v2 record is "1 XY … path" / "2 XY … path<TAB>origPath" /
+    // "u XY … path": field 1 holds the two status letters and the last field is
+    // the path, which may contain spaces. Returns the letters, fills `path`.
+    inline std::optional<std::pair<char, char>> status_xy(std::string_view line, size_t fields, std::string &path)
     {
-        fields.clear();
-        rest.clear();
         size_t pos = 0;
-        for (size_t i = 0; i < n; ++i)
+        char x = ' ', y = ' ';
+        for (size_t i = 0; i < fields; ++i)
         {
-            size_t sp = line.find(' ', pos);
-            if (sp == std::string::npos)
-                return false;
-            fields.push_back(line.substr(pos, sp - pos));
+            const size_t sp = line.find(' ', pos);
+            if (sp == std::string_view::npos)
+                return std::nullopt;
+            if (i == 1 && sp - pos >= 2)
+            {
+                x = line[pos];
+                y = line[pos + 1];
+            }
             pos = sp + 1;
         }
-        rest = line.substr(pos);
-        return true;
+        path = unquote_git_path(line.substr(pos));
+        return std::pair{x, y};
     }
 
     inline status_parse parse_status_v2(const std::string &out)
     {
         status_parse st;
-        std::vector<std::string> f;
-        std::string rest;
-        for (const auto &line : split_lines(out))
+        std::string path;
+        for (const std::string_view line : cell::text::lines(out))
         {
             if (line.empty())
                 continue;
             if (line[0] == '#')
             {
-                std::string body = line.size() > 2 ? line.substr(2) : std::string();
-                if (starts_with(body, "branch.oid "))
-                    st.oid = trim_copy(body.substr(11));
-                else if (starts_with(body, "branch.head "))
-                    st.branch = trim_copy(body.substr(12));
-                else if (starts_with(body, "branch.upstream "))
-                    st.upstream = trim_copy(body.substr(16));
-                else if (starts_with(body, "branch.ab "))
+                const std::string_view body = line.size() > 2 ? line.substr(2) : std::string_view{};
+                if (body.starts_with("branch.oid "))
+                    st.oid = cell::text::trim(body.substr(11));
+                else if (body.starts_with("branch.head "))
+                    st.branch = cell::text::trim(body.substr(12));
+                else if (body.starts_with("branch.upstream "))
+                    st.upstream = cell::text::trim(body.substr(16));
+                else if (body.starts_with("branch.ab "))
                 {
-                    std::string ab = trim_copy(body.substr(10));
-                    size_t sp = ab.find(' ');
-                    if (sp != std::string::npos)
+                    // "+<ahead> -<behind>"
+                    const std::string ab = cell::text::trim(body.substr(10));
+                    if (const size_t sp = ab.find(' '); sp != std::string::npos)
                     {
-                        long long a = to_ll(trim_copy(ab.substr(0, sp)));
-                        long long b = to_ll(trim_copy(ab.substr(sp + 1)));
-                        st.ahead = a < 0 ? -a : a; // "+<ahead>"
-                        st.behind = b < 0 ? -b : b; // "-<behind>"
+                        st.ahead = std::abs(to_ll(ab.substr(0, sp)));
+                        st.behind = std::abs(to_ll(ab.substr(sp + 1)));
                     }
                 }
                 continue;
             }
-            char type = line[0];
-            if (type == '?')
+            switch (line[0])
             {
+            case '?': // untracked
                 if (line.size() > 2)
                 {
-                    status_entry e;
-                    e.path = unquote_git_path(line.substr(2));
-                    e.x = '?';
-                    e.y = '?';
-                    st.files.push_back(std::move(e));
+                    st.files.push_back({unquote_git_path(line.substr(2)), '?', '?'});
                 }
-                continue;
-            }
-            if (type == '!')
-                continue;
-            if (type == '1' && split_fields(line, 8, f, rest) && f.size() == 8)
-            {
-                status_entry e;
-                e.x = f[1][0];
-                e.y = f[1][1];
-                e.path = unquote_git_path(rest);
-                st.files.push_back(std::move(e));
-            }
-            else if (type == '2' && split_fields(line, 9, f, rest) && f.size() == 9)
-            {
-                status_entry e;
-                e.x = f[1][0];
-                e.y = f[1][1];
-                size_t tab = rest.find('\t');
-                e.path = unquote_git_path(tab == std::string::npos ? rest : rest.substr(0, tab));
-                st.files.push_back(std::move(e));
-            }
-            else if (type == 'u' && split_fields(line, 10, f, rest) && f.size() == 10)
-            {
-                status_entry e;
-                e.x = f[1][0];
-                e.y = f[1][1];
-                e.path = unquote_git_path(rest);
-                st.files.push_back(std::move(e));
+                break;
+            case '1': // changed
+                if (auto xy = status_xy(line, 8, path))
+                    st.files.push_back({std::move(path), xy->first, xy->second});
+                break;
+            case '2': // renamed/copied: the path field is "new<TAB>orig"
+                if (auto xy = status_xy(line, 9, path))
+                {
+                    if (const size_t tab = path.find('\t'); tab != std::string::npos)
+                        path.resize(tab);
+                    st.files.push_back({std::move(path), xy->first, xy->second});
+                }
+                break;
+            case 'u': // unmerged
+                if (auto xy = status_xy(line, 10, path))
+                    st.files.push_back({std::move(path), xy->first, xy->second});
+                break;
+            default: // '!': ignored, '#' handled above
+                break;
             }
         }
         st.detached = st.branch == "(detached)";
@@ -862,15 +640,9 @@ namespace app::tools
     {
         if (x == '?')
             return "U";
-        auto conflict = [](char a, char b)
-        {
-            char buf[3] = {a, b, 0};
-            for (const char *p : {"DD", "AU", "UD", "UA", "DU", "AA", "UU"})
-                if (std::strcmp(buf, p) == 0)
-                    return true;
-            return false;
-        };
-        if (conflict(x, y))
+        static constexpr std::string_view conflicts[] = {"DD", "AU", "UD", "UA", "DU", "AA", "UU"};
+        const char pair[3] = {x, y, 0};
+        if (std::ranges::find(conflicts, std::string_view{pair}) != std::end(conflicts))
             return "U";
         if (y != '.' && y != ' ')
             return std::string(1, y);
@@ -887,28 +659,24 @@ namespace app::tools
 
     inline void parse_numstat(const std::string &out, std::map<std::string, add_del> &nums)
     {
-        for (const auto &line : split_lines(out))
+        for (const std::string_view line : cell::text::lines(out))
         {
-            if (line.empty())
+            const size_t t1 = line.find('\t');
+            if (t1 == std::string_view::npos)
                 continue;
-            size_t t1 = line.find('\t');
-            if (t1 == std::string::npos)
+            const size_t t2 = line.find('\t', t1 + 1);
+            if (t2 == std::string_view::npos)
                 continue;
-            size_t t2 = line.find('\t', t1 + 1);
-            if (t2 == std::string::npos)
-                continue;
-            std::string a = line.substr(0, t1);
-            std::string d = line.substr(t1 + 1, t2 - t1 - 1);
-            std::string path = unquote_git_path(line.substr(t2 + 1));
+            const std::string_view a = line.substr(0, t1), d = line.substr(t1 + 1, t2 - t1 - 1);
             add_del ad;
             if (a == "-" || d == "-")
-                ad.binary = true;
+                ad.binary = true; // binary: git reports '-'
             else
             {
-                ad.add = to_ll(trim_copy(a));
-                ad.del = to_ll(trim_copy(d));
+                ad.add = to_ll(a);
+                ad.del = to_ll(d);
             }
-            nums[path] = ad;
+            nums[unquote_git_path(line.substr(t2 + 1))] = ad;
         }
     }
 
@@ -979,17 +747,14 @@ namespace app::tools
     // =====================================================================
     inline json do_git_status(const json &args, const std::string &default_cwd)
     {
-        fs::path base;
-        std::string err;
-        if (!resolve_base(args, default_cwd, base, err))
-            return jerr(err);
-        repo_info repo = find_repo(base);
-        if (!repo.ok)
-            return jerr(repo.error);
+        const auto opened = repo_at(args, default_cwd);
+        if (!opened)
+            return opened.error();
+        const repo_info &repo = *opened;
 
         proc sr = run_git(repo.top, "status --porcelain=v2 --branch --untracked-files=all", 60.0);
         if (!sr.launched || sr.code != 0)
-            return jerr(git_error_text(sr));
+            return fail(git_error_text(sr));
         status_parse st = parse_status_v2(sr.out);
 
         std::map<std::string, add_del> nums;
@@ -1044,7 +809,7 @@ namespace app::tools
             repo_name = holder;
         bool is_main = wts.empty() ? true : wts[0].current;
 
-        json out = jok();
+        json out = ok();
         out["repo"] = repo_name;
         out["root"] = holder;
         out["branch"] = branch;
@@ -1060,17 +825,14 @@ namespace app::tools
 
     inline json do_git_worktrees(const json &args, const std::string &default_cwd)
     {
-        fs::path base;
-        std::string err;
-        if (!resolve_base(args, default_cwd, base, err))
-            return jerr(err);
-        repo_info repo = find_repo(base);
-        if (!repo.ok)
-            return jerr(repo.error);
+        const auto opened = repo_at(args, default_cwd);
+        if (!opened)
+            return opened.error();
+        const repo_info &repo = *opened;
         std::string werr;
         std::vector<worktree_entry> wts = list_worktrees(repo.top, &werr);
         if (wts.empty())
-            return jerr(werr.empty() ? "no worktrees" : werr);
+            return fail(werr.empty() ? "no worktrees" : werr);
         std::string root = wts[0].path;
         std::string current;
         for (const auto &w : wts)
@@ -1081,7 +843,7 @@ namespace app::tools
         std::string repo_name = fs::path(root).filename().string();
         if (repo_name.empty())
             repo_name = root;
-        json out = jok();
+        json out = ok();
         out["root"] = root;
         out["repo_name"] = repo_name;
         out["current"] = current;
@@ -1091,27 +853,24 @@ namespace app::tools
 
     inline json do_git_worktree_add(const json &args, const std::string &default_cwd)
     {
-        fs::path base;
-        std::string err;
-        if (!resolve_base(args, default_cwd, base, err))
-            return jerr(err);
-        repo_info repo = find_repo(base);
-        if (!repo.ok)
-            return jerr(repo.error);
+        const auto opened = repo_at(args, default_cwd);
+        if (!opened)
+            return opened.error();
+        const repo_info &repo = *opened;
 
-        std::string branch = trim_copy(jstr(args, "branch"));
+        std::string branch = cell::text::trim(jstr(args, "branch"));
         std::string berr;
         if (!branch_name_ok(branch, berr))
-            return jerr(berr);
-        std::string basearg = trim_copy(jstr(args, "base"));
+            return fail(berr);
+        std::string basearg = cell::text::trim(jstr(args, "base"));
         if (!basearg.empty() && !branch_name_ok(basearg, berr))
-            return jerr("invalid base branch: " + berr);
+            return fail("invalid base branch: " + berr);
 
         std::string werr;
         std::vector<worktree_entry> wts = list_worktrees(repo.top, &werr);
         fs::path main_root = wts.empty() ? repo.top : fs::path(wts[0].path);
 
-        std::string patharg = trim_copy(jstr(args, "path"));
+        std::string patharg = cell::text::trim(jstr(args, "path"));
         fs::path target;
         if (patharg.empty())
         {
@@ -1129,18 +888,18 @@ namespace app::tools
         }
         std::string target_key = norm_key(target);
         std::string hidden_git = norm_key(main_root) + "/.git";
-        if (target_key == hidden_git || starts_with(target_key, (hidden_git + "/").c_str()))
-            return jerr("path must not be inside .git");
+        if (target_key == hidden_git || target_key.starts_with((hidden_git + "/").c_str()))
+            return fail("path must not be inside .git");
         std::error_code ec;
         if (fs::exists(target, ec))
-            return jerr("path already exists: " + native_str(target));
+            return fail("path already exists: " + native_str(target));
 
         bool branch_exists = ref_exists(repo.top, branch);
         bool create = jbool(args, "create_branch", !branch_exists);
         if (!branch_exists && !create)
-            return jerr("branch does not exist: " + branch + " (enable create_branch)");
+            return fail("branch does not exist: " + branch + " (enable create_branch)");
         if (branch_exists && create)
-            return jerr("branch already exists: " + branch);
+            return fail("branch already exists: " + branch);
 
         std::string cmdline = "worktree add ";
         if (create)
@@ -1150,13 +909,13 @@ namespace app::tools
             cmdline += quote_arg(native_str(target)) + " " + quote_arg(branch);
         proc r = run_git(repo.top, cmdline, 120.0);
         if (!r.launched)
-            return jerr("failed to start git");
+            return fail("failed to start git");
         if (r.code != 0)
-            return jerr(git_error_text(r));
+            return fail(git_error_text(r));
 
         // Keep ".worktrees/" out of git status (contract 6).
         append_repo_exclude(main_root, ".worktrees/");
-        json out = jok();
+        json out = ok();
         out["path"] = native_str(target);
         out["branch"] = branch;
         return out;
@@ -1164,16 +923,13 @@ namespace app::tools
 
     inline json do_git_worktree_remove(const json &args, const std::string &default_cwd)
     {
-        fs::path base;
-        std::string err;
-        if (!resolve_base(args, default_cwd, base, err))
-            return jerr(err);
-        repo_info repo = find_repo(base);
-        if (!repo.ok)
-            return jerr(repo.error);
-        std::string patharg = trim_copy(jstr(args, "path"));
+        const auto opened = repo_at(args, default_cwd);
+        if (!opened)
+            return opened.error();
+        const repo_info &repo = *opened;
+        std::string patharg = cell::text::trim(jstr(args, "path"));
         if (patharg.empty())
-            return jerr("path is required");
+            return fail("path is required");
 
         std::string werr;
         std::vector<worktree_entry> wts = list_worktrees(repo.top, &werr);
@@ -1190,10 +946,10 @@ namespace app::tools
                 continue;
             found = true;
             if (w.is_main)
-                return jerr("refusing to remove the main worktree");
+                return fail("refusing to remove the main worktree");
         }
         if (!found)
-            return jerr("not a registered worktree: " + native_str(target));
+            return fail("not a registered worktree: " + native_str(target));
 
         std::string cmdline = "worktree remove ";
         if (jbool(args, "force", false))
@@ -1201,35 +957,32 @@ namespace app::tools
         cmdline += quote_arg(native_str(target));
         proc r = run_git(main_root, cmdline, 120.0);
         if (!r.launched)
-            return jerr("failed to start git");
+            return fail("failed to start git");
         if (r.code != 0)
-            return jerr(git_error_text(r));
-        return jok();
+            return fail(git_error_text(r));
+        return ok();
     }
 
     inline json do_git_branches(const json &args, const std::string &default_cwd)
     {
-        fs::path base;
-        std::string err;
-        if (!resolve_base(args, default_cwd, base, err))
-            return jerr(err);
-        repo_info repo = find_repo(base);
-        if (!repo.ok)
-            return jerr(repo.error);
+        const auto opened = repo_at(args, default_cwd);
+        if (!opened)
+            return opened.error();
+        const repo_info &repo = *opened;
 
         proc r = run_git(repo.top, "branch --list --no-color", 45.0);
         if (!r.launched || r.code != 0)
-            return jerr(git_error_text(r));
+            return fail(git_error_text(r));
         json local = json::array();
         std::string current;
-        for (const auto &line : split_lines(r.out))
+        for (const std::string_view line : cell::text::lines(r.out))
         {
             if (line.size() < 2)
                 continue;
-            std::string name = line.substr(2);
+            std::string name{line.substr(2)};
             if (name.empty())
                 continue;
-            char mark = line[0];
+            const char mark = line[0];
             if (mark == '*')
             {
                 if (name[0] == '(')
@@ -1244,7 +997,7 @@ namespace app::tools
         proc cr = run_git(repo.top, "branch --show-current", 30.0);
         if (cr.launched && cr.code == 0)
         {
-            std::string c = trim_copy(cr.out);
+            std::string c = cell::text::trim(cr.out);
             if (!c.empty())
                 current = c;
         }
@@ -1252,9 +1005,9 @@ namespace app::tools
         {
             proc sr = run_git(repo.top, "symbolic-ref --short HEAD", 30.0);
             if (sr.launched && sr.code == 0)
-                current = trim_copy(sr.out);
+                current = cell::text::trim(sr.out);
         }
-        json out = jok();
+        json out = ok();
         out["current"] = current;
         out["local"] = std::move(local);
         return out;
@@ -1262,13 +1015,10 @@ namespace app::tools
 
     inline json do_git_log(const json &args, const std::string &default_cwd)
     {
-        fs::path base;
-        std::string err;
-        if (!resolve_base(args, default_cwd, base, err))
-            return jerr(err);
-        repo_info repo = find_repo(base);
-        if (!repo.ok)
-            return jerr(repo.error);
+        const auto opened = repo_at(args, default_cwd);
+        if (!opened)
+            return opened.error();
+        const repo_info &repo = *opened;
         long long limit = jint(args, "limit", 5);
         if (limit < 1)
             limit = 1;
@@ -1277,18 +1027,18 @@ namespace app::tools
 
         proc r = run_git(repo.top, "log -n " + std::to_string(limit) + " --pretty=raw --no-color", 60.0);
         if (!r.launched)
-            return jerr("failed to start git");
+            return fail("failed to start git");
         if (r.code != 0)
         {
             std::string e = git_error_text(r);
             if (e.find("does not have any commits") != std::string::npos ||
                 e.find("unknown revision") != std::string::npos)
             {
-                json out = jok();
+                json out = ok();
                 out["commits"] = json::array();
                 return out;
             }
-            return jerr(e);
+            return fail(e);
         }
 
         struct commit
@@ -1299,9 +1049,9 @@ namespace app::tools
         std::vector<commit> commits;
         commit cur;
         bool in_msg = false;
-        for (const auto &line : split_lines(r.out))
+        for (const std::string_view line : cell::text::lines(r.out))
         {
-            if (starts_with(line, "commit "))
+            if (line.starts_with("commit "))
             {
                 if (!cur.hash.empty())
                     commits.push_back(cur);
@@ -1314,22 +1064,22 @@ namespace app::tools
                 continue;
             if (!in_msg)
             {
-                if (starts_with(line, "author "))
+                if (line.starts_with("author "))
                 {
-                    std::string a = line.substr(7);
-                    size_t sp2 = a.rfind(' ');
-                    if (sp2 != std::string::npos && sp2 > 0)
+                    // "Name <mail> 1712345678 +0000"
+                    const std::string_view a = line.substr(7);
+                    const size_t sp2 = a.rfind(' ');
+                    if (sp2 != std::string_view::npos && sp2 > 0)
                     {
-                        std::string rest = a.substr(0, sp2);
-                        size_t sp1 = rest.rfind(' ');
-                        if (sp1 != std::string::npos)
+                        const std::string_view rest = a.substr(0, sp2);
+                        const size_t sp1 = rest.rfind(' ');
+                        if (sp1 != std::string_view::npos)
                         {
                             cur.epoch = to_ll(rest.substr(sp1 + 1));
-                            std::string name = rest.substr(0, sp1);
-                            size_t lt = name.rfind(" <");
-                            if (lt != std::string::npos)
+                            std::string name{rest.substr(0, sp1)};
+                            if (const size_t lt = name.rfind(" <"); lt != std::string::npos)
                                 name.resize(lt);
-                            cur.author = name;
+                            cur.author = std::move(name);
                         }
                     }
                 }
@@ -1339,11 +1089,10 @@ namespace app::tools
             }
             if (cur.subject.empty())
             {
-                std::string subj = line;
-                if (subj.size() >= 4 && subj.compare(0, 4, "    ") == 0)
-                    subj = subj.substr(4);
-                else
-                    subj = trim_copy(subj);
+                std::string_view subj = line;
+                if (subj.starts_with("    ")) // the message body is indented
+                    subj.remove_prefix(4);
+                subj = cell::text::trim_view(subj);
                 if (!subj.empty())
                     cur.subject = subj;
             }
@@ -1353,45 +1102,38 @@ namespace app::tools
 
         json arr = json::array();
         for (const auto &c : commits)
-        {
-            json e;
-            e["hash"] = c.hash;
-            e["short"] = c.hash.size() > 10 ? c.hash.substr(0, 10) : c.hash;
-            e["subject"] = c.subject;
-            e["author"] = c.author;
-            e["time"] = iso_utc(c.epoch);
-            e["rel"] = rel_time(c.epoch);
-            arr.push_back(std::move(e));
-        }
-        json out = jok();
+            arr.push_back({{"hash", c.hash},
+                           {"short", c.hash.substr(0, std::min<size_t>(10, c.hash.size()))},
+                           {"subject", c.subject},
+                           {"author", c.author},
+                           {"time", iso_utc(c.epoch)},
+                           {"rel", rel_time(c.epoch)}});
+        json out = ok();
         out["commits"] = std::move(arr);
         return out;
     }
 
     inline json do_git_numstat(const json &args, const std::string &default_cwd)
     {
-        fs::path base;
-        std::string err;
-        if (!resolve_base(args, default_cwd, base, err))
-            return jerr(err);
-        repo_info repo = find_repo(base);
-        if (!repo.ok)
-            return jerr(repo.error);
+        const auto opened = repo_at(args, default_cwd);
+        if (!opened)
+            return opened.error();
+        const repo_info &repo = *opened;
 
         std::map<std::string, add_del> nums;
         collect_numstat(repo.top, nums);
         proc ur = run_git(repo.top, "ls-files --others --exclude-standard", 45.0);
         if (ur.launched && ur.code == 0)
         {
-            for (const auto &path : split_lines(ur.out))
+            for (std::string_view path : cell::text::lines(ur.out))
             {
-                if (path.empty() || nums.count(path))
+                if (path.empty())
                     continue;
-                line_count lc = count_file_lines(repo.top / fs::path(path));
-                add_del ad;
-                ad.add = lc.lines;
-                ad.binary = lc.binary;
-                nums[path] = ad;
+                const std::string key{path};
+                if (nums.contains(key))
+                    continue;
+                const line_count lc = count_file_lines(repo.top / fs::path(key));
+                nums[key] = add_del{lc.lines, 0, lc.binary};
             }
         }
         json files = json::array();
@@ -1404,35 +1146,32 @@ namespace app::tools
             fe["binary"] = ad.binary;
             files.push_back(std::move(fe));
         }
-        json out = jok();
+        json out = ok();
         out["files"] = std::move(files);
         return out;
     }
 
     inline json do_git_diff(const json &args, const std::string &default_cwd)
     {
-        fs::path base;
-        std::string err;
-        if (!resolve_base(args, default_cwd, base, err))
-            return jerr(err);
-        repo_info repo = find_repo(base);
-        if (!repo.ok)
-            return jerr(repo.error);
+        const auto opened = repo_at(args, default_cwd);
+        if (!opened)
+            return opened.error();
+        const repo_info &repo = *opened;
 
         bool staged = jbool(args, "staged", false);
         std::string relpath;
-        std::string patharg = trim_copy(jstr(args, "path"));
+        std::string patharg = cell::text::trim(jstr(args, "path"));
         if (!patharg.empty())
         {
             fs::path p(patharg);
             fs::path abs = p.is_absolute() ? p : repo.top / p;
             abs = abs.lexically_normal();
             if (!path_under(repo.top, abs) || norm_key(abs) == norm_key(repo.top))
-                return jerr("path escapes the repository: " + patharg);
+                return fail("path escapes the repository: " + patharg);
             std::error_code ec;
             fs::path rel = fs::relative(abs, repo.top, ec);
             if (ec || rel.empty())
-                return jerr("invalid path: " + patharg);
+                return fail("invalid path: " + patharg);
             relpath = rel.generic_string();
         }
 
@@ -1441,9 +1180,9 @@ namespace app::tools
             cmdline += " -- " + quote_arg(relpath);
         proc r = run_git(repo.top, cmdline, 60.0);
         if (!r.launched)
-            return jerr("failed to start git");
+            return fail("failed to start git");
         if (r.code != 0)
-            return jerr(git_error_text(r));
+            return fail(git_error_text(r));
 
         std::string diff = r.out;
         bool truncated = cap_text(diff, 256 * 1024);
@@ -1492,7 +1231,7 @@ namespace app::tools
             }
         }
 
-        json out = jok();
+        json out = ok();
         out["diff"] = std::move(diff);
         out["truncated"] = truncated;
         out["binary"] = binary;
@@ -1504,22 +1243,21 @@ namespace app::tools
         fs::path base;
         std::string err;
         if (!resolve_base(args, default_cwd, base, err))
-            return jerr(err);
-        repo_info repo = find_repo(base);
-        if (repo.ok)
+            return fail(err);
+        json out = ok();
+        // already a repository: report its main worktree, do not re-init
+        if (repo_info repo = find_repo(base); repo.ok)
         {
             std::string werr;
-            std::vector<worktree_entry> wts = list_worktrees(repo.top, &werr);
-            json out = jok();
+            const std::vector<worktree_entry> wts = list_worktrees(repo.top, &werr);
             out["root"] = wts.empty() ? native_str(repo.top) : wts[0].path;
             return out;
         }
-        proc r = run_git(base, "init", 60.0);
+        const proc r = run_git(base, "init", 60.0);
         if (!r.launched)
-            return jerr("failed to start git");
+            return fail("failed to start git");
         if (r.code != 0)
-            return jerr(git_error_text(r));
-        json out = jok();
+            return fail(git_error_text(r));
         out["root"] = native_str(base);
         return out;
     }
@@ -1532,29 +1270,26 @@ namespace app::tools
         fs::path base;
         std::string err;
         if (!resolve_base(args, default_cwd, base, err))
-            return jerr(err);
+            return fail(err);
         fs::path dir;
         if (!resolve_inside(base, jstr(args, "path"), true, dir, err))
-            return jerr(err);
+            return fail(err);
         std::error_code ec;
         if (!fs::is_directory(dir, ec))
-            return jerr("not a directory: " + rel_display(base, dir));
+            return fail("not a directory: " + rel_display(base, dir));
 
         std::vector<fs::directory_entry> list;
-        fs::directory_iterator it(dir, fs::directory_options::skip_permission_denied, ec);
-        fs::directory_iterator end;
-        for (; !ec && it != end; it.increment(ec))
+        for (fs::directory_iterator it(dir, fs::directory_options::skip_permission_denied, ec), end; !ec && it != end; it.increment(ec))
             list.push_back(*it);
-        std::error_code e1, e2;
-        std::sort(list.begin(), list.end(),
-                  [&](const fs::directory_entry &a, const fs::directory_entry &b)
-                  {
-                      bool ad = a.is_directory(e1), bd = b.is_directory(e2);
-                      if (ad != bd)
-                          return ad;
-                      return lower_ascii(a.path().filename().string()) <
-                             lower_ascii(b.path().filename().string());
-                  });
+        std::error_code dir_ec;
+        std::ranges::sort(list, [&dir_ec](const fs::directory_entry &a, const fs::directory_entry &b)
+                          {
+                              const bool ad = a.is_directory(dir_ec), bd = b.is_directory(dir_ec);
+                              if (ad != bd)
+                                  return ad; // directories first
+                              return js::lower_ascii(a.path().filename().string()) <
+                                     js::lower_ascii(b.path().filename().string());
+                          });
 
         json entries = json::array();
         bool truncated = false;
@@ -1565,24 +1300,19 @@ namespace app::tools
                 truncated = true;
                 break;
             }
-            std::error_code e;
-            bool isdir = de.is_directory(e);
+            std::error_code entry_ec;
+            const bool isdir = de.is_directory(entry_ec);
             long long size = 0;
             if (!isdir)
-            {
-                auto sz = de.file_size(e);
-                if (!e)
+                if (const auto sz = de.file_size(entry_ec); !entry_ec)
                     size = (long long)sz;
-            }
-            json eo;
-            eo["name"] = de.path().filename().string();
-            eo["path"] = rel_display(base, de.path());
-            eo["dir"] = isdir;
-            eo["size"] = size;
-            eo["mtime"] = file_mtime_epoch(de.path());
-            entries.push_back(std::move(eo));
+            entries.push_back({{"name", de.path().filename().string()},
+                               {"path", rel_display(base, de.path())},
+                               {"dir", isdir},
+                               {"size", size},
+                               {"mtime", file_mtime_epoch(de.path())}});
         }
-        json out = jok();
+        json out = ok();
         out["path"] = rel_display(base, dir);
         out["entries"] = std::move(entries);
         out["truncated"] = truncated;
@@ -1594,16 +1324,16 @@ namespace app::tools
         fs::path base;
         std::string err;
         if (!resolve_base(args, default_cwd, base, err))
-            return jerr(err);
-        std::string patharg = trim_copy(jstr(args, "path"));
+            return fail(err);
+        std::string patharg = cell::text::trim(jstr(args, "path"));
         if (patharg.empty())
-            return jerr("path is required");
+            return fail("path is required");
         fs::path file;
         if (!resolve_inside(base, patharg, true, file, err))
-            return jerr(err);
+            return fail(err);
         std::error_code ec;
         if (!fs::is_regular_file(file, ec))
-            return jerr("not a file: " + rel_display(base, file));
+            return fail("not a file: " + rel_display(base, file));
 
         constexpr std::uintmax_t kMaxBytes = 512 * 1024;
         std::uintmax_t size = fs::file_size(file, ec);
@@ -1611,7 +1341,7 @@ namespace app::tools
             size = 0;
         std::ifstream f(file, std::ios::binary);
         if (!f)
-            return jerr("cannot read: " + patharg);
+            return fail("cannot read: " + patharg);
         std::string data;
         data.resize((size_t)std::min<std::uintmax_t>(size, kMaxBytes));
         if (!data.empty())
@@ -1620,7 +1350,7 @@ namespace app::tools
         bool truncated = size > kMaxBytes;
         bool binary = data.find('\0') != std::string::npos;
 
-        json out = jok();
+        json out = ok();
         out["path"] = rel_display(base, file);
         out["size"] = (long long)size;
         out["binary"] = binary;
@@ -1631,13 +1361,15 @@ namespace app::tools
             out["lines"] = 0;
             return out;
         }
+        // The viewer renders 5000 lines; the byte cap above is the safety net
+        // for one very long line. Counting and truncating are one pass.
         constexpr size_t kMaxLines = 5000;
-        size_t seen = 0;
+        size_t lines = 0;
         for (size_t i = 0; i < data.size(); ++i)
         {
             if (data[i] != '\n')
                 continue;
-            if (++seen == kMaxLines)
+            if (++lines == kMaxLines)
             {
                 if (i + 1 < data.size())
                 {
@@ -1647,11 +1379,7 @@ namespace app::tools
                 break;
             }
         }
-        size_t lines = 0;
-        for (char c : data)
-            if (c == '\n')
-                ++lines;
-        if (!data.empty() && data.back() != '\n')
+        if (lines < kMaxLines && !data.empty() && data.back() != '\n')
             ++lines;
         out["text"] = std::move(data);
         out["truncated"] = truncated;
@@ -1662,66 +1390,50 @@ namespace app::tools
     inline void gather_files(const fs::path &base, std::vector<std::string> &out, size_t cap)
     {
         out.clear();
-        static std::mutex rg_mx;
-        static int rg_state = 0; // 0 = unknown, 1 = available, -1 = missing
-        bool have_rg = false;
+        // ripgrep honours .gitignore and is an order of magnitude faster than a
+        // directory walk; probed once per process, the walk is the fallback
+        static const bool have_rg = []
         {
-            std::lock_guard<std::mutex> lk(rg_mx);
-            if (rg_state == 0)
-            {
-                proc probe = run_shell("rg --version", base, 10.0);
-                rg_state = (probe.launched && probe.code == 0) ? 1 : -1;
-            }
-            have_rg = rg_state > 0;
-        }
+            const proc probe = run_shell("rg --version", fs::current_path(), 10.0);
+            return probe.launched && probe.code == 0;
+        }();
         if (have_rg)
         {
-            proc r = run_shell("rg --files --color never", base, 15.0);
+            const proc r = run_shell("rg --files --color never", base, 15.0);
             if (r.launched && (r.code == 0 || !r.out.empty()))
             {
-                size_t pos = 0;
-                while (pos < r.out.size() && out.size() < cap)
+                for (const std::string_view line : cell::text::lines(r.out))
                 {
-                    size_t nl = r.out.find('\n', pos);
-                    std::string line = trim_copy(std::string_view(r.out).substr(
-                        pos, nl == std::string::npos ? std::string::npos : nl - pos));
-                    pos = nl == std::string::npos ? r.out.size() : nl + 1;
+                    if (out.size() >= cap)
+                        break;
                     if (!line.empty())
-                        out.push_back(std::move(line));
+                        out.emplace_back(cell::text::trim(line));
                 }
                 if (!out.empty())
                     return;
             }
         }
-        static const char *skip_dirs[] = {
+        static constexpr std::string_view kSkipDirs[] = {
             ".git", "node_modules", "build", ".cell", ".worktrees", ".cache", "dist", "out",
             "target", "__pycache__", ".venv", "venv", ".idea", ".vscode", ".next", ".gradle"};
         std::error_code ec;
-        fs::recursive_directory_iterator it(base, fs::directory_options::skip_permission_denied, ec);
-        fs::recursive_directory_iterator end;
         size_t seen = 0;
-        while (!ec && it != end)
+        for (fs::recursive_directory_iterator it(base, fs::directory_options::skip_permission_denied, ec), end;
+             !ec && it != end; it.increment(ec))
         {
-            std::error_code e;
-            if (it->is_directory(e))
+            std::error_code entry_ec;
+            if (it->is_directory(entry_ec))
             {
-                std::string name = lower_ascii(it->path().filename().string());
-                for (const char *skip : skip_dirs)
-                {
-                    if (name == skip)
-                    {
-                        it.disable_recursion_pending();
-                        break;
-                    }
-                }
+                if (const std::string name = js::lower_ascii(it->path().filename().string());
+                    std::ranges::find(kSkipDirs, std::string_view{name}) != std::end(kSkipDirs))
+                    it.disable_recursion_pending();
             }
-            else if (it->is_regular_file(e))
+            else if (it->is_regular_file(entry_ec))
             {
                 if (++seen > cap)
                     break;
                 out.push_back(rel_display(base, it->path()));
             }
-            it.increment(ec);
         }
     }
 
@@ -1730,8 +1442,8 @@ namespace app::tools
         fs::path base;
         std::string err;
         if (!resolve_base(args, default_cwd, base, err))
-            return jerr(err);
-        std::string q = lower_ascii(trim_copy(jstr(args, "q")));
+            return fail(err);
+        std::string q = js::lower_ascii(cell::text::trim(jstr(args, "q")));
         long long limit = jint(args, "limit", 80);
         if (limit < 1)
             limit = 1;
@@ -1742,7 +1454,7 @@ namespace app::tools
         json arr = json::array();
         for (const auto &rel : files)
         {
-            if (!q.empty() && lower_ascii(rel).find(q) == std::string::npos)
+            if (!q.empty() && js::lower_ascii(rel).find(q) == std::string::npos)
                 continue;
             json fe;
             fe["name"] = fs::path(rel).filename().string();
@@ -1751,7 +1463,7 @@ namespace app::tools
             if ((long long)arr.size() >= limit)
                 break;
         }
-        json out = jok();
+        json out = ok();
         out["files"] = std::move(arr);
         return out;
     }
@@ -1764,10 +1476,10 @@ namespace app::tools
         fs::path base;
         std::string err;
         if (!resolve_base(args, default_cwd, base, err))
-            return jerr(err);
+            return fail(err);
         std::string cmd = jstr(args, "cmd");
-        if (trim_copy(cmd).empty())
-            return jerr("cmd is required");
+        if (cell::text::trim(cmd).empty())
+            return fail("cmd is required");
         double timeout_s = jnum(args, "timeout_s", 120.0);
         if (!(timeout_s >= 1.0))
             timeout_s = 1.0;
@@ -1782,11 +1494,11 @@ namespace app::tools
                                     std::chrono::steady_clock::now() - t0)
                                     .count();
         if (!launched)
-            return jerr("failed to start the process");
+            return fail("failed to start the process");
         constexpr size_t kMaxOutput = 256 * 1024;
         bool truncated = cap_text(out, kMaxOutput);
         truncated = cap_text(errs, kMaxOutput) || truncated;
-        json r = jok();
+        json r = ok();
         r["exit_code"] = code;
         r["output"] = std::move(out);
         r["stderr"] = std::move(errs);
@@ -1798,55 +1510,52 @@ namespace app::tools
     // =====================================================================
     //  dispatch — command-bus entry point
     // =====================================================================
-    inline bool is_tool_command(const std::string &name)
+    using handler = json (*)(const json &, const std::string &);
+
+    inline constexpr std::pair<std::string_view, handler> kHandlers[] = {
+        {"git.status", do_git_status},
+        {"git.worktrees", do_git_worktrees},
+        {"git.worktree.add", do_git_worktree_add},
+        {"git.worktree.remove", do_git_worktree_remove},
+        {"git.branches", do_git_branches},
+        {"git.log", do_git_log},
+        {"git.numstat", do_git_numstat},
+        {"git.diff", do_git_diff},
+        {"git.init", do_git_init},
+        {"fs.list", do_fs_list},
+        {"fs.read", do_fs_read},
+        {"fs.find", do_fs_find},
+        {"term.exec", do_term_exec},
+    };
+
+    inline std::optional<handler> find_handler(std::string_view name)
     {
-        return starts_with(name, "git.") || starts_with(name, "fs.") || starts_with(name, "term.");
+        const auto it = std::ranges::find(kHandlers, name, &std::pair<std::string_view, handler>::first);
+        return it == std::end(kHandlers) ? std::nullopt : std::optional{it->second};
     }
 
-    inline std::optional<json> dispatch(const std::string &name, const json &args,
-                                       const std::string &default_cwd)
+    inline bool is_tool_command(std::string_view name)
     {
-        if (name == "git.status")
-            return do_git_status(args, default_cwd);
-        if (name == "git.worktrees")
-            return do_git_worktrees(args, default_cwd);
-        if (name == "git.worktree.add")
-            return do_git_worktree_add(args, default_cwd);
-        if (name == "git.worktree.remove")
-            return do_git_worktree_remove(args, default_cwd);
-        if (name == "git.branches")
-            return do_git_branches(args, default_cwd);
-        if (name == "git.log")
-            return do_git_log(args, default_cwd);
-        if (name == "git.numstat")
-            return do_git_numstat(args, default_cwd);
-        if (name == "git.diff")
-            return do_git_diff(args, default_cwd);
-        if (name == "git.init")
-            return do_git_init(args, default_cwd);
-        if (name == "fs.list")
-            return do_fs_list(args, default_cwd);
-        if (name == "fs.read")
-            return do_fs_read(args, default_cwd);
-        if (name == "fs.find")
-            return do_fs_find(args, default_cwd);
-        if (name == "term.exec")
-            return do_term_exec(args, default_cwd);
-        return jerr("unknown command: " + name);
+        return name.starts_with("git.") || name.starts_with("fs.") || name.starts_with("term.");
+    }
+
+    inline json dispatch(const std::string &name, const json &args, const std::string &default_cwd)
+    {
+        const auto fn = find_handler(name);
+        return fn ? (*fn)(args, default_cwd) : fail("unknown command: " + name);
     }
 
     // =====================================================================
     //  try_handle — called from app_core::exec_command before the core's own
-    //  "unknown command" reply. Returns nullopt for names this module does
-    //  not own, so every existing command keeps its behaviour.
+    //  "unknown command" reply; nullopt for names this module does not own.
     //
-    //  Core is app_core. Its type is a template parameter because this
-    //  header is included before app_core is defined: the body is only
-    //  instantiated at the call site, where app_core is complete.
+    //  Core is app_core, passed as a template parameter because this header is
+    //  included before app_core is defined: the body is instantiated at the
+    //  call site, where app_core is complete.
     //
-    //  The default cwd is the cwd of the workspace selected by args.ws
-    //  (default: active). The copy happens under ctx_mx so a concurrent
-    //  workspace.close cannot free the context between lookup and copy.
+    //  The default cwd belongs to the workspace selected by args.ws (default:
+    //  active). It is copied under ctx_mx so a concurrent workspace.close
+    //  cannot free the context between the lookup and the copy.
     // =====================================================================
     template <typename Core>
     std::optional<nlohmann::json> try_handle(const std::string &name, const nlohmann::json &args, Core *core)
@@ -1865,14 +1574,14 @@ namespace app::tools
                 ws_key = it->second->cwd_key; // events are tagged with this
             }
             else if (!ws.empty())
-                return jerr("unknown workspace: " + ws);
+                return fail("unknown workspace: " + ws);
         }
 
         // real terminal sessions live in their own module: open resolves the
         // directory here (args.cwd / the workspace cwd), every other verb
         // addresses an existing session by id. term.exec keeps its one-shot
         // path through dispatch() below.
-        if (starts_with(name, "term.") && name != "term.exec")
+        if (name.starts_with("term.") && name != "term.exec")
         {
             std::string cwd = default_cwd;
             if (name == "term.open")
@@ -1880,7 +1589,7 @@ namespace app::tools
                 fs::path base;
                 std::string err;
                 if (!resolve_base(args, default_cwd, base, err))
-                    return jerr(err);
+                    return fail(err);
                 cwd = base.string();
             }
             // the reader thread publishes on the same event bus as everything
