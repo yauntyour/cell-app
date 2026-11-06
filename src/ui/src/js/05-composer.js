@@ -1559,6 +1559,9 @@ function toggleModelMenu(anchor) {
         menu.appendChild(row);
       }
       if (!remote) {
+        const balRow = cmpMenuRow('gauge', '查询账户余额…', 'balance.fetch', false);
+        balRow.onclick = ev => { ev.stopPropagation(); closeComposerMenu(false); showBalance(); };
+        menu.appendChild(balRow);
         const setRow = cmpMenuRow('settings', '打开模型设置…', '设置 · 模型', false);
         setRow.onclick = () => { closeComposerMenu(false); openSettings('models'); };
         menu.appendChild(setRow);

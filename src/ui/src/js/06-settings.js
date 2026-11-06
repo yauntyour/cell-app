@@ -575,7 +575,48 @@ function buildModels() {
   };
   paint();
   s.appendChild(card([setCardHead('可用模型'), grid, el('div', 'set-hint', '模型列表来自当前供应商的 /models 接口；切换供应商后需要重新拉取。')]));
+
+  // 账户余额：三种 API 风格各有一套账户接口（DeepSeek /user/balance、
+  // OpenRouter /credits、SiliconFlow /user/info、Moonshot 的余额、Anthropic
+  // 的 Admin 成本报表），核心的 balance.fetch 把它们归一化成同一份 JSON：
+  // kind=balance 是余额，kind=cost 是消费报表。按需查询、不缓存。
+  const balValue = el('div', 'model-name', '未查询');
+  const balSub = el('div', 'set-hint', '按需查询，不缓存 —— 余额会变。');
+  const balBtn = setBtn('查询余额', '', () => {}, 'gauge');
+  const paintBalance = out => {
+    const b = (out && out.balance) || {};
+    if (!out || out.ok === false || !b.ok) {
+      balValue.textContent = '不可用';
+      balSub.textContent = (out && out.error) || b.error || '查询失败';
+      return;
+    }
+    balValue.textContent = b.summary || '(供应商未报告金额)';
+    const bits = [];
+    if (out.provider) bits.push(out.provider);
+    if (b.kind === 'cost') bits.push('成本报表 · 消费额而非余额');
+    if (b.endpoint) bits.push(b.endpoint);
+    balSub.textContent = bits.join(' · ');
+  };
+  balBtn.onclick = async () => {
+    balBtn.disabled = true;
+    const label = balBtn.querySelector('.btn-label');
+    if (label) label.textContent = '查询中…';
+    paintBalance(await cmd('balance.fetch', {}));
+    if (label) label.textContent = '查询余额';
+    balBtn.disabled = false;
+  };
+  s.appendChild(card([setCardHead('账户余额', balBtn), balValue, balSub]));
   return s;
+}
+
+/* /balance：查一次当前供应商的余额并报出来（设置页「模型」分节里有同一
+   条查询的常驻卡片；这里只给一行结论，够用就好）。 */
+async function showBalance(provider) {
+  const out = await cmd('balance.fetch', provider ? { name: provider } : {});
+  const b = (out && out.balance) || {};
+  const who = (out && out.provider) || provider || S.provider || '';
+  if (out && out.ok !== false && b.ok) toast((who ? who + ' · ' : '') + (b.summary || '已查询余额'), 'ok', 8000);
+  else toast('余额不可用：' + ((out && out.error) || b.error || '查询失败'), 'bad', 7000);
 }
 
 /* 4.3 代理（Agent） */

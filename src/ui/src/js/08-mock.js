@@ -578,6 +578,14 @@ const Mock = {
       case 'providers.add': this.providers.push({ name: args.name || args.api_style, api_style: args.api_style, base: args.base, proxy: args.proxy || '', has_key: !!args.key, current: false }); return Promise.resolve({ ok: true, name: args.name || args.api_style, providers: this.providers });
       case 'provider.set_key': { const p = this.providers.find(x => x.name === args.name); if (p) p.has_key = true; return Promise.resolve({ ok: true, providers: this.providers }); }
       case 'models.fetch': return Promise.resolve({ ok: true, models: this.models });
+      case 'balance.fetch': {
+        const cp = (this.providers || []).find(x => x.current) || { name: 'openai', api_style: 'openai-chat' };
+        return Promise.resolve({ ok: true, provider: cp.name, api_style: cp.api_style || 'openai-chat',
+          balance: { ok: true, api_style: cp.api_style || 'openai-chat', kind: 'balance',
+            endpoint: 'https://api.example.com/user/balance', available: true,
+            items: [{ currency: 'CNY', total: '110.00', granted: '10.00', remaining: '110.00' }],
+            summary: 'CNY remaining 110.00' } });
+      }
       case 'model.set': {
         const cp = (this.providers || []).find(x => x.current) || { name: 'openai' };
         this.model = cp.name + ':' + args.model;

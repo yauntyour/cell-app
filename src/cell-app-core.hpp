@@ -4746,6 +4746,13 @@ namespace app
                     std::lock_guard<std::mutex> lk(cmd_mx);
                     return models_fetch();
                 }
+                if (name == "balance.fetch")
+                {
+                    // 只读命令，但要联网：和 models.fetch 一样站在 cmd_mx 上，
+                    // 免得两个慢请求交叉把配置读成半新半旧
+                    std::lock_guard<std::mutex> lk(cmd_mx);
+                    return balance_fetch(args);
+                }
                 if (name == "model.set")
                 {
                     std::lock_guard<std::mutex> lk(cmd_mx);
@@ -6076,6 +6083,38 @@ namespace app
             }
             nlohmann::json r = ok();
             r["models"] = models;
+            return r;
+        }
+
+        // ---- account balance ------------------------------------------------
+        // 与 CLI 的 /balance 同一条查询：三种 API 风格各有自己的账户接口
+        // （DeepSeek /user/balance、OpenRouter /credits、OpenAI 旧计费表、
+        // SiliconFlow /user/info、Moonshot /users/me/balance，anthropic 风格
+        // 先问 Admin 成本报表），核心把它们归一化成同一份 JSON，界面只认这一份。
+        // 不缓存：余额会变，界面每次刷新都要看到当下值。
+        nlohmann::json balance_fetch(const nlohmann::json &args)
+        {
+            const cell::config::provider_entry *p = cfg.current_provider_entry();
+            if (const std::string want = js::jstr(args, "name"); !want.empty())
+            {
+                const int idx = cell::config::find(cfg, want);
+                if (idx < 0)
+                    return fail("unknown provider: " + want);
+                p = &cfg.providers[(size_t)idx];
+            }
+            if (!p)
+                return fail("no provider configured");
+            log_ca_once(); // 失败时第一个要看的还是 CA
+            cell::encrypt::secure_string key = resolve_key(*p);
+            const nlohmann::json b = cell::llm::query_balance(p->api_style, p->base, p->proxy, key);
+            const bool got = js::jbool(b, "ok");
+            nlohmann::json r = got ? ok() : fail(js::jstr(b, "error", "the provider exposes no account balance endpoint"));
+            r["provider"] = p->name;
+            r["api_style"] = p->api_style;
+            r["balance"] = b; // ok / kind / items / summary / endpoint / raw
+            cell::sys::logger::instance().info("balance", std::format("provider={} style={} ok={} summary={}",
+                                                                     p->name, p->api_style, got ? "yes" : "no",
+                                                                     js::jstr(b, "summary", js::jstr(b, "error", ""))));
             return r;
         }
     };

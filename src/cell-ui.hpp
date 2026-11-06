@@ -4666,6 +4666,7 @@ const COMMANDS = [
   { name: '/clear', usage: '/clear', desc: '清空当前会话上下文（会中断正在进行的回合，需确认）', run: () => clearSession(S.active) },
   { name: '/session', usage: '/session [id]', desc: '切换当前工作区的会话', ctx: 'sessions' },
   { name: '/model', usage: '/model [name|fetch]', desc: '查看/切换模型，或拉取模型列表', ctx: 'models' },
+  { name: '/balance', usage: '/balance', desc: '查询当前供应商的账户余额（三种 API 风格通用）', run: () => showBalance() },
   { name: '/provider', usage: '/provider [name]', desc: '切换供应商', ctx: 'providers' },
   { name: '/think', usage: '/think <level>', desc: '设置思考级别 0-4', ctx: 'think' },
   { name: '/tools', usage: '/tools <on|off>', desc: '开关工具调用', ctx: 'onoff' },
@@ -13135,6 +13136,9 @@ function toggleModelMenu(anchor) {
         menu.appendChild(row);
       }
       if (!remote) {
+        const balRow = cmpMenuRow('gauge', '查询账户余额…', 'balance.fetch', false);
+        balRow.onclick = ev => { ev.stopPropagation(); closeComposerMenu(false); showBalance(); };
+        menu.appendChild(balRow);
         const setRow = cmpMenuRow('settings', '打开模型设置…', '设置 · 模型', false);
         setRow.onclick = () => { closeComposerMenu(false); openSettings('models'); };
         menu.appendChild(setRow);
@@ -14926,7 +14930,48 @@ function buildModels() {
   };
   paint();
   s.appendChild(card([setCardHead('可用模型'), grid, el('div', 'set-hint', '模型列表来自当前供应商的 /models 接口；切换供应商后需要重新拉取。')]));
+
+  // 账户余额：三种 API 风格各有一套账户接口（DeepSeek /user/balance、
+  // OpenRouter /credits、SiliconFlow /user/info、Moonshot 的余额、Anthropic
+  // 的 Admin 成本报表），核心的 balance.fetch 把它们归一化成同一份 JSON：
+  // kind=balance 是余额，kind=cost 是消费报表。按需查询、不缓存。
+  const balValue = el('div', 'model-name', '未查询');
+  const balSub = el('div', 'set-hint', '按需查询，不缓存 —— 余额会变。');
+  const balBtn = setBtn('查询余额', '', () => {}, 'gauge');
+  const paintBalance = out => {
+    const b = (out && out.balance) || {};
+    if (!out || out.ok === false || !b.ok) {
+      balValue.textContent = '不可用';
+      balSub.textContent = (out && out.error) || b.error || '查询失败';
+      return;
+    }
+    balValue.textContent = b.summary || '(供应商未报告金额)';
+    const bits = [];
+    if (out.provider) bits.push(out.provider);
+    if (b.kind === 'cost') bits.push('成本报表 · 消费额而非余额');
+    if (b.endpoint) bits.push(b.endpoint);
+    balSub.textContent = bits.join(' · ');
+  };
+  balBtn.onclick = async () => {
+    balBtn.disabled = true;
+    const label = balBtn.querySelector('.btn-label');
+    if (label) label.textContent = '查询中…';
+    paintBalance(await cmd('balance.fetch', {}));
+    if (label) label.textContent = '查询余额';
+    balBtn.disabled = false;
+  };
+  s.appendChild(card([setCardHead('账户余额', balBtn), balValue, balSub]));
   return s;
+}
+
+/* /balance：查一次当前供应商的余额并报出来（设置页「模型」分节里有同一
+   条查询的常驻卡片；这里只给一行结论，够用就好）。 */
+async function showBalance(provider) {
+  const out = await cmd('balance.fetch', provider ? { name: provider } : {});
+  const b = (out && out.balance) || {};
+  const who = (out && out.provider) || provider || S.provider || '';
+  if (out && out.ok !== false && b.ok) toast((who ? who + ' · ' : '') + (b.summary || '已查询余额'), 'ok', 8000);
+  else toast('余额不可用：' + ((out && out.error) || b.error || '查询失败'), 'bad', 7000);
 }
 
 /* 4.3 代理（Agent） */
@@ -16792,6 +16837,14 @@ const Mock = {
       case 'providers.add': this.providers.push({ name: args.name || args.api_style, api_style: args.api_style, base: args.base, proxy: args.proxy || '', has_key: !!args.key, current: false }); return Promise.resolve({ ok: true, name: args.name || args.api_style, providers: this.providers });
       case 'provider.set_key': { const p = this.providers.find(x => x.name === args.name); if (p) p.has_key = true; return Promise.resolve({ ok: true, providers: this.providers }); }
       case 'models.fetch': return Promise.resolve({ ok: true, models: this.models });
+      case 'balance.fetch': {
+        const cp = (this.providers || []).find(x => x.current) || { name: 'openai', api_style: 'openai-chat' };
+        return Promise.resolve({ ok: true, provider: cp.name, api_style: cp.api_style || 'openai-chat',
+          balance: { ok: true, api_style: cp.api_style || 'openai-chat', kind: 'balance',
+            endpoint: 'https://api.example.com/user/balance', available: true,
+            items: [{ currency: 'CNY', total: '110.00', granted: '10.00', remaining: '110.00' }],
+            summary: 'CNY remaining 110.00' } });
+      }
       case 'model.set': {
         const cp = (this.providers || []).find(x => x.current) || { name: 'openai' };
         this.model = cp.name + ':' + args.model;

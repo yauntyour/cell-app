@@ -224,6 +224,7 @@ settings.get {}                     settings.set {patch}
 providers.add {api_style, base, name?, key?, proxy?}
 providers.rm {name}                 providers.select {name}
 provider.set_key {name, key}        models.fetch {}
+balance.fetch {name?}               // account balance of the active (or named) provider
 model.set {model}
 
 sessions.list {}                    session.select {ws?, id}
@@ -413,7 +414,7 @@ generous whitespace. All tokens live in `src/ui/src/css/00-tokens.css`.
   plan it" path.
 - **Slash commands** — `/` opens a fuzzy palette with descriptions and
   context-aware argument hints (sessions of the current workspace, models,
-  providers, sandbox modes, jobs, …): `/new /session /model /provider
+  providers, sandbox modes, jobs, …): `/new /session /model /balance /provider
   /think /tools /sandbox /autoallow /compact /auto-continue /stop /teamwork
   /notice /workspace /theme /git /worktree /files /terminal /help`.
 - **Settings page** — providers, model, agent (thinking/tools/system
@@ -422,6 +423,11 @@ generous whitespace. All tokens live in `src/ui/src/css/00-tokens.css`.
   agent changes are refused while a turn is running (the engine reads that
   config on its worker thread); retry when it finishes. Teamwork jobs are
   unaffected: each job runs on its own snapshot of the settings.
+  *Settings → 模型* also carries the **account balance** card (`查询余额`,
+  command `balance.fetch`): the same query as the CLI's `/balance`, so all
+  three API styles — OpenAI Chat Completions, OpenAI Responses and Anthropic —
+  answer in one shape (DeepSeek / OpenRouter / SiliconFlow / Moonshot account
+  routes, or the Anthropic admin cost report, which is labelled as spending).
 - **Themes & motion** — the built-in look is a layered **deep-dark neutral**
   palette (`#111113` canvas → `#1b1b1d` panels → `#232324` cards → `#2a2a2d`
   composer) with a single indigo accent (`#6c7cff`) reserved for interactive

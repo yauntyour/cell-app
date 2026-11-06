@@ -35,6 +35,7 @@ const COMMANDS = [
   { name: '/clear', usage: '/clear', desc: '清空当前会话上下文（会中断正在进行的回合，需确认）', run: () => clearSession(S.active) },
   { name: '/session', usage: '/session [id]', desc: '切换当前工作区的会话', ctx: 'sessions' },
   { name: '/model', usage: '/model [name|fetch]', desc: '查看/切换模型，或拉取模型列表', ctx: 'models' },
+  { name: '/balance', usage: '/balance', desc: '查询当前供应商的账户余额（三种 API 风格通用）', run: () => showBalance() },
   { name: '/provider', usage: '/provider [name]', desc: '切换供应商', ctx: 'providers' },
   { name: '/think', usage: '/think <level>', desc: '设置思考级别 0-4', ctx: 'think' },
   { name: '/tools', usage: '/tools <on|off>', desc: '开关工具调用', ctx: 'onoff' },
