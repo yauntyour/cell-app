@@ -71,11 +71,16 @@
 .gname{font-size:13px;font-weight:600;min-width:0}
 .sgroup-head .cnt{font-size:11px;color:var(--fg4);font-variant-numeric:tabular-nums}
 .sgroup-head .pulse{width:6px;height:6px;margin-left:2px}
-.gdel,.idel{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:6px;
+.gdel,.idel,.gnew{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:6px;
   color:var(--fg4);opacity:0;flex:none;transition:opacity var(--dur) var(--ease),background var(--dur) var(--ease),color var(--dur) var(--ease)}
 .sgroup-head:hover .gdel,.sitem:hover .idel{opacity:1}
 .gdel:hover,.idel:hover{background:var(--raise2);color:var(--bad)}
 .sgroup-head .gdel{margin-left:4px!important}
+/* 新建会话：分组头唯一的常驻动作（弱化显示，悬停变亮）。margin-left:auto
+   把它连同右边的删除钮一起推到行尾 —— 名字短的时候行尾不再是一块空洞。 */
+.sgroup-head .gnew{margin-left:auto;opacity:.55;color:var(--fg3)}
+.sgroup-head:hover .gnew{opacity:1}
+.sgroup-head .gnew:hover{background:var(--raise2);color:var(--fg)}
 .sgroup-items{display:flex;flex-direction:column;gap:1px;padding:2px 0 4px 12px}
 .sitem{position:relative;display:flex;flex-direction:column;gap:2px;padding:7px 9px;border-radius:9px;
   cursor:pointer;border:1px solid transparent;
@@ -130,7 +135,9 @@
 .tabmenu .mtitle{font-size:12.5px;color:var(--fg);text-align:left;max-width:100%}
 .tabmenu .mpath{font-size:10.5px;color:var(--fg4);font-family:var(--mono);text-align:left;max-width:100%}
 /* 3.3 侧栏底部 / 账户行 --------------------------------------------- */
-.sb-foot{flex:none;display:flex;flex-direction:column;gap:4px;padding-top:6px;border-top:1px solid var(--line)}
+/* margin-top:auto：两段都折叠后 .sb-section 全是 flex:none，没有元素再去
+   吸掉剩余高度，底部工具条会浮在段头下面、下半栏空着（贴住底边靠这一步）。 */
+.sb-foot{flex:none;margin-top:auto;display:flex;flex-direction:column;gap:4px;padding-top:6px;border-top:1px solid var(--line)}
 .sb-tools{display:flex;align-items:center;gap:1px;padding:2px 2px}
 .sb-tools .icon-btn{color:var(--fg3)}
 .sb-account{display:flex;align-items:center;gap:9px;width:100%;padding:6px 7px;border-radius:10px;

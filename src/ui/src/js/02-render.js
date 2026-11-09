@@ -87,6 +87,23 @@ function renderSidebar(force) {
     pulse.title = g.busy ? '运行中' : (g.open ? '已展开' : '已折叠');
     if (!g.busy) pulse.style.background = g.open ? 'var(--ok)' : 'var(--fg4)';
     head.appendChild(pulse);
+    // 在这个工作区里新建会话：会话行就挂在这一组下面，建完当场可见
+    const gnew = el('button', 'gnew');
+    gnew.appendChild(iconEl('plus', 'sm'));
+    gnew.title = '在这个工作区新建会话';
+    onPress(gnew, async ev => {
+      ev.stopPropagation();
+      if (S.groupsClosed.has(g.ws)) { S.groupsClosed.delete(g.ws); saveGroupState(); }
+      const out = await cmd('session.new', { ws: g.ws });
+      if (out && out.ok === false) return;
+      // 新会话在目标工作区里：切过去，否则它只是静静躺在另一组下面
+      if (S.active !== g.ws) await activateWs(g.ws);
+      await resync(); refreshSessions();
+    });
+    // 分组头自己也挂了 onPress：它的 click 兜底没收到 pointerdown（上面吞掉了），
+    // 会把这颗按钮的点击当成「折叠/展开」。click 再拦一次，别让新会话刚建好就收起。
+    gnew.addEventListener('click', ev => ev.stopPropagation());
+    head.appendChild(gnew);
     const gdel = el('button', 'gdel');
     gdel.appendChild(iconEl('trash', 'sm'));
     gdel.title = '删除工作区（移除全部会话记录，保留目录）';
