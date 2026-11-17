@@ -670,6 +670,8 @@ select{appearance:none;background-image:url("data:image/svg+xml;charset=utf-8,%3
 .rz:focus-visible{outline:none}
 .rz:focus-visible::after{opacity:.5}
 .rz-composer::after{left:0;right:0;top:5px;bottom:5px}
+/* 输入卡高度按窗口比例固定，不再可拖；隐藏手柄，避免留下无用的可拖 affordance */
+#rzComposer{display:none}
 
 /* 悬浮输入卡外壳：卡片本体外观由 05-composer.js/05b-composer.css 负责 */
 #composer{position:absolute;left:0;right:0;bottom:18px;z-index:20;display:flex;justify-content:center;
@@ -792,6 +794,13 @@ body.locked{overflow:hidden}
 .chathead .ch-usage.on .chu-val,
 .chathead .ch-tasks:hover .chu-val,
 .chathead .ch-tasks.on .chu-val{color:var(--fg)}
+/* 会话级「仅问答」chip：开=强调色高亮，关=低调可点 */
+.chathead .qa-chip{flex:none;height:24px;padding:0 9px;border-radius:6px;
+  font-family:var(--sans);font-size:11.5px;font-weight:600;line-height:1;
+  color:var(--fg4);background:transparent;transition:background var(--dur) var(--ease),color var(--dur) var(--ease)}
+.chathead .qa-chip:hover:not(:disabled){background:var(--raise);color:var(--fg2)}
+.chathead .qa-chip.on{color:var(--accent);background:color-mix(in srgb,var(--accent) 14%,transparent)}
+.chathead .qa-chip:disabled{opacity:.45;cursor:default}
 .tabpane.hero .chathead{display:none}
 
 .chat{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;
@@ -1580,6 +1589,20 @@ body.locked{overflow:hidden}
   background:color-mix(in srgb,var(--bad) 20%,rgba(255,255,255,.06))}
 .cmp-send[disabled]{background:rgba(255,255,255,.05);color:var(--fg4);
   box-shadow:none;opacity:.6;pointer-events:none}
+
+/* 运行中插话：默认隐藏，busy 时由 .show 露出。两颗小胶囊贴在发送键左边。 */
+.cmp-live{display:none;align-items:center;gap:5px;flex:none}
+.cmp-live.show{display:inline-flex}
+.cmp-live-btn{
+  height:28px;padding:0 10px;border-radius:var(--radius-full);
+  font-family:var(--sans);font-size:11.5px;font-weight:600;line-height:1;
+  color:var(--fg2);background:var(--glass-face-hover);
+  border:1px solid var(--glass-hair);cursor:pointer;white-space:nowrap;
+  transition:background var(--dur) var(--ease),color var(--dur) var(--ease),border-color var(--dur) var(--ease);
+}
+.cmp-live-btn:hover{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 45%,transparent);
+  background:color-mix(in srgb,var(--accent) 12%,var(--glass-face-hover))}
+#interjectNow{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 35%,transparent)}
 
 /* ---------- 5b.4 弹出菜单（模式 / 沙箱 / 模型） --------------------- */
 .cmp-menu{
@@ -5458,6 +5481,8 @@ function applyHello(st, rebuild, opts) {
       noticesReset = true;
     }
     if (typeof st.busy === 'boolean') { t.busy = st.busy; if (st.busy && !t.thinkingSince) t.thinkingSince = Date.now(); }
+    if (typeof st.qa === 'boolean') t.qa = st.qa; // 会话级仅问答模式（权威状态来自后端）
+    if (typeof paintQaChip === 'function') paintQaChip(ws);
     // hello 里的 teamwork 就是该会话当前的权威列表：打上 jobsFor，Teamwork
     // 面板首帧直接渲染，省掉一次「正在加载」+ 重复拉取
     if (st.teamwork) { t.jobs = st.teamwork; t.jobsFor = t.session; }
@@ -7055,6 +7080,23 @@ function ensurePane(ws) {
   // 的数字，贴在一起读作一组。先建用量，任务 chip 才有位置插到它前面。
   ensureChatUsageBtn(head, ws);
   if (typeof ensureChatTasksBtn === 'function') ensureChatTasksBtn(head);
+  // 会话级「仅问答模式」开关：一个 chip，开=只允许只读工具与禁用自动压缩（只作用于本会话）
+  const qa = el('button', 'qa-chip', '问答');
+  qa.type = 'button';
+  qa.id = 'qa-' + cssId(ws);
+  qa.title = '仅问答模式：本会话只允许只读工具（ls/read/rg/find）、不自动压缩上下文（点击切换）';
+  qa.onclick = ev => {
+    ev.stopPropagation();
+    const t = tab(ws);
+    const on = !(t && t.qa);
+    cmd('session.qa', { ws, on }).then(out => {
+      if (!out || out.ok === false) { toast((out && out.error) || '切换失败', 'bad'); return; }
+      if (t) t.qa = on;
+      paintQaChip(ws);
+      toast('仅问答模式：' + (on ? '开' : '关'), 'ok');
+    });
+  };
+  head.appendChild(qa);
   // 会话顶栏快捷动作（与 /export、/save、/compact 同源）：都只作用于本工作区，
   // 危险动作（清空上下文）留在最右边单独一档
   for (const [icon, tip, act] of [
@@ -7266,6 +7308,20 @@ function renderChatHead(ws) {
   paintChatUsage(ws);
   // 切会话换的是「这一栏属于谁」：任务 chip 的数字也跟着换
   if (typeof paintChatTasks === 'function') paintChatTasks(ws);
+  paintQaChip(ws);
+}
+
+/* 会话级问答模式 chip：开=accent 高亮；远程（对端）会话不允许改本机设置 */
+function paintQaChip(ws) {
+  const chip = $('#qa-' + cssId(ws));
+  if (!chip) return;
+  const t = tab(ws);
+  const on = !!(t && t.qa);
+  chip.classList.toggle('on', on);
+  const remote = !!(t && t.remote);
+  chip.disabled = remote;
+  chip.title = remote ? '远程会话：不可改对端设置'
+    : '仅问答模式（本会话）：只允许只读工具（ls/read/rg/find）、不自动压缩上下文 · 当前' + (on ? '开' : '关');
 }
 
 /* ---------- 会话顶栏的「本会话用量」（每个 session 页各一份） ----------
@@ -9434,6 +9490,9 @@ function numstatSnapshot(ws) {
 const ChatTurns = {
   begin(ws) {
     const t = ensureTab(ws);
+    // 新回合一开始就作废上一回合的产物卡：否则旧「已编辑 N 个文件」会挂着
+    // 直到本回合 end 重算，看起来像是本次输入改动了那些文件（见用户反馈）。
+    t._turnMeta = null;
     if (t._turnSnap) return;
     const snap = { startedAt: Date.now(), beforeP: null };
     t._turnSnap = snap;
@@ -9660,6 +9719,10 @@ const Layout = {
   // 20% / 50% / 30%。main 不存——它是"剩下的"，由 sidebar 与 dock 决定，
   // 这样任意时刻三者之和恒为 1，拖动时不可能把主区挤没。
   def: { sidebar: 0.20, dock: 0.26, composer: 156 },
+  // 输入卡高度按窗口高度固定为 20vh（用户要求「固定为某个尺寸」，选按窗口比例）。
+  // 不再随拖拽/内容变化；仍保留 min 护栏，极矮窗口下不至于不可读。
+  composerVh: 0.20,
+  composerMinPx: 120,
   // 比例区间：侧栏最多 45%（再宽就挤掉主区），dock 最多 90%
   min: { sidebar: 0.10, dock: 0.14, composer: 96 },
   max: { sidebar: 0.45, dock: 0.90, composer: 0 }, // composer 上限按视口算
@@ -9705,14 +9768,13 @@ const Layout = {
         JSON.stringify({ __v: 2, sidebar: v.sidebar, dock: v.dock, composer: v.composer }));
     } catch (e) {}
   },
-  // 输入栏高度（像素，已夹在 [min, 72vh] 内）。72vh 必须和 05b-composer.css 里
-  // #composerInner 的 max-height 是**同一个数**：两边不一致时，拖过 72vh 后卡片
-  // 已经停住、--composer-h 却还在涨 —— 拖拽手柄与卡片脱节，「回到底部」也会
-  // 按涨出来的假高度飘走（2026-10-31 用户报的问题）。唯一写 --composer-h 的地方。
+  // 输入栏高度（像素）= 窗口高度 × composerVh，夹在 [composerMinPx, 72vh] 内。
+  // 高度按窗口比例固定，不随拖拽或内容变化；窗口缩放时随 resize 重算。
+  // 上限 72vh 必须和 05b-composer.css 里 #composerInner 的 max-height 一致。
+  // 唯一写 --composer-h 的地方。
   composerH() {
-    const v = this.load();
     const hi = Math.max(this.min.composer, Math.round(window.innerHeight * 0.72));
-    return Math.round(clamp(Number(v.composer) || this.def.composer, this.min.composer, hi));
+    return Math.round(clamp(window.innerHeight * this.composerVh, this.composerMinPx, hi));
   },
   // 夹取并落盘：v 是本轮拖动算出的原始比例
   set(key, v, commit) {
@@ -9775,12 +9837,10 @@ const Layout = {
     this.apply();
     this.drag($('#rzSidebar'), 'sidebar', 'x');
     this.drag($('#rzDock'), 'dock', 'x', true);
-    // 把手在悬浮卡的顶边：往下拖 = 顶边下移 = 卡片变矮，所以取反
-    this.drag($('#rzComposer'), 'composer', 'y', true);
+    // 输入卡高度按窗口比例固定，不再注册纵向拖拽手柄。
     this._overlay = window.innerWidth <= 980;
     window.addEventListener('resize', () => {
-      // 比例不变，像素重算——这就是"自适应缩放"：窗口变了三区仍按 20/50/30 分配
-      this.set('composer', this.load().composer, false);
+      // 横向比例不变、像素重算；输入卡高度由 composerH() 按新视口重算
       this.apply();
       // 宽 -> 窄跨档时收起一次右栏：窄窗口里它是覆盖式，继续开着会盖住输入栏
       const ov = window.innerWidth <= 980;
@@ -11821,6 +11881,21 @@ function buildComposerDom() {
   send.innerHTML = CMP_ICON_SEND;
   right.appendChild(send);
 
+  // 运行中插话：仅在回合进行时出现。「立即」注入正在跑的回合，
+  // 「排队」等本回合结束后自动开新回合。两者都取输入框当前文本。
+  const liveWrap = el('div', 'cmp-live');
+  liveWrap.id = 'cmpLive';
+  const liveNow = el('button', 'cmp-live-btn', '插话');
+  liveNow.type = 'button'; liveNow.id = 'interjectNow';
+  liveNow.title = '立即插入：把输入内容注入正在运行的回合（下一轮生效）';
+  liveNow.onclick = () => interjectCurrent(true);
+  const liveQueue = el('button', 'cmp-live-btn', '排队');
+  liveQueue.type = 'button'; liveQueue.id = 'interjectQueue';
+  liveQueue.title = '排队：本回合结束后自动发送输入内容';
+  liveQueue.onclick = () => interjectCurrent(false);
+  liveWrap.appendChild(liveNow); liveWrap.appendChild(liveQueue);
+  right.appendChild(liveWrap);
+
   bar.appendChild(left);
   bar.appendChild(right);
   host.appendChild(bar);
@@ -12217,12 +12292,7 @@ function bindComposer() {
   document.addEventListener('pointerdown', hideAttachPreview, true);
   window.addEventListener('resize', hideAttachPreview);
 
-  /* 拖动 --composer-h 的手柄后重新自适配高度（布局本身由 03-layout.js 负责） */
-  const rz = $('#rzComposer');
-  if (rz) {
-    rz.addEventListener('pointerup', () => renderComposer());
-    rz.addEventListener('keyup', () => renderComposer());
-  }
+  /* 输入卡高度按窗口比例固定（03-layout.js）；窗口缩放后重新自适配内容 */
   window.addEventListener('resize', () => { try { renderComposer(); } catch (e) {} });
 }
 
@@ -12555,6 +12625,9 @@ function paintSendState(t) {
   const mode = t ? (t.composer.mode || 'text') : 'text';
   send.classList.toggle('stop', !!(t && t.busy));
   send.classList.remove('dim');
+  // 运行中才显示「插话 / 排队」；远程/监视页签不显示（对端回合由对端处理）
+  const live = $('#cmpLive');
+  if (live) live.classList.toggle('show', !!(t && t.busy && !t.remote));
   if (!t) {
     send.disabled = true;
     send.innerHTML = CMP_ICON_SEND;
@@ -12890,6 +12963,26 @@ function fileToB64(file) {
 }
 
 /* ---------- I5. 发送 / 停止 ---------------------------------------- */
+/* 运行中插话（点「插话」/「排队」）：取输入框当前非空文本，immediate=true 走
+   agent.interject（注入正在跑的回合），否则走 send 排队（本回合结束后处理）。
+   发送后清空输入框，行为与普通发送一致。 */
+async function interjectCurrent(immediate) {
+  const t = curTab();
+  if (!t) return;
+  closeSlash();
+  const text = (t.composer.text || '').trim();
+  if (!text) { toast('先输入要插话的内容', 'info'); focusInput(); return; }
+  t.composer.text = ''; t.composer.attachments = [];
+  const ta = $('#ta'); if (ta) ta.value = '';
+  renderChips(t); paintSendState(t); markChat(t.ws);
+  const out = immediate
+    ? await cmd('agent.interject', { ws: t.ws, text })
+    : await cmd('send', { ws: t.ws, text });
+  if (out && out.ok === false) toast((out && out.error) || '插话失败', 'bad');
+  else toast(immediate ? '已插入当前回合' : '已排队，本回合结束后发送', 'ok');
+  focusInput();
+}
+
 async function sendCurrent() {
   const t = curTab();
   if (!t) return;

@@ -93,6 +93,23 @@ function ensurePane(ws) {
   // 的数字，贴在一起读作一组。先建用量，任务 chip 才有位置插到它前面。
   ensureChatUsageBtn(head, ws);
   if (typeof ensureChatTasksBtn === 'function') ensureChatTasksBtn(head);
+  // 会话级「仅问答模式」开关：一个 chip，开=只允许只读工具与禁用自动压缩（只作用于本会话）
+  const qa = el('button', 'qa-chip', '问答');
+  qa.type = 'button';
+  qa.id = 'qa-' + cssId(ws);
+  qa.title = '仅问答模式：本会话只允许只读工具（ls/read/rg/find）、不自动压缩上下文（点击切换）';
+  qa.onclick = ev => {
+    ev.stopPropagation();
+    const t = tab(ws);
+    const on = !(t && t.qa);
+    cmd('session.qa', { ws, on }).then(out => {
+      if (!out || out.ok === false) { toast((out && out.error) || '切换失败', 'bad'); return; }
+      if (t) t.qa = on;
+      paintQaChip(ws);
+      toast('仅问答模式：' + (on ? '开' : '关'), 'ok');
+    });
+  };
+  head.appendChild(qa);
   // 会话顶栏快捷动作（与 /export、/save、/compact 同源）：都只作用于本工作区，
   // 危险动作（清空上下文）留在最右边单独一档
   for (const [icon, tip, act] of [
@@ -304,6 +321,20 @@ function renderChatHead(ws) {
   paintChatUsage(ws);
   // 切会话换的是「这一栏属于谁」：任务 chip 的数字也跟着换
   if (typeof paintChatTasks === 'function') paintChatTasks(ws);
+  paintQaChip(ws);
+}
+
+/* 会话级问答模式 chip：开=accent 高亮；远程（对端）会话不允许改本机设置 */
+function paintQaChip(ws) {
+  const chip = $('#qa-' + cssId(ws));
+  if (!chip) return;
+  const t = tab(ws);
+  const on = !!(t && t.qa);
+  chip.classList.toggle('on', on);
+  const remote = !!(t && t.remote);
+  chip.disabled = remote;
+  chip.title = remote ? '远程会话：不可改对端设置'
+    : '仅问答模式（本会话）：只允许只读工具（ls/read/rg/find）、不自动压缩上下文 · 当前' + (on ? '开' : '关');
 }
 
 /* ---------- 会话顶栏的「本会话用量」（每个 session 页各一份） ----------
@@ -2472,6 +2503,9 @@ function numstatSnapshot(ws) {
 const ChatTurns = {
   begin(ws) {
     const t = ensureTab(ws);
+    // 新回合一开始就作废上一回合的产物卡：否则旧「已编辑 N 个文件」会挂着
+    // 直到本回合 end 重算，看起来像是本次输入改动了那些文件（见用户反馈）。
+    t._turnMeta = null;
     if (t._turnSnap) return;
     const snap = { startedAt: Date.now(), beforeP: null };
     t._turnSnap = snap;

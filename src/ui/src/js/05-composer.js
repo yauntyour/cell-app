@@ -227,6 +227,21 @@ function buildComposerDom() {
   send.innerHTML = CMP_ICON_SEND;
   right.appendChild(send);
 
+  // 运行中插话：仅在回合进行时出现。「立即」注入正在跑的回合，
+  // 「排队」等本回合结束后自动开新回合。两者都取输入框当前文本。
+  const liveWrap = el('div', 'cmp-live');
+  liveWrap.id = 'cmpLive';
+  const liveNow = el('button', 'cmp-live-btn', '插话');
+  liveNow.type = 'button'; liveNow.id = 'interjectNow';
+  liveNow.title = '立即插入：把输入内容注入正在运行的回合（下一轮生效）';
+  liveNow.onclick = () => interjectCurrent(true);
+  const liveQueue = el('button', 'cmp-live-btn', '排队');
+  liveQueue.type = 'button'; liveQueue.id = 'interjectQueue';
+  liveQueue.title = '排队：本回合结束后自动发送输入内容';
+  liveQueue.onclick = () => interjectCurrent(false);
+  liveWrap.appendChild(liveNow); liveWrap.appendChild(liveQueue);
+  right.appendChild(liveWrap);
+
   bar.appendChild(left);
   bar.appendChild(right);
   host.appendChild(bar);
@@ -623,12 +638,7 @@ function bindComposer() {
   document.addEventListener('pointerdown', hideAttachPreview, true);
   window.addEventListener('resize', hideAttachPreview);
 
-  /* 拖动 --composer-h 的手柄后重新自适配高度（布局本身由 03-layout.js 负责） */
-  const rz = $('#rzComposer');
-  if (rz) {
-    rz.addEventListener('pointerup', () => renderComposer());
-    rz.addEventListener('keyup', () => renderComposer());
-  }
+  /* 输入卡高度按窗口比例固定（03-layout.js）；窗口缩放后重新自适配内容 */
   window.addEventListener('resize', () => { try { renderComposer(); } catch (e) {} });
 }
 
@@ -961,6 +971,9 @@ function paintSendState(t) {
   const mode = t ? (t.composer.mode || 'text') : 'text';
   send.classList.toggle('stop', !!(t && t.busy));
   send.classList.remove('dim');
+  // 运行中才显示「插话 / 排队」；远程/监视页签不显示（对端回合由对端处理）
+  const live = $('#cmpLive');
+  if (live) live.classList.toggle('show', !!(t && t.busy && !t.remote));
   if (!t) {
     send.disabled = true;
     send.innerHTML = CMP_ICON_SEND;
@@ -1296,6 +1309,26 @@ function fileToB64(file) {
 }
 
 /* ---------- I5. 发送 / 停止 ---------------------------------------- */
+/* 运行中插话（点「插话」/「排队」）：取输入框当前非空文本，immediate=true 走
+   agent.interject（注入正在跑的回合），否则走 send 排队（本回合结束后处理）。
+   发送后清空输入框，行为与普通发送一致。 */
+async function interjectCurrent(immediate) {
+  const t = curTab();
+  if (!t) return;
+  closeSlash();
+  const text = (t.composer.text || '').trim();
+  if (!text) { toast('先输入要插话的内容', 'info'); focusInput(); return; }
+  t.composer.text = ''; t.composer.attachments = [];
+  const ta = $('#ta'); if (ta) ta.value = '';
+  renderChips(t); paintSendState(t); markChat(t.ws);
+  const out = immediate
+    ? await cmd('agent.interject', { ws: t.ws, text })
+    : await cmd('send', { ws: t.ws, text });
+  if (out && out.ok === false) toast((out && out.error) || '插话失败', 'bad');
+  else toast(immediate ? '已插入当前回合' : '已排队，本回合结束后发送', 'ok');
+  focusInput();
+}
+
 async function sendCurrent() {
   const t = curTab();
   if (!t) return;

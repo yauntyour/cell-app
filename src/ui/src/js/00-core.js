@@ -827,6 +827,8 @@ function applyHello(st, rebuild, opts) {
       noticesReset = true;
     }
     if (typeof st.busy === 'boolean') { t.busy = st.busy; if (st.busy && !t.thinkingSince) t.thinkingSince = Date.now(); }
+    if (typeof st.qa === 'boolean') t.qa = st.qa; // 会话级仅问答模式（权威状态来自后端）
+    if (typeof paintQaChip === 'function') paintQaChip(ws);
     // hello 里的 teamwork 就是该会话当前的权威列表：打上 jobsFor，Teamwork
     // 面板首帧直接渲染，省掉一次「正在加载」+ 重复拉取
     if (st.teamwork) { t.jobs = st.teamwork; t.jobsFor = t.session; }

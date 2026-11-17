@@ -26,6 +26,10 @@ const Layout = {
   // 20% / 50% / 30%。main 不存——它是"剩下的"，由 sidebar 与 dock 决定，
   // 这样任意时刻三者之和恒为 1，拖动时不可能把主区挤没。
   def: { sidebar: 0.20, dock: 0.26, composer: 156 },
+  // 输入卡高度按窗口高度固定为 20vh（用户要求「固定为某个尺寸」，选按窗口比例）。
+  // 不再随拖拽/内容变化；仍保留 min 护栏，极矮窗口下不至于不可读。
+  composerVh: 0.20,
+  composerMinPx: 120,
   // 比例区间：侧栏最多 45%（再宽就挤掉主区），dock 最多 90%
   min: { sidebar: 0.10, dock: 0.14, composer: 96 },
   max: { sidebar: 0.45, dock: 0.90, composer: 0 }, // composer 上限按视口算
@@ -71,14 +75,13 @@ const Layout = {
         JSON.stringify({ __v: 2, sidebar: v.sidebar, dock: v.dock, composer: v.composer }));
     } catch (e) {}
   },
-  // 输入栏高度（像素，已夹在 [min, 72vh] 内）。72vh 必须和 05b-composer.css 里
-  // #composerInner 的 max-height 是**同一个数**：两边不一致时，拖过 72vh 后卡片
-  // 已经停住、--composer-h 却还在涨 —— 拖拽手柄与卡片脱节，「回到底部」也会
-  // 按涨出来的假高度飘走（2026-10-31 用户报的问题）。唯一写 --composer-h 的地方。
+  // 输入栏高度（像素）= 窗口高度 × composerVh，夹在 [composerMinPx, 72vh] 内。
+  // 高度按窗口比例固定，不随拖拽或内容变化；窗口缩放时随 resize 重算。
+  // 上限 72vh 必须和 05b-composer.css 里 #composerInner 的 max-height 一致。
+  // 唯一写 --composer-h 的地方。
   composerH() {
-    const v = this.load();
     const hi = Math.max(this.min.composer, Math.round(window.innerHeight * 0.72));
-    return Math.round(clamp(Number(v.composer) || this.def.composer, this.min.composer, hi));
+    return Math.round(clamp(window.innerHeight * this.composerVh, this.composerMinPx, hi));
   },
   // 夹取并落盘：v 是本轮拖动算出的原始比例
   set(key, v, commit) {
@@ -141,12 +144,10 @@ const Layout = {
     this.apply();
     this.drag($('#rzSidebar'), 'sidebar', 'x');
     this.drag($('#rzDock'), 'dock', 'x', true);
-    // 把手在悬浮卡的顶边：往下拖 = 顶边下移 = 卡片变矮，所以取反
-    this.drag($('#rzComposer'), 'composer', 'y', true);
+    // 输入卡高度按窗口比例固定，不再注册纵向拖拽手柄。
     this._overlay = window.innerWidth <= 980;
     window.addEventListener('resize', () => {
-      // 比例不变，像素重算——这就是"自适应缩放"：窗口变了三区仍按 20/50/30 分配
-      this.set('composer', this.load().composer, false);
+      // 横向比例不变、像素重算；输入卡高度由 composerH() 按新视口重算
       this.apply();
       // 宽 -> 窄跨档时收起一次右栏：窄窗口里它是覆盖式，继续开着会盖住输入栏
       const ov = window.innerWidth <= 980;

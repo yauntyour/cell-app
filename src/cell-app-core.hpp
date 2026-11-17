@@ -440,6 +440,24 @@ namespace app
             turns.push_back({std::move(text), resume, auto_continue});
             qcv.notify_all();
         }
+        // "Interject": text handed to the running turn at its next round boundary
+        // (injected into the SAME turn), as opposed to queue_turn which waits for
+        // the current turn to end. Separate mutex so a command thread can drop a
+        // message in without taking qmx.
+        std::mutex imx;
+        std::string pending_interject;
+        void queue_interject(std::string text)
+        {
+            std::lock_guard<std::mutex> lk(imx);
+            pending_interject = std::move(text);
+        }
+        std::string take_interject()
+        {
+            std::lock_guard<std::mutex> lk(imx);
+            std::string out;
+            out.swap(pending_interject);
+            return out;
+        }
         void request_stop() { stop.store(true); }
     };
 
@@ -1876,6 +1894,7 @@ namespace app
             if (size_t recovered = cell::teamwork::recover_interrupted(u->h.now().id()))
                 cell::sys::logger::instance().warn("teamwork", std::format("boot recovery marked {} job(s) failed ws={}", recovered, key));
             cfg.active_sessions[key] = u->h.now().id();
+            touch_session_usage(*u); // usage visible immediately, before first persist
             // persist_turn_config=false: the shell owns cfg.active_sessions and
             // saves it from the command thread; a per-turn config save on the
             // worker thread would race that and rewrite the file for every turn
@@ -2390,6 +2409,8 @@ namespace app
             { return request_approval(ctx, tool, args, reason); };
             ev.cancelled = [this, &ctx]() -> bool
             { return ctx.stop.load() || shutting_down.load(); };
+            ev.take_input = [&ctx]() -> std::string
+            { return ctx.take_interject(); };
             ev.cancel_reason = "interrupted by the user (stop button) during streaming";
             ev.on_turn_end = [post](const cell::engine::turn_view &tv)
             { post({{"t", "turn_end"},
@@ -2629,17 +2650,23 @@ namespace app
             }
             return false;
         }
-        // config-mutating commands must not run while a turn reads the shared
-        // settings object (engine threads hold no command lock). Teamwork jobs are
-        // safe: they own a settings copy (cell::teamwork::own_settings).
-        bool config_change_blocked(std::string &why)
+        // Settings may be changed while a turn is running (user request: 会话运行时
+        // 也能改上下文设置). The engine reads cfg at turn start and between rounds,
+        // so a change takes effect on the next round / next turn; that is the
+        // intended semantic. NOTE: config writes and these engine reads are on
+        // different threads with no shared lock. Keep config patches to simple
+        // scalar/string fields and avoid racing a large vector rebuild mid-turn.
+        // Transcript-mutating commands (e.g. compact.now) keep their own busy guard.
+        bool config_change_blocked(std::string &)
         {
-            if (turn_activity())
-            {
-                why = "a turn is running - change settings after it finishes";
-                return true;
-            }
             return false;
+        }
+        // A new session must show up in the usage panel immediately, before its
+        // first turn persists messages.jsonl. stats::prune keys off the session
+        // dir (created in the ctor), so a zeroed record survives until then.
+        void touch_session_usage(workspace_ctx &c)
+        {
+            cell::stats::touch(c.h.now().id(), cfg.model_label());
         }
         bool stop_workspace_jobs_and_wait(const std::string &ws, std::chrono::milliseconds timeout)
         {
@@ -3300,6 +3327,7 @@ namespace app
             }
             st["ws"] = c->cwd_key;
             st["session"] = c->h.now().id();
+            st["qa"] = c->h.now().qa(); // session-scoped Q&A-only mode
             st["cwd"] = c->cwd;
             st["promptChars"] = c->prompt.prompt_chars;
             st["skills"] = c->prompt.skill_count;
@@ -3783,6 +3811,31 @@ namespace app
                     cfg.active_sessions[c->cwd_key] = c->h.now().id();
                     c->queue_turn(std::move(text));
                     return ok();
+                }
+                // 运行中插话（「立刻注入」）：把文本投进正在跑的回合的输入槽，
+                // 引擎在下一个轮次边界把它作为 user 消息塞进同一个回合；若此刻
+                // 没有回合在跑，退回普通 send 排队，避免消息丢失。
+                if (name == "agent.interject")
+                {
+                    std::lock_guard<std::mutex> lk(cmd_mx);
+                    workspace_ctx *c = target_ctx(args);
+                    if (!c)
+                        return fail("no workspace open");
+                    std::string text = args.value("text", "");
+                    if (text.empty())
+                        return fail("empty message");
+                    cfg.active_sessions[c->cwd_key] = c->h.now().id();
+                    if (c->busy.load())
+                    {
+                        c->queue_interject(std::move(text));
+                        nlohmann::json r = ok();
+                        r["mode"] = "injected";
+                        return r;
+                    }
+                    c->queue_turn(std::move(text));
+                    nlohmann::json r = ok();
+                    r["mode"] = "queued";
+                    return r;
                 }
                 // 续跑被中断的回合（对齐 CLI /reload）：转录已经以半截回复收尾，
                 // 不再注入新消息，只把 resume 标志交给 worker
@@ -4833,10 +4886,30 @@ namespace app
                     c->h.forget_current();
                     c->eng->ensure_prompt();
                     cfg.active_sessions[c->cwd_key] = c->h.now().id();
+                    touch_session_usage(*c); // new session visible in usage at once
                     save_cfg(); // a crash must not lose the active session
                     cell::sys::logger::instance().info("sess", std::format("new id={} previous={} kept=true ws={}", c->h.now().id(), old_id, c->cwd_key));
                     broadcast_state();
                     return ok();
+                }
+                // 会话级「仅问答模式」：只允许只读工具、关闭自动压缩，只作用于当前会话，
+                // 存进该会话的 meta.json，切换会话互不影响。运行中也可切换（下一轮生效）。
+                if (name == "session.qa")
+                {
+                    std::lock_guard<std::mutex> lk(cmd_mx);
+                    workspace_ctx *c = target_ctx(args);
+                    if (!c)
+                        return fail("no workspace open");
+                    bool want = args.value("on", !c->h.now().qa());
+                    {
+                        std::lock_guard<std::mutex> hlk(c->hmx);
+                        c->h.now().set_qa(want);
+                    }
+                    cell::async_io::flush();
+                    nlohmann::json r = ok();
+                    r["qa"] = want;
+                    broadcast_state();
+                    return r;
                 }
                 // 清空当前会话上下文（对应 CLI /clear）；用户选择“强制中断并清空”
                 if (name == "session.clear")
@@ -5215,6 +5288,7 @@ namespace app
                         c->h.forget_current();
                         c->eng->ensure_prompt();
                         cfg.active_sessions[c->cwd_key] = c->h.now().id();
+                        touch_session_usage(*c); // replacement session visible at once
                         cell::sys::logger::instance().info("sess", std::format("deleted active session, new id={}", c->h.now().id()));
                     }
                     cell::sys::logger::instance().info("sess", std::format("deleted session id={} active={}", id, active));

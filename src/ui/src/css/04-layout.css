@@ -85,6 +85,8 @@
 .rz:focus-visible{outline:none}
 .rz:focus-visible::after{opacity:.5}
 .rz-composer::after{left:0;right:0;top:5px;bottom:5px}
+/* 输入卡高度按窗口比例固定，不再可拖；隐藏手柄，避免留下无用的可拖 affordance */
+#rzComposer{display:none}
 
 /* 悬浮输入卡外壳：卡片本体外观由 05-composer.js/05b-composer.css 负责 */
 #composer{position:absolute;left:0;right:0;bottom:18px;z-index:20;display:flex;justify-content:center;

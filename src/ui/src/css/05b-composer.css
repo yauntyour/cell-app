@@ -327,6 +327,20 @@
 .cmp-send[disabled]{background:rgba(255,255,255,.05);color:var(--fg4);
   box-shadow:none;opacity:.6;pointer-events:none}
 
+/* 运行中插话：默认隐藏，busy 时由 .show 露出。两颗小胶囊贴在发送键左边。 */
+.cmp-live{display:none;align-items:center;gap:5px;flex:none}
+.cmp-live.show{display:inline-flex}
+.cmp-live-btn{
+  height:28px;padding:0 10px;border-radius:var(--radius-full);
+  font-family:var(--sans);font-size:11.5px;font-weight:600;line-height:1;
+  color:var(--fg2);background:var(--glass-face-hover);
+  border:1px solid var(--glass-hair);cursor:pointer;white-space:nowrap;
+  transition:background var(--dur) var(--ease),color var(--dur) var(--ease),border-color var(--dur) var(--ease);
+}
+.cmp-live-btn:hover{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 45%,transparent);
+  background:color-mix(in srgb,var(--accent) 12%,var(--glass-face-hover))}
+#interjectNow{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 35%,transparent)}
+
 /* ---------- 5b.4 弹出菜单（模式 / 沙箱 / 模型） --------------------- */
 .cmp-menu{
   position:fixed;z-index:140;
