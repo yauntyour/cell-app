@@ -47,6 +47,7 @@ function toolIconName(name) {
 function toolKind(s) {
   s = String(s || '').toLowerCase();
   if (/run|active|progress|working|pending/.test(s)) return 'run';
+  if (/terminat/.test(s)) return 'warn';   // 用户主动终止：不是失败，也不是成功
   if (/(^|_)(ok|done|complete|success|approved)/.test(s)) return 'ok';
   if (/fail|error|denied|abort|cancel|blocked|unknown/.test(s)) return 'bad';
   if (/warn|skip/.test(s)) return 'warn';
@@ -1045,26 +1046,38 @@ function popMenu(anchor, rows) {
 function copyText(text, okMsg) {
   text = String(text == null ? '' : text);
   if (!text) return;
-  const done = () => toast(okMsg || '已复制', 'ok', 1400);
-  if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(text).then(done).catch(() => legacyCopy(text, done));
+  writeClipboard(text).then(ok => {
+    if (ok) toast(okMsg || '已复制', 'ok', 1400);
+    else toast('复制失败', 'bad');
+  });
+}
+/* 代码块「复制」按钮：markdown 是 innerHTML 重绘的，用 document 事件委托，
+   从相邻 <pre.code> 取原文（DOM 文本，避免转义/引号问题）。 */
+document.addEventListener('click', ev => {
+  const b = ev.target && ev.target.closest && ev.target.closest('[data-code-copy]');
+  if (!b) return;
+  const pre = b.parentElement && b.parentElement.querySelector('pre.code');
+  if (!pre) return;
+  ev.preventDefault();
+  ev.stopPropagation();
+  copyText(pre.textContent, '已复制代码');
+});
+async function openDiffPreview(path, meta) {
+  if (!path) return;
+  const ws = S.active, cwd = cwdOf(ws);
+  // 新增文件（常由 exec 产生、git 未必跟踪）：直接读文件内容展示，而不是 diff。
+  if (meta && meta.kind === 'added') {
+    let out = null;
+    try { out = await api('fs.read', { ws: ws, cwd: cwd, path: path }); } catch (e) { out = null; }
+    if (!out || out.ok === false || out.binary) {
+      showModal('新增 · ' + path, out && out.binary ? '（二进制文件）' : '（无法读取内容：' + ((out && out.error) || '不可用') + '）');
+      return;
+    }
+    showModal('新增 · ' + path, out.content || out.text || '（空文件）');
     return;
   }
-  legacyCopy(text, done);
-}
-function legacyCopy(text, done) {
-  const ta = document.createElement('textarea');
-  ta.value = text;
-  ta.style.position = 'fixed'; ta.style.opacity = '0';
-  document.body.appendChild(ta);
-  ta.select();
-  try { document.execCommand('copy'); done(); } catch (e) { toast('复制失败', 'bad'); }
-  ta.remove();
-}
-async function openDiffPreview(path) {
-  if (!path) return;
   let out = null;
-  try { out = await api('git.diff', { ws: S.active, cwd: cwdOf(S.active), path: path }); } catch (e) { out = null; }
+  try { out = await api('git.diff', { ws: ws, cwd: cwd, path: path }); } catch (e) { out = null; }
   if (!out || out.ok === false) { toast('无法获取 diff：' + ((out && out.error) || '命令不可用'), 'bad'); return; }
   if (out.binary) { showModal('diff · ' + path, '（二进制文件，无文本差异）'); return; }
   showModal('diff · ' + path, out.diff || '（无差异）');
@@ -1691,7 +1704,16 @@ function editsCard(edits) {
   tile.appendChild(iconEl('code', 'lg'));
   head.appendChild(tile);
   const info = el('div', 'einfo');
-  info.appendChild(el('div', 'etitle', '已编辑 ' + edits.length + ' 个文件'));
+  const nAdded = edits.filter(e => e.kind === 'added').length;
+  const nRemoved = edits.filter(e => e.kind === 'removed').length;
+  let title = '已编辑 ' + edits.length + ' 个文件';
+  if (nAdded || nRemoved) {
+    const bits = [];
+    if (nAdded) bits.push('新增 ' + nAdded);
+    if (nRemoved) bits.push('删除 ' + nRemoved);
+    title = '本回合变更 ' + edits.length + ' 个文件 · ' + bits.join(' · ');
+  }
+  info.appendChild(el('div', 'etitle', title));
   let add = 0, del = 0;
   for (const e of edits) { add += Number(e.add || 0); del += Number(e.del || 0); }
   const sum = el('div', 'esum');
@@ -1706,10 +1728,14 @@ function editsCard(edits) {
     row.title = e.path + '  ·  点击查看 diff';
     row.appendChild(el('span', 'epath trunc', e.path || ''));
     const num = el('span', 'enum');
+    if (e.kind && e.kind !== 'modified') {
+      const tag = el('span', 'ekind ek-' + e.kind, e.kind === 'added' ? '新增' : '删除');
+      num.appendChild(tag);
+    }
     if (e.add) num.appendChild(el('span', 'eadd', '+' + e.add));
     if (e.del) num.appendChild(el('span', 'edel', '-' + e.del));
     row.appendChild(num);
-    row.onclick = () => openDiffPreview(e.path, { add: e.add, del: e.del });
+    row.onclick = () => openDiffPreview(e.path, { add: e.add, del: e.del, kind: e.kind });
     list.appendChild(row);
   }
   card.appendChild(list);
@@ -2061,7 +2087,11 @@ function makeTool(m) {
   // Teamwork 工具走结构化卡片（见上节）
   if (isTwTool(m)) return makeTwTool(m);
   const wrap = el('div', 'trowwrap');
-  const btn = el('button', 'trow');
+  // 行容器是 div 而不是 button：按钮里不能再嵌「终止」按钮，所以键盘
+  // 行为（Enter/Space 展开）自己补，样式仍由 .trow 决定
+  const btn = el('div', 'trow');
+  btn.tabIndex = 0;
+  btn.setAttribute('role', 'button');
   btn.setAttribute('aria-expanded', m.expanded ? 'true' : 'false');
   const dot = el('span', 'tdot');
   btn.appendChild(dot);
@@ -2073,18 +2103,33 @@ function makeTool(m) {
   const meta = el('span', 'tmeta');
   btn.appendChild(meta);
   btn.appendChild(el('span', 'grow'));
+  // 终止这一次调用：只在调用进行中显示（引擎支持逐调用取消，回合照跑）
+  const stop = el('button', 'tstop');
+  stop.type = 'button';
+  stop.hidden = true;
+  stop.title = '终止这次工具调用（其余调用和本回合继续）';
+  stop.setAttribute('aria-label', '终止这次工具调用');
+  stop.appendChild(iconEl('stop', 'sm'));
+  stop.onclick = ev => { ev.stopPropagation(); terminateToolCall(m.ws, m); };
+  btn.appendChild(stop);
   const chev = el('span', 'tchev');
   chev.appendChild(iconEl('chevronRight', 'sm'));
   btn.appendChild(chev);
   const body = el('div', 'tbody');
   body.hidden = !m.expanded;
   wrap.appendChild(btn); wrap.appendChild(body);
-  wrap._btn = btn; wrap._body = body; wrap._dot = dot; wrap._meta = meta; wrap._chev = chev; wrap._ico = ic;
-  btn.onclick = () => {
+  wrap._btn = btn; wrap._body = body; wrap._dot = dot; wrap._meta = meta; wrap._chev = chev; wrap._ico = ic; wrap._stop = stop;
+  const toggle = () => {
     m.expanded = !m.expanded;
     wrap.classList.toggle('expanded', m.expanded);
     body.hidden = !m.expanded;
     btn.setAttribute('aria-expanded', m.expanded ? 'true' : 'false');
+  };
+  btn.onclick = toggle;
+  btn.onkeydown = ev => {
+    if (ev.key !== 'Enter' && ev.key !== ' ' && ev.key !== 'Spacebar') return;
+    ev.preventDefault();
+    toggle();
   };
   wrap.classList.toggle('expanded', !!m.expanded);
   return wrap;
@@ -2101,9 +2146,19 @@ function updateTool(node, m) {
   node.classList.toggle('ok', kind === 'ok');
   node.classList.toggle('bad', kind === 'bad');
   node.classList.toggle('warn', kind === 'warn');
+  // 终止：运行中且引擎给了调用句柄才可点；点了之后变成「终止中」灰钮，
+  // 等 tool_end（结果固定为 "User terminated this toolcall"）收尾
+  if (node._stop) {
+    const live = kind === 'run' && !!m.call;
+    node._stop.hidden = !live;
+    node._stop.disabled = !!m.terminating;
+    node._stop.classList.toggle('busy', !!m.terminating);
+  }
+  node.classList.toggle('terminating', kind === 'run' && !!m.terminating);
   if (node._meta) {
     const bits = [];
-    if (m.sec) bits.push(fmtDur(m.sec));
+    if (m.terminating && kind === 'run') bits.push('终止中…');
+    else if (m.sec) bits.push(fmtDur(m.sec));
     else if (kind === 'run' && m.started) bits.push(((Date.now() - m.started) / 1000).toFixed(1) + 's');
     if (m.chars) bits.push(fmtTok(m.chars) + ' 字符');
     node._meta.textContent = bits.join(' · ');
@@ -2474,6 +2529,46 @@ function diffNumstat(before, after) {
   out.sort((x, y) => (y.add + y.del) - (x.add + x.del));
   return out;
 }
+/* ---- 文件系统快照：{path,size,mt} → Map，前后差 → 新增/修改/删除 ------
+   比 git.numstat 更全：exec 脚本写的文件、非 git 工作区、被忽略的文件都能感知。
+   与 numstat 合并时以本快照的文件清单为准，numstat 只提供 +A/-D 行数。 */
+function snapshotMap(out) {
+  if (!out || out.ok === false || !Array.isArray(out.files)) return null;
+  const m = new Map();
+  for (const f of out.files) {
+    if (!f || !f.path) continue;
+    m.set(String(f.path), { size: Number(f.size || 0), mt: Number(f.mt || 0) });
+  }
+  return m;
+}
+function diffSnapshot(before, after) {
+  if (!before || !after) return null;
+  const out = [];
+  for (const [path, a] of after) {
+    const b = before.get(path);
+    if (!b) out.push({ path: path, kind: 'added' });
+    else if (b.size !== a.size || b.mt !== a.mt) out.push({ path: path, kind: 'modified' });
+  }
+  for (const path of before.keys())
+    if (!after.has(path)) out.push({ path: path, kind: 'removed' });
+  return out;
+}
+// 把 numstat 的行数并入快照清单：快照里有、numstat 也有 → 带 +A/-D；
+// 只有 numstat 有（理论上不该发生，比如快照被截断）→ 也保留为修改。
+function mergeEdits(snap, stats) {
+  const statsMap = new Map();
+  for (const e of (stats || [])) statsMap.set(e.path, e);
+  const out = (snap || []).map(e => {
+    const s = statsMap.get(e.path);
+    return s ? { path: e.path, kind: e.kind, add: s.add, del: s.del } : { path: e.path, kind: e.kind };
+  });
+  if (snap) {
+    const seen = new Set(snap.map(e => e.path));
+    for (const e of (stats || [])) if (!seen.has(e.path)) out.push({ path: e.path, kind: 'modified', add: e.add, del: e.del });
+  }
+  out.sort((x, y) => ((y.add || 0) + (y.del || 0)) - ((x.add || 0) + (x.del || 0)));
+  return out;
+}
 // 从当前回合的消息里聚合用量 / 用户消息 / 工具与轮次（end 在重载之前调用）
 function turnStatsFromMsgs(t) {
   let lastUser = -1;
@@ -2500,6 +2595,10 @@ function numstatSnapshot(ws) {
     return Promise.resolve(Mock.numstat());
   return Promise.resolve(api('git.numstat', { ws: ws, cwd: cwdOf(ws) }));
 }
+function fsSnapshot(ws) {
+  if (S.mode === 'demo') return Promise.resolve(null); // 演示模式无真实文件系统
+  return Promise.resolve(api('fs.snapshot', { ws: ws, cwd: cwdOf(ws) }));
+}
 const ChatTurns = {
   begin(ws) {
     const t = ensureTab(ws);
@@ -2507,11 +2606,15 @@ const ChatTurns = {
     // 直到本回合 end 重算，看起来像是本次输入改动了那些文件（见用户反馈）。
     t._turnMeta = null;
     if (t._turnSnap) return;
-    const snap = { startedAt: Date.now(), beforeP: null };
+    const snap = { startedAt: Date.now(), beforeP: null, fsBeforeP: null };
     t._turnSnap = snap;
     try {
       snap.beforeP = numstatSnapshot(ws).then(out => numstatMap(out)).catch(() => null);
     } catch (e) { snap.beforeP = Promise.resolve(null); }
+    // 文件快照：新增/修改/删除的权威来源（含 exec 产物），与 git 无关
+    try {
+      snap.fsBeforeP = fsSnapshot(ws).then(out => snapshotMap(out)).catch(() => null);
+    } catch (e) { snap.fsBeforeP = Promise.resolve(null); }
   },
   end(e) {
     const ws = (e && e.ws) ? e.ws : S.active;
@@ -2530,19 +2633,28 @@ const ChatTurns = {
     };
     t._turnMeta = meta;
     markChat(ws);
-    if (!snap.beforeP) return;
-    snap.beforeP.then(before => {
-      if (!before) return;
-      numstatSnapshot(ws)
-        .then(after => {
-          if (!after || after.ok === false) return;
-          const edits = diffNumstat(before, numstatMap(after));
-          if (!edits.length) return;
-          meta.edits = edits;
-          if (S.tabs.get(ws) !== t) return;
-          markChat(ws);
-        }).catch(() => {});
-    });
+    // 两个后快照并行取；fs.snapshot 是新增/修改/删除的权威来源（含 exec 产物），
+    // numstat 只补 +A/-D 行数。任一失败都静默降级到另一种，都不行就不显示卡。
+    Promise.all([
+      snap.beforeP || Promise.resolve(null),
+      snap.fsBeforeP || Promise.resolve(null),
+      numstatSnapshot(ws).catch(() => null),
+      fsSnapshot(ws).catch(() => null),
+    ]).then(([before, fsBefore, afterNum, afterFs]) => {
+      let edits = [];
+      const fsBeforeMap = fsBefore, fsAfterMap = snapshotMap(afterFs);
+      if (fsBeforeMap && fsAfterMap) {
+        edits = mergeEdits(diffSnapshot(fsBeforeMap, fsAfterMap),
+                           before ? diffNumstat(before, numstatMap(afterNum)) : []);
+      } else if (before) {
+        // fs 快照不可用（演示模式 / 非工作区）：退回原来的 git.numstat 差异
+        edits = diffNumstat(before, numstatMap(afterNum));
+      }
+      if (!edits.length) return;
+      meta.edits = edits;
+      if (S.tabs.get(ws) !== t) return;
+      markChat(ws);
+    }).catch(() => {});
   },
 };
 window.ChatTurns = ChatTurns;

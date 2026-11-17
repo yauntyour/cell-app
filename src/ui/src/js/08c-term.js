@@ -1080,19 +1080,9 @@
     return Promise.resolve('');
   }
   function clipWrite(text) {
-    try {
-      if (navigator.clipboard && navigator.clipboard.writeText) return navigator.clipboard.writeText(text).then(function () { return true; }, function () { return false; });
-    } catch (e) {}
-    try {
-      var ta = document.createElement('textarea');
-      ta.value = text;
-      ta.style.position = 'fixed'; ta.style.left = '-9999px';
-      document.body.appendChild(ta);
-      ta.select();
-      var ok = document.execCommand('copy');
-      ta.remove();
-      return Promise.resolve(!!ok);
-    } catch (e2) { return Promise.resolve(false); }
+    return typeof writeClipboard === 'function'
+      ? writeClipboard(text)
+      : Promise.resolve(false);
   }
 
   /* ---------- 6. 演示模式假 shell ---------- */

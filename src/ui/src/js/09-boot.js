@@ -213,6 +213,7 @@ async function boot() {
     fetchSkills(); // /skill 的参数补全：后台拉一次，失败就退回空列表（不挡启动）
     refreshUsages(false); // 侧栏「用量」chip 的后台取数（失败就保持「—」）
     refreshTasks(true);   // 会话顶栏的「后台任务」chip：先显示当前在跑的数量
+    if (typeof startSidebarBalance === 'function') startSidebarBalance(); // 左下角余额：立即查一次 + 每 60 秒刷新
   } catch (e) {
     enterDemo('无法连接后端：' + (e && e.message ? e.message : e));
   }

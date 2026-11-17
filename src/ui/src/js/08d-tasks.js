@@ -319,8 +319,10 @@ function taskGroup(sid, items, curSession) {
 }
 
 function taskRow(t) {
-  const failed = !t.running && t.exit != null && t.exit !== 0;
-  const row = el('div', 'task-row' + (t.running ? ' run' : '') + (failed ? ' bad' : ''));
+  // 用户从面板终止的任务既不是「成功」也不是「失败」：标成「已终止」
+  const killed = !t.running && !!t.killed;
+  const failed = !t.running && !killed && t.exit != null && t.exit !== 0;
+  const row = el('div', 'task-row' + (t.running ? ' run' : '') + (failed ? ' bad' : '') + (killed ? ' killed' : ''));
   const dot = el('span', 'tk-dot');
   row.appendChild(dot);
   row.appendChild(el('span', 'tk-id', t.id || '?'));
@@ -329,8 +331,9 @@ function taskRow(t) {
   row.appendChild(cmd);
   row.appendChild(el('span', 'tk-dur', taskDur(taskElapsed(t))));
 
-  // 结束的任务把退出码放在耗时后面，运行中的留空
-  if (!t.running) row.appendChild(el('span', 'tk-exit' + (failed ? ' bad' : ''), 'exit ' + (t.exit == null ? '?' : t.exit)));
+  // 结束的任务把退出码放在耗时后面（用户终止的写「已终止」），运行中的留空
+  if (!t.running) row.appendChild(el('span', 'tk-exit' + (failed ? ' bad' : '') + (killed ? ' killed' : ''),
+    killed ? '已终止' : 'exit ' + (t.exit == null ? '?' : t.exit)));
 
   const bOut = el('button', 'icon-btn sm tk-btn');
   bOut.type = 'button';

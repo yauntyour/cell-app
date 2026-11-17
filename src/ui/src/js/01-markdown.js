@@ -182,6 +182,7 @@ function renderBlocks(text) {
       while (i < lines.length && !/^\s*```+\s*$/.test(lines[i])) { buf.push(lines[i]); i++; }
       i++; // 跳过收尾围栏
       out.push('<div class="codeblock">' + (lang ? '<span class="lang">' + esc(lang) + '</span>' : '') +
+               '<button type="button" class="code-copy" data-code-copy title="复制代码" aria-label="复制代码">复制</button>' +
                '<pre class="code">' + esc(buf.join('\n')) + '</pre></div>');
       continue;
     }

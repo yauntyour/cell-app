@@ -290,31 +290,10 @@ function pnlErrorBox(msg, retry) {
 
 function pnlCopy(text, okMsg) {
   var s = String(text == null ? '' : text);
-  var done = function () { pnlToast(okMsg || '已复制到剪贴板', 'ok'); };
-  var fallback = function () {
-    try {
-      var ta = document.createElement('textarea');
-      ta.value = s;
-      ta.setAttribute('readonly', 'readonly');
-      ta.style.position = 'fixed';
-      ta.style.left = '-9999px';
-      ta.style.top = '0';
-      document.body.appendChild(ta);
-      ta.select();
-      var ok = document.execCommand('copy');
-      ta.remove();
-      if (ok) done(); else pnlToast('复制失败（当前环境不允许写入剪贴板）', 'bad');
-    } catch (e) {
-      pnlToast('复制失败：' + ((e && e.message) || e), 'bad');
-    }
-  };
-  try {
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(s).then(done, fallback);
-      return;
-    }
-  } catch (e) {}
-  fallback();
+  writeClipboard(s).then(function (ok) {
+    if (ok) pnlToast(okMsg || '已复制到剪贴板', 'ok');
+    else pnlToast('复制失败（当前环境不允许写入剪贴板）', 'bad');
+  });
 }
 
 /* =====================================================================

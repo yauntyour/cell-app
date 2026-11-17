@@ -395,7 +395,7 @@ function paintNav() {
 function tabMenu(ev, ws) {
   const m = $('#ctxmenu');
   const items = [
-    { t: '复制工作区路径', f: () => { const c = cwdOf(ws); if (c) navigator.clipboard && navigator.clipboard.writeText(c); toast('已复制路径', 'ok'); } },
+    { t: '复制工作区路径', f: () => { const c = cwdOf(ws); if (c) writeClipboard(c).then(ok => toast(ok ? '已复制路径' : '复制失败', ok ? 'ok' : 'bad')); } },
     { t: '在 Git 面板查看', f: () => openDock('git') },
     { t: '重新加载状态', f: () => resync() },
     { t: '关闭工作区', f: () => closeWorkspace(ws) },

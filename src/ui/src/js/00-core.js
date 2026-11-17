@@ -561,6 +561,42 @@ function listProviders() {
   toast(names.length ? '供应商 ' + names.length + ' 个：' + names.join('、') : '还没有配置供应商', 'ok', 7000);
 }
 
+/* ---------- 剪贴板（含 Win+V 历史）-----------------------------------
+   统一的文本写入口。桌面壳提供 host_clipboard_write（Win32 CF_UNICODETEXT），
+   这是唯一能保证内容进 Win+V 剪贴板历史的方式；navigator.clipboard 在
+   WebView2 里常因无用户手势 / 非安全上下文被拒，且不一定进历史。纯浏览器
+   （预览用）没有该绑定，自动回退到 Clipboard API → execCommand。返回 boolean。 */
+function writeClipboard(text) {
+  text = String(text == null ? '' : text);
+  if (!text) return Promise.resolve(false);
+  if (typeof window.host_clipboard_write === 'function') {
+    try {
+      const p = window.host_clipboard_write(text);
+      return Promise.resolve(p).then(r => !!(r && r.ok), () => fallbackClip(text));
+    } catch (e) { return fallbackClip(text); }
+  }
+  return fallbackClip(text);
+}
+function fallbackClip(text) {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    return navigator.clipboard.writeText(text).then(() => true, () => execCopy(text));
+  }
+  return Promise.resolve(execCopy(text));
+}
+function execCopy(text) {
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', 'readonly');
+    ta.style.position = 'fixed'; ta.style.left = '-9999px'; ta.style.top = '0';
+    document.body.appendChild(ta);
+    ta.focus(); ta.select();
+    const ok = !!document.execCommand('copy');
+    ta.remove();
+    return ok;
+  } catch (e) { return false; }
+}
+
 /* ---------- D. 传输层 ---------------------------------------------- */
 async function api(name, args) {
   if (S.mode === 'demo') return Mock.api(name, args || {});
@@ -670,6 +706,8 @@ function handleEvent(e) {
     case 'round': onRound(e); break;
     case 'tool_begin': onToolBegin(e); break;
     case 'tool_end': onToolEnd(e); break;
+    // 另一个客户端点了「终止」：这一行进入「终止中」，tool_end 收尾
+    case 'tool_terminating': onToolTerminating(e); break;
     case 'notice': onNotice(e); break;
     // 后台任务（exec background=true）：后端在任务开始/结束时推全量列表
     case 'tasks': onTasksEvent(e); break;
@@ -775,7 +813,11 @@ function applyHello(st, rebuild, opts) {
   S.provider = st.provider || '';
   // 模型列表是按需拉的（state 快照里没有），换供应商后旧列表就属于上一个
   // 供应商了——不清掉的话「模型」页会继续展示别人的模型
-  if (S.provider !== prevProvider) S.models = [];
+  if (S.provider !== prevProvider) {
+    S.models = [];
+    // 左下角余额跟着当前供应商走：切换后立即查一次（函数由 06-settings.js 提供）
+    if (typeof refreshSidebarBalance === 'function') refreshSidebarBalance();
+  }
   if (st.sandbox) S.sandbox = st.sandbox;
   if (st.settings) S.settings = Object.assign({}, S.settings, st.settings);
   if (st.providers) S.providers = st.providers;
@@ -1024,6 +1066,8 @@ function onToolBegin(e) {
     // seq 是引擎的「本轮第几个」——跨轮次会重复（每轮都从 1 开始），消息 id
     // 必须另用单调计数器，否则 reconcile 的 key 冲突、同一张卡被建两次
     id: 'tool-' + (t._toolSeq = (t._toolSeq || 0) + 1), role: 'tool', seq: e.seq, name: e.name,
+    // call 是引擎给这次调用的唯一句柄（c7）：终止按钮按它定位，seq 不行
+    call: e.call || '', ws: e.ws,
     args: e.args, policy: e.policy, status: 'running', display: '', marker: '',
     sec: 0, chars: 0, expanded: false, started: Date.now(),
   };
@@ -1035,9 +1079,11 @@ function onToolEnd(e) {
   const t = ensureTab(e.ws);
   let tool = t.tools.get(e.seq);
   if (!tool) {
-    tool = { id: 'tool-' + (t._toolSeq = (t._toolSeq || 0) + 1), role: 'tool', seq: e.seq, name: e.name, args: '', expanded: false };
+    tool = { id: 'tool-' + (t._toolSeq = (t._toolSeq || 0) + 1), role: 'tool', seq: e.seq, name: e.name, args: '', expanded: false, ws: e.ws };
     t.tools.set(e.seq, tool); t.msgs.push(tool);
   }
+  if (e.call) tool.call = e.call;
+  tool.terminating = false;
   tool.status = e.status; tool.display = e.display; tool.marker = e.marker;
   tool.sec = e.sec; tool.chars = e.chars; tool.multimodal = e.multimodal;
   if (window.RT) RT.mark(e.ws);  // 工具跑完通常紧跟下一轮请求：作为 TTFT 的起点兜底
@@ -1060,6 +1106,26 @@ function onToolEnd(e) {
       else if (S.dock === 'teamwork') schedule('dock', renderDock);
     });
   }
+}
+/* 终止单次工具调用（工具行右侧的停止按钮）
+   —— 回合不结束，只这一次调用收手，引擎把结果固定成
+   "User terminated this toolcall" 再继续跑其余调用。 */
+function onToolTerminating(e) {
+  const t = S.tabs.get(e.ws);
+  if (!t || !e.call) return;
+  const tool = (t.msgs || []).find(m => m.role === 'tool' && m.call === e.call);
+  if (!tool) return;
+  tool.terminating = true;
+  markChat(e.ws);
+}
+async function terminateToolCall(ws, m) {
+  if (!m || !m.call || m.terminating) return;
+  m.terminating = true;          // 乐观标记：按钮立刻变灰，等 tool_end 收尾
+  markChat(ws);
+  const out = await cmd('tool.cancel', { ws: ws, call: m.call }); // 失败原因由 cmd 弹 toast
+  if (out && out.ok) return;
+  m.terminating = false;         // 已经跑完了 / 不属于本回合：还原按钮
+  markChat(ws);
 }
 function onNotice(e) {
   const t = ensureTab(e.ws);

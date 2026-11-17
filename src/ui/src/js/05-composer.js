@@ -1279,7 +1279,11 @@ async function addFiles(files) {
   const t = curTab();
   if (!t || !files || !files.length) return;
   for (const f of Array.from(files)) {
-    const item = { name: f.name || '文件', size: f.size, uploading: true, path: '' };
+    const nm = f.name || '文件';
+    // 同名同大小视为同一附件：重复粘贴/拖入不再产生第二条 chip，也不再
+    // 重复读盘上传（后端按内容哈希去重，这里省掉前端的无谓往返）。
+    if (t.composer.attachments.some(a => a.name === nm && a.size === f.size && !a.error)) continue;
+    const item = { name: nm, size: f.size, uploading: true, path: '' };
     t.composer.attachments.push(item);
     renderChips(t);
     paintSendState(t);

@@ -491,6 +491,9 @@ select{appearance:none;background-image:url("data:image/svg+xml;charset=utf-8,%3
 .sb-avatar svg{width:15px;height:15px}
 .sb-account-txt{display:flex;flex-direction:column;min-width:0;flex:1;line-height:1.25}
 .sb-account-name{font-size:12.5px;font-weight:600;color:var(--fg)}
+/* 左下角账户主行：当前供应商余额摘要。过长截断，全文放 title；副行仍是连接状态。 */
+.sb-balance{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.sb-balance.bal-err{color:var(--fg3);font-weight:500}
 .sb-account-sub{font-size:10.5px;color:var(--fg3)}
 .sb-account-sub.online{color:var(--ok)}
 .sb-account-sub.demo{color:var(--warn)}
@@ -925,14 +928,20 @@ body.locked{overflow:hidden}
 .prose a:hover{color:var(--accent-hi);border-bottom-color:var(--accent-hi);text-decoration:none}
 /* 代码块：外框 + 顶栏语言标签，圆角与卡片一致 */
 .prose .codeblock{margin:0 0 14px;border:1px solid var(--line);border-radius:var(--radius-s);
-  background:var(--code-bg);overflow:hidden}
+  background:var(--code-bg);overflow:hidden;position:relative}
 .prose .codeblock:last-child{margin-bottom:0}
 .prose .lang{display:block;padding:6px 12px;font-family:var(--mono);font-size:10.5px;
   letter-spacing:.06em;text-transform:lowercase;color:var(--fg4);
   background:var(--bg2);border-bottom:1px solid var(--line)}
+.prose .code-copy{position:absolute;top:5px;right:6px;z-index:1;
+  padding:2px 8px;font-size:10.5px;font-family:var(--ui);color:var(--fg3);
+  background:var(--raise);border:1px solid var(--line2);border-radius:var(--radius-s);
+  cursor:pointer;opacity:.55;transition:opacity .15s,color .15s}
+.prose .codeblock:hover .code-copy,.prose .code-copy:focus-visible{opacity:1;color:var(--fg)}
+.prose .code-copy:hover{color:var(--accent-hi)}
 .prose pre.code{margin:0;padding:12px 14px;background:transparent;overflow-x:auto;
   white-space:pre;font-family:var(--mono);font-size:12.5px;line-height:1.7;color:var(--fg);
-  tab-size:2}
+  tab-size:2;user-select:text;-webkit-user-select:text;cursor:text}
 /* 表格 */
 /* 列宽由内容决定（table-layout:auto）：表头 / 短列不再被长文本列挤扁。
    th/td 显式写 break-word，别继承 .prose 的断词策略到固有宽度里；
@@ -1004,8 +1013,21 @@ body.locked{overflow:hidden}
 .trowwrap{border-top:1px solid var(--line-soft,var(--line))}
 .trowwrap:first-child{border-top:0}
 .trow{display:flex;align-items:center;gap:8px;width:100%;min-height:32px;padding:5px 12px;
-  text-align:left;color:var(--fg2);font-size:12.5px;transition:background var(--dur) var(--ease)}
+  text-align:left;color:var(--fg2);font-size:12.5px;cursor:pointer;transition:background var(--dur) var(--ease)}
 .trow:hover{background:var(--raise)}
+.trow:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+/* 逐调用终止：只在运行中出现，悬停/聚焦时显影，点了变成「终止中」的灰钮 */
+.trow .tstop{display:flex;align-items:center;justify-content:center;flex:none;
+  width:22px;height:22px;padding:0;border:1px solid transparent;border-radius:var(--radius-s);
+  background:transparent;color:var(--fg4);cursor:pointer;opacity:.55;
+  transition:opacity var(--dur) var(--ease),color var(--dur) var(--ease),background var(--dur) var(--ease)}
+.trow .tstop[hidden]{display:none}
+.trow:hover .tstop{opacity:1}
+.trow .tstop:hover{color:var(--bad);background:var(--raise);border-color:var(--line)}
+.trow .tstop:disabled{cursor:default;opacity:.35}
+.trow .tstop.busy{color:var(--warn);opacity:.8}
+.trowwrap.terminating .trow[data-status="run"] .tdot{background:var(--warn);animation:none}
+.trowwrap.terminating .trow .tmeta{color:var(--warn)}
 .trow .tdot{width:6px;height:6px;border-radius:50%;flex:none;background:var(--fg4)}
 .trow[data-status="run"] .tdot{background:var(--accent);animation:breathe 1.4s var(--ease) infinite}
 .trow[data-status="ok"] .tdot{background:var(--ok)}
@@ -1091,6 +1113,9 @@ body.locked{overflow:hidden}
 .erow:hover{background:var(--raise);color:var(--fg)}
 .erow .epath{flex:1;min-width:0;font-family:var(--mono);font-size:12.5px}
 .erow .enum{display:flex;align-items:center;gap:8px;flex:none;font-family:var(--mono);font-size:12px}
+.ekind{font-family:var(--ui);font-size:10.5px;padding:1px 6px;border-radius:5px;line-height:1.5}
+.ek-added{color:var(--add);background:color-mix(in srgb,var(--add) 14%,transparent)}
+.ek-removed{color:var(--del);background:color-mix(in srgb,var(--del) 14%,transparent)}
 .turnfoot{display:flex;align-items:center;gap:4px;padding:8px 0 0;color:var(--fg4)}
 .tfbtn{width:26px;height:26px;border-radius:7px;display:inline-flex;align-items:center;
   justify-content:center;color:var(--fg4);transition:background var(--dur) var(--ease),color var(--dur) var(--ease)}
@@ -3581,6 +3606,9 @@ mark{background:var(--accent-soft);color:var(--accent);border-radius:3px;padding
   font-variant-numeric:tabular-nums}
 .tk-exit{flex:none;font-family:var(--mono);font-size:10px;color:var(--fg4)}
 .tk-exit.bad{color:var(--bad)}
+/* 用户从面板终止的任务：不是失败，标成「已终止」的黄字 */
+.task-row.killed .tk-dot{background:var(--warn)}
+.tk-exit.killed{color:var(--warn)}
 .task-row .tk-btn{opacity:.55;flex:none;width:22px;height:22px}
 .task-row:hover .tk-btn{opacity:1}
 .task-row .tk-btn.open{opacity:1;transform:rotate(180deg)}
@@ -4549,7 +4577,7 @@ try {
         <button class="sb-account" id="btnSettings" title="设置 (Ctrl+,)">
           <span class="sb-avatar"><svg viewBox="0 0 500 500" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="42" stroke-linejoin="miter" stroke-linecap="square"><rect x="90" y="90" width="320" height="320"/><path d="M 170 170 L 170 330 L 250 330 L 250 170 L 330 170 L 330 410"/></g></svg></span>
           <span class="sb-account-txt">
-            <span class="sb-account-name">本地工作台</span>
+            <span class="sb-account-name sb-balance" id="sbBalance" title="当前供应商账户余额">—</span>
             <span class="sb-account-sub" id="sbConnState">已连接</span>
           </span>
           <span class="sb-gear"><svg class="uico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8.5h8.5M17.5 8.5H20M4 15.5h2.5M11.5 15.5H20"/><circle cx="15" cy="8.5" r="2.2"/><circle cx="9" cy="15.5" r="2.2"/></svg></span>
@@ -5215,6 +5243,42 @@ function listProviders() {
   toast(names.length ? '供应商 ' + names.length + ' 个：' + names.join('、') : '还没有配置供应商', 'ok', 7000);
 }
 
+/* ---------- 剪贴板（含 Win+V 历史）-----------------------------------
+   统一的文本写入口。桌面壳提供 host_clipboard_write（Win32 CF_UNICODETEXT），
+   这是唯一能保证内容进 Win+V 剪贴板历史的方式；navigator.clipboard 在
+   WebView2 里常因无用户手势 / 非安全上下文被拒，且不一定进历史。纯浏览器
+   （预览用）没有该绑定，自动回退到 Clipboard API → execCommand。返回 boolean。 */
+function writeClipboard(text) {
+  text = String(text == null ? '' : text);
+  if (!text) return Promise.resolve(false);
+  if (typeof window.host_clipboard_write === 'function') {
+    try {
+      const p = window.host_clipboard_write(text);
+      return Promise.resolve(p).then(r => !!(r && r.ok), () => fallbackClip(text));
+    } catch (e) { return fallbackClip(text); }
+  }
+  return fallbackClip(text);
+}
+function fallbackClip(text) {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    return navigator.clipboard.writeText(text).then(() => true, () => execCopy(text));
+  }
+  return Promise.resolve(execCopy(text));
+}
+function execCopy(text) {
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', 'readonly');
+    ta.style.position = 'fixed'; ta.style.left = '-9999px'; ta.style.top = '0';
+    document.body.appendChild(ta);
+    ta.focus(); ta.select();
+    const ok = !!document.execCommand('copy');
+    ta.remove();
+    return ok;
+  } catch (e) { return false; }
+}
+
 /* ---------- D. 传输层 ---------------------------------------------- */
 async function api(name, args) {
   if (S.mode === 'demo') return Mock.api(name, args || {});
@@ -5324,6 +5388,8 @@ function handleEvent(e) {
     case 'round': onRound(e); break;
     case 'tool_begin': onToolBegin(e); break;
     case 'tool_end': onToolEnd(e); break;
+    // 另一个客户端点了「终止」：这一行进入「终止中」，tool_end 收尾
+    case 'tool_terminating': onToolTerminating(e); break;
     case 'notice': onNotice(e); break;
     // 后台任务（exec background=true）：后端在任务开始/结束时推全量列表
     case 'tasks': onTasksEvent(e); break;
@@ -5429,7 +5495,11 @@ function applyHello(st, rebuild, opts) {
   S.provider = st.provider || '';
   // 模型列表是按需拉的（state 快照里没有），换供应商后旧列表就属于上一个
   // 供应商了——不清掉的话「模型」页会继续展示别人的模型
-  if (S.provider !== prevProvider) S.models = [];
+  if (S.provider !== prevProvider) {
+    S.models = [];
+    // 左下角余额跟着当前供应商走：切换后立即查一次（函数由 06-settings.js 提供）
+    if (typeof refreshSidebarBalance === 'function') refreshSidebarBalance();
+  }
   if (st.sandbox) S.sandbox = st.sandbox;
   if (st.settings) S.settings = Object.assign({}, S.settings, st.settings);
   if (st.providers) S.providers = st.providers;
@@ -5678,6 +5748,8 @@ function onToolBegin(e) {
     // seq 是引擎的「本轮第几个」——跨轮次会重复（每轮都从 1 开始），消息 id
     // 必须另用单调计数器，否则 reconcile 的 key 冲突、同一张卡被建两次
     id: 'tool-' + (t._toolSeq = (t._toolSeq || 0) + 1), role: 'tool', seq: e.seq, name: e.name,
+    // call 是引擎给这次调用的唯一句柄（c7）：终止按钮按它定位，seq 不行
+    call: e.call || '', ws: e.ws,
     args: e.args, policy: e.policy, status: 'running', display: '', marker: '',
     sec: 0, chars: 0, expanded: false, started: Date.now(),
   };
@@ -5689,9 +5761,11 @@ function onToolEnd(e) {
   const t = ensureTab(e.ws);
   let tool = t.tools.get(e.seq);
   if (!tool) {
-    tool = { id: 'tool-' + (t._toolSeq = (t._toolSeq || 0) + 1), role: 'tool', seq: e.seq, name: e.name, args: '', expanded: false };
+    tool = { id: 'tool-' + (t._toolSeq = (t._toolSeq || 0) + 1), role: 'tool', seq: e.seq, name: e.name, args: '', expanded: false, ws: e.ws };
     t.tools.set(e.seq, tool); t.msgs.push(tool);
   }
+  if (e.call) tool.call = e.call;
+  tool.terminating = false;
   tool.status = e.status; tool.display = e.display; tool.marker = e.marker;
   tool.sec = e.sec; tool.chars = e.chars; tool.multimodal = e.multimodal;
   if (window.RT) RT.mark(e.ws);  // 工具跑完通常紧跟下一轮请求：作为 TTFT 的起点兜底
@@ -5714,6 +5788,26 @@ function onToolEnd(e) {
       else if (S.dock === 'teamwork') schedule('dock', renderDock);
     });
   }
+}
+/* 终止单次工具调用（工具行右侧的停止按钮）
+   —— 回合不结束，只这一次调用收手，引擎把结果固定成
+   "User terminated this toolcall" 再继续跑其余调用。 */
+function onToolTerminating(e) {
+  const t = S.tabs.get(e.ws);
+  if (!t || !e.call) return;
+  const tool = (t.msgs || []).find(m => m.role === 'tool' && m.call === e.call);
+  if (!tool) return;
+  tool.terminating = true;
+  markChat(e.ws);
+}
+async function terminateToolCall(ws, m) {
+  if (!m || !m.call || m.terminating) return;
+  m.terminating = true;          // 乐观标记：按钮立刻变灰，等 tool_end 收尾
+  markChat(ws);
+  const out = await cmd('tool.cancel', { ws: ws, call: m.call }); // 失败原因由 cmd 弹 toast
+  if (out && out.ok) return;
+  m.terminating = false;         // 已经跑完了 / 不属于本回合：还原按钮
+  markChat(ws);
 }
 function onNotice(e) {
   const t = ensureTab(e.ws);
@@ -6064,6 +6158,7 @@ function renderBlocks(text) {
       while (i < lines.length && !/^\s*```+\s*$/.test(lines[i])) { buf.push(lines[i]); i++; }
       i++; // 跳过收尾围栏
       out.push('<div class="codeblock">' + (lang ? '<span class="lang">' + esc(lang) + '</span>' : '') +
+               '<button type="button" class="code-copy" data-code-copy title="复制代码" aria-label="复制代码">复制</button>' +
                '<pre class="code">' + esc(buf.join('\n')) + '</pre></div>');
       continue;
     }
@@ -6624,7 +6719,7 @@ function paintNav() {
 function tabMenu(ev, ws) {
   const m = $('#ctxmenu');
   const items = [
-    { t: '复制工作区路径', f: () => { const c = cwdOf(ws); if (c) navigator.clipboard && navigator.clipboard.writeText(c); toast('已复制路径', 'ok'); } },
+    { t: '复制工作区路径', f: () => { const c = cwdOf(ws); if (c) writeClipboard(c).then(ok => toast(ok ? '已复制路径' : '复制失败', ok ? 'ok' : 'bad')); } },
     { t: '在 Git 面板查看', f: () => openDock('git') },
     { t: '重新加载状态', f: () => resync() },
     { t: '关闭工作区', f: () => closeWorkspace(ws) },
@@ -7034,6 +7129,7 @@ function toolIconName(name) {
 function toolKind(s) {
   s = String(s || '').toLowerCase();
   if (/run|active|progress|working|pending/.test(s)) return 'run';
+  if (/terminat/.test(s)) return 'warn';   // 用户主动终止：不是失败，也不是成功
   if (/(^|_)(ok|done|complete|success|approved)/.test(s)) return 'ok';
   if (/fail|error|denied|abort|cancel|blocked|unknown/.test(s)) return 'bad';
   if (/warn|skip/.test(s)) return 'warn';
@@ -8032,26 +8128,38 @@ function popMenu(anchor, rows) {
 function copyText(text, okMsg) {
   text = String(text == null ? '' : text);
   if (!text) return;
-  const done = () => toast(okMsg || '已复制', 'ok', 1400);
-  if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(text).then(done).catch(() => legacyCopy(text, done));
+  writeClipboard(text).then(ok => {
+    if (ok) toast(okMsg || '已复制', 'ok', 1400);
+    else toast('复制失败', 'bad');
+  });
+}
+/* 代码块「复制」按钮：markdown 是 innerHTML 重绘的，用 document 事件委托，
+   从相邻 <pre.code> 取原文（DOM 文本，避免转义/引号问题）。 */
+document.addEventListener('click', ev => {
+  const b = ev.target && ev.target.closest && ev.target.closest('[data-code-copy]');
+  if (!b) return;
+  const pre = b.parentElement && b.parentElement.querySelector('pre.code');
+  if (!pre) return;
+  ev.preventDefault();
+  ev.stopPropagation();
+  copyText(pre.textContent, '已复制代码');
+});
+async function openDiffPreview(path, meta) {
+  if (!path) return;
+  const ws = S.active, cwd = cwdOf(ws);
+  // 新增文件（常由 exec 产生、git 未必跟踪）：直接读文件内容展示，而不是 diff。
+  if (meta && meta.kind === 'added') {
+    let out = null;
+    try { out = await api('fs.read', { ws: ws, cwd: cwd, path: path }); } catch (e) { out = null; }
+    if (!out || out.ok === false || out.binary) {
+      showModal('新增 · ' + path, out && out.binary ? '（二进制文件）' : '（无法读取内容：' + ((out && out.error) || '不可用') + '）');
+      return;
+    }
+    showModal('新增 · ' + path, out.content || out.text || '（空文件）');
     return;
   }
-  legacyCopy(text, done);
-}
-function legacyCopy(text, done) {
-  const ta = document.createElement('textarea');
-  ta.value = text;
-  ta.style.position = 'fixed'; ta.style.opacity = '0';
-  document.body.appendChild(ta);
-  ta.select();
-  try { document.execCommand('copy'); done(); } catch (e) { toast('复制失败', 'bad'); }
-  ta.remove();
-}
-async function openDiffPreview(path) {
-  if (!path) return;
   let out = null;
-  try { out = await api('git.diff', { ws: S.active, cwd: cwdOf(S.active), path: path }); } catch (e) { out = null; }
+  try { out = await api('git.diff', { ws: ws, cwd: cwd, path: path }); } catch (e) { out = null; }
   if (!out || out.ok === false) { toast('无法获取 diff：' + ((out && out.error) || '命令不可用'), 'bad'); return; }
   if (out.binary) { showModal('diff · ' + path, '（二进制文件，无文本差异）'); return; }
   showModal('diff · ' + path, out.diff || '（无差异）');
@@ -8678,7 +8786,16 @@ function editsCard(edits) {
   tile.appendChild(iconEl('code', 'lg'));
   head.appendChild(tile);
   const info = el('div', 'einfo');
-  info.appendChild(el('div', 'etitle', '已编辑 ' + edits.length + ' 个文件'));
+  const nAdded = edits.filter(e => e.kind === 'added').length;
+  const nRemoved = edits.filter(e => e.kind === 'removed').length;
+  let title = '已编辑 ' + edits.length + ' 个文件';
+  if (nAdded || nRemoved) {
+    const bits = [];
+    if (nAdded) bits.push('新增 ' + nAdded);
+    if (nRemoved) bits.push('删除 ' + nRemoved);
+    title = '本回合变更 ' + edits.length + ' 个文件 · ' + bits.join(' · ');
+  }
+  info.appendChild(el('div', 'etitle', title));
   let add = 0, del = 0;
   for (const e of edits) { add += Number(e.add || 0); del += Number(e.del || 0); }
   const sum = el('div', 'esum');
@@ -8693,10 +8810,14 @@ function editsCard(edits) {
     row.title = e.path + '  ·  点击查看 diff';
     row.appendChild(el('span', 'epath trunc', e.path || ''));
     const num = el('span', 'enum');
+    if (e.kind && e.kind !== 'modified') {
+      const tag = el('span', 'ekind ek-' + e.kind, e.kind === 'added' ? '新增' : '删除');
+      num.appendChild(tag);
+    }
     if (e.add) num.appendChild(el('span', 'eadd', '+' + e.add));
     if (e.del) num.appendChild(el('span', 'edel', '-' + e.del));
     row.appendChild(num);
-    row.onclick = () => openDiffPreview(e.path, { add: e.add, del: e.del });
+    row.onclick = () => openDiffPreview(e.path, { add: e.add, del: e.del, kind: e.kind });
     list.appendChild(row);
   }
   card.appendChild(list);
@@ -9048,7 +9169,11 @@ function makeTool(m) {
   // Teamwork 工具走结构化卡片（见上节）
   if (isTwTool(m)) return makeTwTool(m);
   const wrap = el('div', 'trowwrap');
-  const btn = el('button', 'trow');
+  // 行容器是 div 而不是 button：按钮里不能再嵌「终止」按钮，所以键盘
+  // 行为（Enter/Space 展开）自己补，样式仍由 .trow 决定
+  const btn = el('div', 'trow');
+  btn.tabIndex = 0;
+  btn.setAttribute('role', 'button');
   btn.setAttribute('aria-expanded', m.expanded ? 'true' : 'false');
   const dot = el('span', 'tdot');
   btn.appendChild(dot);
@@ -9060,18 +9185,33 @@ function makeTool(m) {
   const meta = el('span', 'tmeta');
   btn.appendChild(meta);
   btn.appendChild(el('span', 'grow'));
+  // 终止这一次调用：只在调用进行中显示（引擎支持逐调用取消，回合照跑）
+  const stop = el('button', 'tstop');
+  stop.type = 'button';
+  stop.hidden = true;
+  stop.title = '终止这次工具调用（其余调用和本回合继续）';
+  stop.setAttribute('aria-label', '终止这次工具调用');
+  stop.appendChild(iconEl('stop', 'sm'));
+  stop.onclick = ev => { ev.stopPropagation(); terminateToolCall(m.ws, m); };
+  btn.appendChild(stop);
   const chev = el('span', 'tchev');
   chev.appendChild(iconEl('chevronRight', 'sm'));
   btn.appendChild(chev);
   const body = el('div', 'tbody');
   body.hidden = !m.expanded;
   wrap.appendChild(btn); wrap.appendChild(body);
-  wrap._btn = btn; wrap._body = body; wrap._dot = dot; wrap._meta = meta; wrap._chev = chev; wrap._ico = ic;
-  btn.onclick = () => {
+  wrap._btn = btn; wrap._body = body; wrap._dot = dot; wrap._meta = meta; wrap._chev = chev; wrap._ico = ic; wrap._stop = stop;
+  const toggle = () => {
     m.expanded = !m.expanded;
     wrap.classList.toggle('expanded', m.expanded);
     body.hidden = !m.expanded;
     btn.setAttribute('aria-expanded', m.expanded ? 'true' : 'false');
+  };
+  btn.onclick = toggle;
+  btn.onkeydown = ev => {
+    if (ev.key !== 'Enter' && ev.key !== ' ' && ev.key !== 'Spacebar') return;
+    ev.preventDefault();
+    toggle();
   };
   wrap.classList.toggle('expanded', !!m.expanded);
   return wrap;
@@ -9088,9 +9228,19 @@ function updateTool(node, m) {
   node.classList.toggle('ok', kind === 'ok');
   node.classList.toggle('bad', kind === 'bad');
   node.classList.toggle('warn', kind === 'warn');
+  // 终止：运行中且引擎给了调用句柄才可点；点了之后变成「终止中」灰钮，
+  // 等 tool_end（结果固定为 "User terminated this toolcall"）收尾
+  if (node._stop) {
+    const live = kind === 'run' && !!m.call;
+    node._stop.hidden = !live;
+    node._stop.disabled = !!m.terminating;
+    node._stop.classList.toggle('busy', !!m.terminating);
+  }
+  node.classList.toggle('terminating', kind === 'run' && !!m.terminating);
   if (node._meta) {
     const bits = [];
-    if (m.sec) bits.push(fmtDur(m.sec));
+    if (m.terminating && kind === 'run') bits.push('终止中…');
+    else if (m.sec) bits.push(fmtDur(m.sec));
     else if (kind === 'run' && m.started) bits.push(((Date.now() - m.started) / 1000).toFixed(1) + 's');
     if (m.chars) bits.push(fmtTok(m.chars) + ' 字符');
     node._meta.textContent = bits.join(' · ');
@@ -9461,6 +9611,46 @@ function diffNumstat(before, after) {
   out.sort((x, y) => (y.add + y.del) - (x.add + x.del));
   return out;
 }
+/* ---- 文件系统快照：{path,size,mt} → Map，前后差 → 新增/修改/删除 ------
+   比 git.numstat 更全：exec 脚本写的文件、非 git 工作区、被忽略的文件都能感知。
+   与 numstat 合并时以本快照的文件清单为准，numstat 只提供 +A/-D 行数。 */
+function snapshotMap(out) {
+  if (!out || out.ok === false || !Array.isArray(out.files)) return null;
+  const m = new Map();
+  for (const f of out.files) {
+    if (!f || !f.path) continue;
+    m.set(String(f.path), { size: Number(f.size || 0), mt: Number(f.mt || 0) });
+  }
+  return m;
+}
+function diffSnapshot(before, after) {
+  if (!before || !after) return null;
+  const out = [];
+  for (const [path, a] of after) {
+    const b = before.get(path);
+    if (!b) out.push({ path: path, kind: 'added' });
+    else if (b.size !== a.size || b.mt !== a.mt) out.push({ path: path, kind: 'modified' });
+  }
+  for (const path of before.keys())
+    if (!after.has(path)) out.push({ path: path, kind: 'removed' });
+  return out;
+}
+// 把 numstat 的行数并入快照清单：快照里有、numstat 也有 → 带 +A/-D；
+// 只有 numstat 有（理论上不该发生，比如快照被截断）→ 也保留为修改。
+function mergeEdits(snap, stats) {
+  const statsMap = new Map();
+  for (const e of (stats || [])) statsMap.set(e.path, e);
+  const out = (snap || []).map(e => {
+    const s = statsMap.get(e.path);
+    return s ? { path: e.path, kind: e.kind, add: s.add, del: s.del } : { path: e.path, kind: e.kind };
+  });
+  if (snap) {
+    const seen = new Set(snap.map(e => e.path));
+    for (const e of (stats || [])) if (!seen.has(e.path)) out.push({ path: e.path, kind: 'modified', add: e.add, del: e.del });
+  }
+  out.sort((x, y) => ((y.add || 0) + (y.del || 0)) - ((x.add || 0) + (x.del || 0)));
+  return out;
+}
 // 从当前回合的消息里聚合用量 / 用户消息 / 工具与轮次（end 在重载之前调用）
 function turnStatsFromMsgs(t) {
   let lastUser = -1;
@@ -9487,6 +9677,10 @@ function numstatSnapshot(ws) {
     return Promise.resolve(Mock.numstat());
   return Promise.resolve(api('git.numstat', { ws: ws, cwd: cwdOf(ws) }));
 }
+function fsSnapshot(ws) {
+  if (S.mode === 'demo') return Promise.resolve(null); // 演示模式无真实文件系统
+  return Promise.resolve(api('fs.snapshot', { ws: ws, cwd: cwdOf(ws) }));
+}
 const ChatTurns = {
   begin(ws) {
     const t = ensureTab(ws);
@@ -9494,11 +9688,15 @@ const ChatTurns = {
     // 直到本回合 end 重算，看起来像是本次输入改动了那些文件（见用户反馈）。
     t._turnMeta = null;
     if (t._turnSnap) return;
-    const snap = { startedAt: Date.now(), beforeP: null };
+    const snap = { startedAt: Date.now(), beforeP: null, fsBeforeP: null };
     t._turnSnap = snap;
     try {
       snap.beforeP = numstatSnapshot(ws).then(out => numstatMap(out)).catch(() => null);
     } catch (e) { snap.beforeP = Promise.resolve(null); }
+    // 文件快照：新增/修改/删除的权威来源（含 exec 产物），与 git 无关
+    try {
+      snap.fsBeforeP = fsSnapshot(ws).then(out => snapshotMap(out)).catch(() => null);
+    } catch (e) { snap.fsBeforeP = Promise.resolve(null); }
   },
   end(e) {
     const ws = (e && e.ws) ? e.ws : S.active;
@@ -9517,19 +9715,28 @@ const ChatTurns = {
     };
     t._turnMeta = meta;
     markChat(ws);
-    if (!snap.beforeP) return;
-    snap.beforeP.then(before => {
-      if (!before) return;
-      numstatSnapshot(ws)
-        .then(after => {
-          if (!after || after.ok === false) return;
-          const edits = diffNumstat(before, numstatMap(after));
-          if (!edits.length) return;
-          meta.edits = edits;
-          if (S.tabs.get(ws) !== t) return;
-          markChat(ws);
-        }).catch(() => {});
-    });
+    // 两个后快照并行取；fs.snapshot 是新增/修改/删除的权威来源（含 exec 产物），
+    // numstat 只补 +A/-D 行数。任一失败都静默降级到另一种，都不行就不显示卡。
+    Promise.all([
+      snap.beforeP || Promise.resolve(null),
+      snap.fsBeforeP || Promise.resolve(null),
+      numstatSnapshot(ws).catch(() => null),
+      fsSnapshot(ws).catch(() => null),
+    ]).then(([before, fsBefore, afterNum, afterFs]) => {
+      let edits = [];
+      const fsBeforeMap = fsBefore, fsAfterMap = snapshotMap(afterFs);
+      if (fsBeforeMap && fsAfterMap) {
+        edits = mergeEdits(diffSnapshot(fsBeforeMap, fsAfterMap),
+                           before ? diffNumstat(before, numstatMap(afterNum)) : []);
+      } else if (before) {
+        // fs 快照不可用（演示模式 / 非工作区）：退回原来的 git.numstat 差异
+        edits = diffNumstat(before, numstatMap(afterNum));
+      }
+      if (!edits.length) return;
+      meta.edits = edits;
+      if (S.tabs.get(ws) !== t) return;
+      markChat(ws);
+    }).catch(() => {});
   },
 };
 window.ChatTurns = ChatTurns;
@@ -12933,7 +13140,11 @@ async function addFiles(files) {
   const t = curTab();
   if (!t || !files || !files.length) return;
   for (const f of Array.from(files)) {
-    const item = { name: f.name || '文件', size: f.size, uploading: true, path: '' };
+    const nm = f.name || '文件';
+    // 同名同大小视为同一附件：重复粘贴/拖入不再产生第二条 chip，也不再
+    // 重复读盘上传（后端按内容哈希去重，这里省掉前端的无谓往返）。
+    if (t.composer.attachments.some(a => a.name === nm && a.size === f.size && !a.error)) continue;
+    const item = { name: nm, size: f.size, uploading: true, path: '' };
     t.composer.attachments.push(item);
     renderChips(t);
     paintSendState(t);
@@ -15084,6 +15295,54 @@ async function showBalance(provider) {
   else toast('余额不可用：' + ((out && out.error) || b.error || '查询失败'), 'bad', 7000);
 }
 
+/* ---------- 左下角账户余额（当前供应商，自动刷新）-------------------
+   把侧栏左下角「本地工作台」换成当前供应商余额摘要：主行金额、副行仍是
+   连接状态；过长交给 CSS 截断，全文放 title。60 秒自动刷新一次，切换
+   供应商时立即刷一次。用 api() 而非 cmd()，失败静默降级为「—」，不弹 toast。 */
+const SB_BALANCE_REFRESH_MS = 60 * 1000;
+let sbBalTimer = null;
+let sbBalBusy = false;
+let sbBalProvider = ''; // 上次成功的供应商，用于并发/切换竞态判定
+async function refreshSidebarBalance() {
+  if (sbBalBusy || S.mode === 'demo' || !S.connected) return;
+  const el = $('#sbBalance');
+  if (!el) return;
+  sbBalBusy = true;
+  const wanted = S.provider || '';
+  try {
+    const out = await api('balance.fetch', {});
+    if (wanted !== (S.provider || '')) return; // 查询期间用户换了供应商：丢弃过期结果
+    const b = (out && out.balance) || {};
+    if (out && out.ok !== false && b.ok) {
+      const sum = String(b.summary || (b.items && b.items.length ? b.items.map(i => i.label ? i.label + ' ' + i.value : i.value).join(' · ') : '已查询'));
+      el.textContent = sum;
+      const bits = [];
+      if (out.provider) bits.push(out.provider);
+      if (b.kind === 'cost') bits.push('成本报表·消费额非余额');
+      bits.push(sum);
+      if (b.endpoint) bits.push(b.endpoint);
+      el.title = bits.join(' · ');
+      el.classList.remove('bal-err');
+      sbBalProvider = out.provider || wanted;
+    } else {
+      el.textContent = '—';
+      el.title = '余额不可用：' + ((out && out.error) || b.error || '查询失败') + '（每 60 秒重试）';
+      el.classList.add('bal-err');
+    }
+  } catch (e) {
+    el.textContent = '—';
+    el.title = '余额查询失败：' + (e.message || String(e)) + '（每 60 秒重试）';
+    el.classList.add('bal-err');
+  } finally {
+    sbBalBusy = false;
+  }
+}
+function startSidebarBalance() {
+  if (sbBalTimer) return;
+  refreshSidebarBalance();
+  sbBalTimer = setInterval(refreshSidebarBalance, SB_BALANCE_REFRESH_MS);
+}
+
 /* 4.3 代理（Agent） */
 function buildAgent(st) {
   const s = sec('agent', '代理', '思考级别、工具开关与系统提示词；这些设置作用于之后的每个回合。');
@@ -15570,8 +15829,7 @@ function buildAbout(st) {
     col.appendChild(el('div', 'ws-path mono trunc', w.cwd || ''));
     row.appendChild(col);
     row.appendChild(setBtn('复制路径', 'sm', () => {
-      if (navigator.clipboard) navigator.clipboard.writeText(w.cwd);
-      toast('已复制路径', 'ok');
+      writeClipboard(w.cwd).then(ok => toast(ok ? '已复制路径' : '复制失败', ok ? 'ok' : 'bad'));
     }, 'copy'));
     list.appendChild(row);
   }
@@ -16661,7 +16919,7 @@ const Mock = {
     at(360, () => { emit({ t: 'reason', ws, d: reasonText.slice(26, 58) }); });
     at(480, () => { emit({ t: 'reason', ws, d: reasonText.slice(58) }); });
     push({ role: 'assistant', kind: 'reasoning', text: reasonText });
-    at(620, () => emit({ t: 'tool_begin', ws, seq: seqTool, name: tool1.name, args: tool1.args, policy: 'read' }));
+    at(620, () => emit({ t: 'tool_begin', ws, call: 'c' + seqTool, seq: seqTool, name: tool1.name, args: tool1.args, policy: 'read' }));
     at(980, () => emit({ t: 'tool_end', ws, seq: seqTool, name: tool1.name, status: 'ok', display: tool1.result, marker: '', sec: tool1.sec, chars: 28000, multimodal: false }));
     push({ role: 'assistant', kind: 'tool', name: tool1.name, args: tool1.args, result: tool1.result, status: 'ok', sec: tool1.sec });
     if (streamOnly) {
@@ -16687,7 +16945,7 @@ const Mock = {
     const seqTool2 = ++this._seq;
     at(1100, () => {
       this.jobs[twJobId] = twJob;
-      emit({ t: 'tool_begin', ws, seq: seqTool2, name: 'tw', args: twArgs, policy: 'teamwork' });
+      emit({ t: 'tool_begin', ws, call: 'c' + seqTool2, seq: seqTool2, name: 'tw', args: twArgs, policy: 'teamwork' });
     });
     at(1250, () => emit({ t: 'tool_end', ws, seq: seqTool2, name: 'tw', status: 'ok', display: twResult, marker: '', sec: 0.28, chars: twResult.length, multimodal: false }));
     push({ role: 'assistant', kind: 'tool', name: 'tw', args: twArgs, result: twResult, status: 'ok', sec: 0.28 });
@@ -17023,6 +17281,16 @@ const Mock = {
         return Promise.resolve({ ok: true });
       }
       case 'approve': { setTimeout(() => this.emit({ t: 'approval_resolved', ws: ws, id: args.id, allow: !!args.allow }), 60); return Promise.resolve({ ok: true }); }
+      // 演示：单次工具调用终止 —— 走过同一条 tool_end 通道，结果文案与引擎一致
+      case 'tool.cancel': {
+        const call = String(args.call || '');
+        const seq = Number(call.replace(/\D/g, '')) || 0;
+        setTimeout(() => this.emit({
+          t: 'tool_end', ws, call, seq, name: 'read', status: 'terminated',
+          display: 'User terminated this toolcall', marker: '', sec: 0.4, chars: 7, multimodal: false,
+        }), 90);
+        return Promise.resolve({ ok: true });
+      }
       case 'git.numstat': return Promise.resolve(this.numstat());
       case 'git.diff': return Promise.resolve({ ok: true, path: args.path || '', diff: this.diffOf(args.path || 'README.md'), truncated: false, binary: false });
       default: return Promise.resolve({ ok: false, error: '演示模式不支持：' + name });
@@ -17357,31 +17625,10 @@ function pnlErrorBox(msg, retry) {
 
 function pnlCopy(text, okMsg) {
   var s = String(text == null ? '' : text);
-  var done = function () { pnlToast(okMsg || '已复制到剪贴板', 'ok'); };
-  var fallback = function () {
-    try {
-      var ta = document.createElement('textarea');
-      ta.value = s;
-      ta.setAttribute('readonly', 'readonly');
-      ta.style.position = 'fixed';
-      ta.style.left = '-9999px';
-      ta.style.top = '0';
-      document.body.appendChild(ta);
-      ta.select();
-      var ok = document.execCommand('copy');
-      ta.remove();
-      if (ok) done(); else pnlToast('复制失败（当前环境不允许写入剪贴板）', 'bad');
-    } catch (e) {
-      pnlToast('复制失败：' + ((e && e.message) || e), 'bad');
-    }
-  };
-  try {
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(s).then(done, fallback);
-      return;
-    }
-  } catch (e) {}
-  fallback();
+  writeClipboard(s).then(function (ok) {
+    if (ok) pnlToast(okMsg || '已复制到剪贴板', 'ok');
+    else pnlToast('复制失败（当前环境不允许写入剪贴板）', 'bad');
+  });
 }
 
 /* =====================================================================
@@ -20852,19 +21099,9 @@ window.openDiffPreview = pnlOpenDiffPreview;
     return Promise.resolve('');
   }
   function clipWrite(text) {
-    try {
-      if (navigator.clipboard && navigator.clipboard.writeText) return navigator.clipboard.writeText(text).then(function () { return true; }, function () { return false; });
-    } catch (e) {}
-    try {
-      var ta = document.createElement('textarea');
-      ta.value = text;
-      ta.style.position = 'fixed'; ta.style.left = '-9999px';
-      document.body.appendChild(ta);
-      ta.select();
-      var ok = document.execCommand('copy');
-      ta.remove();
-      return Promise.resolve(!!ok);
-    } catch (e2) { return Promise.resolve(false); }
+    return typeof writeClipboard === 'function'
+      ? writeClipboard(text)
+      : Promise.resolve(false);
   }
 
   /* ---------- 6. 演示模式假 shell ---------- */
@@ -21548,8 +21785,10 @@ function taskGroup(sid, items, curSession) {
 }
 
 function taskRow(t) {
-  const failed = !t.running && t.exit != null && t.exit !== 0;
-  const row = el('div', 'task-row' + (t.running ? ' run' : '') + (failed ? ' bad' : ''));
+  // 用户从面板终止的任务既不是「成功」也不是「失败」：标成「已终止」
+  const killed = !t.running && !!t.killed;
+  const failed = !t.running && !killed && t.exit != null && t.exit !== 0;
+  const row = el('div', 'task-row' + (t.running ? ' run' : '') + (failed ? ' bad' : '') + (killed ? ' killed' : ''));
   const dot = el('span', 'tk-dot');
   row.appendChild(dot);
   row.appendChild(el('span', 'tk-id', t.id || '?'));
@@ -21558,8 +21797,9 @@ function taskRow(t) {
   row.appendChild(cmd);
   row.appendChild(el('span', 'tk-dur', taskDur(taskElapsed(t))));
 
-  // 结束的任务把退出码放在耗时后面，运行中的留空
-  if (!t.running) row.appendChild(el('span', 'tk-exit' + (failed ? ' bad' : ''), 'exit ' + (t.exit == null ? '?' : t.exit)));
+  // 结束的任务把退出码放在耗时后面（用户终止的写「已终止」），运行中的留空
+  if (!t.running) row.appendChild(el('span', 'tk-exit' + (failed ? ' bad' : '') + (killed ? ' killed' : ''),
+    killed ? '已终止' : 'exit ' + (t.exit == null ? '?' : t.exit)));
 
   const bOut = el('button', 'icon-btn sm tk-btn');
   bOut.type = 'button';
@@ -21834,6 +22074,7 @@ async function boot() {
     fetchSkills(); // /skill 的参数补全：后台拉一次，失败就退回空列表（不挡启动）
     refreshUsages(false); // 侧栏「用量」chip 的后台取数（失败就保持「—」）
     refreshTasks(true);   // 会话顶栏的「后台任务」chip：先显示当前在跑的数量
+    if (typeof startSidebarBalance === 'function') startSidebarBalance(); // 左下角余额：立即查一次 + 每 60 秒刷新
   } catch (e) {
     enterDemo('无法连接后端：' + (e && e.message ? e.message : e));
   }

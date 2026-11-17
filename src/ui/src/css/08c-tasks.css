@@ -39,6 +39,9 @@
   font-variant-numeric:tabular-nums}
 .tk-exit{flex:none;font-family:var(--mono);font-size:10px;color:var(--fg4)}
 .tk-exit.bad{color:var(--bad)}
+/* 用户从面板终止的任务：不是失败，标成「已终止」的黄字 */
+.task-row.killed .tk-dot{background:var(--warn)}
+.tk-exit.killed{color:var(--warn)}
 .task-row .tk-btn{opacity:.55;flex:none;width:22px;height:22px}
 .task-row:hover .tk-btn{opacity:1}
 .task-row .tk-btn.open{opacity:1;transform:rotate(180deg)}

@@ -619,6 +619,54 @@ async function showBalance(provider) {
   else toast('余额不可用：' + ((out && out.error) || b.error || '查询失败'), 'bad', 7000);
 }
 
+/* ---------- 左下角账户余额（当前供应商，自动刷新）-------------------
+   把侧栏左下角「本地工作台」换成当前供应商余额摘要：主行金额、副行仍是
+   连接状态；过长交给 CSS 截断，全文放 title。60 秒自动刷新一次，切换
+   供应商时立即刷一次。用 api() 而非 cmd()，失败静默降级为「—」，不弹 toast。 */
+const SB_BALANCE_REFRESH_MS = 60 * 1000;
+let sbBalTimer = null;
+let sbBalBusy = false;
+let sbBalProvider = ''; // 上次成功的供应商，用于并发/切换竞态判定
+async function refreshSidebarBalance() {
+  if (sbBalBusy || S.mode === 'demo' || !S.connected) return;
+  const el = $('#sbBalance');
+  if (!el) return;
+  sbBalBusy = true;
+  const wanted = S.provider || '';
+  try {
+    const out = await api('balance.fetch', {});
+    if (wanted !== (S.provider || '')) return; // 查询期间用户换了供应商：丢弃过期结果
+    const b = (out && out.balance) || {};
+    if (out && out.ok !== false && b.ok) {
+      const sum = String(b.summary || (b.items && b.items.length ? b.items.map(i => i.label ? i.label + ' ' + i.value : i.value).join(' · ') : '已查询'));
+      el.textContent = sum;
+      const bits = [];
+      if (out.provider) bits.push(out.provider);
+      if (b.kind === 'cost') bits.push('成本报表·消费额非余额');
+      bits.push(sum);
+      if (b.endpoint) bits.push(b.endpoint);
+      el.title = bits.join(' · ');
+      el.classList.remove('bal-err');
+      sbBalProvider = out.provider || wanted;
+    } else {
+      el.textContent = '—';
+      el.title = '余额不可用：' + ((out && out.error) || b.error || '查询失败') + '（每 60 秒重试）';
+      el.classList.add('bal-err');
+    }
+  } catch (e) {
+    el.textContent = '—';
+    el.title = '余额查询失败：' + (e.message || String(e)) + '（每 60 秒重试）';
+    el.classList.add('bal-err');
+  } finally {
+    sbBalBusy = false;
+  }
+}
+function startSidebarBalance() {
+  if (sbBalTimer) return;
+  refreshSidebarBalance();
+  sbBalTimer = setInterval(refreshSidebarBalance, SB_BALANCE_REFRESH_MS);
+}
+
 /* 4.3 代理（Agent） */
 function buildAgent(st) {
   const s = sec('agent', '代理', '思考级别、工具开关与系统提示词；这些设置作用于之后的每个回合。');
@@ -1105,8 +1153,7 @@ function buildAbout(st) {
     col.appendChild(el('div', 'ws-path mono trunc', w.cwd || ''));
     row.appendChild(col);
     row.appendChild(setBtn('复制路径', 'sm', () => {
-      if (navigator.clipboard) navigator.clipboard.writeText(w.cwd);
-      toast('已复制路径', 'ok');
+      writeClipboard(w.cwd).then(ok => toast(ok ? '已复制路径' : '复制失败', ok ? 'ok' : 'bad'));
     }, 'copy'));
     list.appendChild(row);
   }

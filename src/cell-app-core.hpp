@@ -2394,9 +2394,10 @@ namespace app
                     {"sec", r.seconds},
                     {"ttft", r.ttft}}); };
             ev.on_tool_begin = [post](const cell::engine::tool_view &tv)
-            { post({{"t", "tool_begin"}, {"seq", tv.seq}, {"name", tv.name}, {"args", tv.args}, {"policy", tv.policy}}); };
+            { post({{"t", "tool_begin"}, {"call", tv.call}, {"seq", tv.seq}, {"name", tv.name}, {"args", tv.args}, {"policy", tv.policy}}); };
             ev.on_tool_end = [post](const cell::engine::tool_view &tv)
             { post({{"t", "tool_end"},
+                    {"call", tv.call},
                     {"seq", tv.seq},
                     {"name", tv.name},
                     {"status", tv.status},
@@ -3877,6 +3878,35 @@ namespace app
                     }
                     if (!c)
                         return fail("no workspace open");
+                    return ok();
+                }
+                // 终止「单个」工具调用（工具列表行上的终止按钮）：只翻这一个
+                // 调用的令牌，回合继续跑完其余调用。和 stop 一样走快速通道 ——
+                // 目标调用可能正卡在审批或一条跑了几分钟的 exec 上。
+                if (name == "tool.cancel")
+                {
+                    const std::string call = args.value("call", "");
+                    if (call.empty())
+                        return fail("call is required");
+                    workspace_ctx *c = nullptr;
+                    std::string ws;
+                    bool found = false;
+                    {
+                        std::lock_guard<std::mutex> life(ctx_life_mx);
+                        c = target_ctx(args);
+                        if (c)
+                        {
+                            ws = c->cwd_key;
+                            std::string err;
+                            found = c->eng && c->eng->terminate_call(call, err);
+                            if (!found)
+                                return fail(err.empty() ? "unknown tool call" : err);
+                        }
+                    }
+                    if (!c || !found)
+                        return fail("no workspace open");
+                    // 其他客户端据此把这一行标成「终止中」；发起方可以不等它
+                    bus.post({{"t", "tool_terminating"}, {"ws", ws}, {"call", call}});
                     return ok();
                 }
                 if (name == "approve")
@@ -5779,19 +5809,24 @@ namespace app
                     std::error_code ec;
                     auto dir = std::filesystem::path(c->cwd) / ".cell" / "uploads";
                     std::filesystem::create_directories(dir, ec);
-                    long long stamp = (long long)std::chrono::duration_cast<std::chrono::milliseconds>(
-                                          std::chrono::system_clock::now().time_since_epoch())
-                                          .count();
-                    auto path = dir / std::format("{}-{}", stamp, safe);
-                    std::ofstream out(path, std::ios::binary);
-                    if (!out)
-                        return fail("cannot write the upload");
-                    out.write(raw.data(), (std::streamsize)raw.size());
-                    out.close();
+                    // Content-addressed name: same filename + same bytes reuses one
+                    // file, so pasting the same attachment again never duplicates it
+                    // in uploads/. Changed bytes under the same name get a new hash.
+                    std::string digest = sha256_hex(raw);
+                    auto path = dir / std::format("{}-{}", digest.substr(0, 16), safe);
+                    if (!std::filesystem::exists(path, ec))
+                    {
+                        std::ofstream out(path, std::ios::binary);
+                        if (!out)
+                            return fail("cannot write the upload");
+                        out.write(raw.data(), (std::streamsize)raw.size());
+                        out.close();
+                    }
                     nlohmann::json r = ok();
                     r["path"] = path.string();
                     r["name"] = safe;
                     r["size"] = (long long)raw.size();
+                    r["dedup"] = true;
                     return r;
                 }
 

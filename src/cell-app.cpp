@@ -31,6 +31,7 @@
 #include <csignal>
 #include <cstdlib> // std::strtol for the --serve/--headless port parser
 #ifdef _WIN32
+#include <cstring>    // std::memcpy — CF_UNICODETEXT payload
 #include <dwmapi.h>   // DwmSetWindowAttribute — 圆角 / 深色窗口框（frame）
 #include <shellapi.h> // NOTIFYICONDATAW / Shell_NotifyIconW — the tray icon
 #include <shobjidl.h> // IFileOpenDialog — the native picker behind host_pick_folder
@@ -71,6 +72,62 @@ namespace app
         return std::system(("xdg-open '" + url + "' >/dev/null 2>&1 &").c_str()) == 0;
 #endif
     }
+
+#ifdef _WIN32
+    // =====================================================================
+    //  clipboard_write — put UTF-8 text on the Windows clipboard as Unicode.
+    //  WebView2's navigator.clipboard.writeText is frequently denied (no user
+    //  gesture / insecure context), and even when it works the async API does
+    //  not reliably populate Win+V history. A real CF_UNICODETEXT write via
+    //  the Win32 API does, so "copy" buttons route through this binding.
+    //  Runs on the UI thread (STA), which the clipboard API requires. The sync
+    //  binding receives the raw argument array ("[\"text\"]"); return {"ok":…}.
+    //  Retries briefly: another app can hold the clipboard for a few ms.
+    // =====================================================================
+    static std::string clipboard_write(const std::string &args)
+    {
+        std::string text;
+        auto a = nlohmann::json::parse(args, nullptr, false);
+        if (a.is_array() && !a.empty() && a[0].is_string())
+            text = a[0].get<std::string>();
+        else if (a.is_string())
+            text = a.get<std::string>();
+        if (text.empty())
+            return "{\"ok\":false}";
+        const std::wstring w = cell::plat::utf8_to_wide(text);
+        for (int attempt = 0; attempt < 8; ++attempt)
+        {
+            if (!OpenClipboard(nullptr))
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+                continue;
+            }
+            bool ok = false;
+            if (EmptyClipboard())
+            {
+                const SIZE_T bytes = (w.size() + 1) * sizeof(wchar_t);
+                HGLOBAL mem = GlobalAlloc(GMEM_MOVEABLE, bytes);
+                if (mem)
+                {
+                    if (wchar_t *dst = static_cast<wchar_t *>(GlobalLock(mem)))
+                    {
+                        std::memcpy(dst, w.c_str(), bytes);
+                        GlobalUnlock(mem);
+                        // On success the system owns `mem`; on failure we free it.
+                        ok = (SetClipboardData(CF_UNICODETEXT, mem) != nullptr);
+                    }
+                    if (!ok)
+                        GlobalFree(mem);
+                }
+            }
+            CloseClipboard();
+            if (ok)
+                return "{\"ok\":true}";
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
+        return "{\"ok\":false}";
+    }
+#endif
 
 #ifdef _WIN32
     // =====================================================================
@@ -1570,6 +1627,11 @@ namespace app
                 // page then records it with prefs.set).
                 w.bind("host_pick_splash", [&](std::string) -> std::string
                        { return pick_splash_image(static_cast<HWND>(native())); });
+
+                // host_clipboard_write — copy buttons route through the native
+                // Win32 clipboard so text actually lands in Win+V history.
+                w.bind("host_clipboard_write", [&](std::string args) -> std::string
+                       { return clipboard_write(args); });
 
                 // host_win — the borderless window's operations. The page draws
                 // its own title bar, so minimise / maximise / close / drag /

@@ -292,7 +292,7 @@ const Mock = {
     at(360, () => { emit({ t: 'reason', ws, d: reasonText.slice(26, 58) }); });
     at(480, () => { emit({ t: 'reason', ws, d: reasonText.slice(58) }); });
     push({ role: 'assistant', kind: 'reasoning', text: reasonText });
-    at(620, () => emit({ t: 'tool_begin', ws, seq: seqTool, name: tool1.name, args: tool1.args, policy: 'read' }));
+    at(620, () => emit({ t: 'tool_begin', ws, call: 'c' + seqTool, seq: seqTool, name: tool1.name, args: tool1.args, policy: 'read' }));
     at(980, () => emit({ t: 'tool_end', ws, seq: seqTool, name: tool1.name, status: 'ok', display: tool1.result, marker: '', sec: tool1.sec, chars: 28000, multimodal: false }));
     push({ role: 'assistant', kind: 'tool', name: tool1.name, args: tool1.args, result: tool1.result, status: 'ok', sec: tool1.sec });
     if (streamOnly) {
@@ -318,7 +318,7 @@ const Mock = {
     const seqTool2 = ++this._seq;
     at(1100, () => {
       this.jobs[twJobId] = twJob;
-      emit({ t: 'tool_begin', ws, seq: seqTool2, name: 'tw', args: twArgs, policy: 'teamwork' });
+      emit({ t: 'tool_begin', ws, call: 'c' + seqTool2, seq: seqTool2, name: 'tw', args: twArgs, policy: 'teamwork' });
     });
     at(1250, () => emit({ t: 'tool_end', ws, seq: seqTool2, name: 'tw', status: 'ok', display: twResult, marker: '', sec: 0.28, chars: twResult.length, multimodal: false }));
     push({ role: 'assistant', kind: 'tool', name: 'tw', args: twArgs, result: twResult, status: 'ok', sec: 0.28 });
@@ -654,6 +654,16 @@ const Mock = {
         return Promise.resolve({ ok: true });
       }
       case 'approve': { setTimeout(() => this.emit({ t: 'approval_resolved', ws: ws, id: args.id, allow: !!args.allow }), 60); return Promise.resolve({ ok: true }); }
+      // 演示：单次工具调用终止 —— 走过同一条 tool_end 通道，结果文案与引擎一致
+      case 'tool.cancel': {
+        const call = String(args.call || '');
+        const seq = Number(call.replace(/\D/g, '')) || 0;
+        setTimeout(() => this.emit({
+          t: 'tool_end', ws, call, seq, name: 'read', status: 'terminated',
+          display: 'User terminated this toolcall', marker: '', sec: 0.4, chars: 7, multimodal: false,
+        }), 90);
+        return Promise.resolve({ ok: true });
+      }
       case 'git.numstat': return Promise.resolve(this.numstat());
       case 'git.diff': return Promise.resolve({ ok: true, path: args.path || '', diff: this.diffOf(args.path || 'README.md'), truncated: false, binary: false });
       default: return Promise.resolve({ ok: false, error: '演示模式不支持：' + name });

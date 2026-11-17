@@ -223,7 +223,7 @@ core.bus）：前端 `handleEvent` 把 `term.*` 交给 `window.CellTerm.onEvent`
 ### tasks.list {ws?} → {ok, running, tasks:[...]}
 
 ~~~
-tasks: [{id, tid, cmd, wd, session, running, exit, elapsed, tail}]
+tasks: [{id, tid, cmd, wd, session, running, killed, exit, elapsed, tail}]
 ~~~
 
 - 数据源是引擎的 `cell::bg` 注册表：`exec` 工具带 `background:true` 时，命令被挂到
@@ -248,6 +248,37 @@ tasks: [{id, tid, cmd, wd, session, running, exit, elapsed, tail}]
 - 先终止再取快照（返回的 tasks 已经反映结果），`exit=130` 表示被取消
 - 杀的是整棵进程树（Windows job object / POSIX 进程组），孙子进程一并回收
 - 任务已经结束时 message 为 "already finished"，仍然返回 ok:true
+- **用户终止**会和「自己跑完」区分开：`kill` 会先给任务打上 user-kill 标记，任务线程
+  随后往**产生它的会话**投一条 notice（`from=user`、`topic=bg-task-terminated`，
+  内容以 `TERMINATED BY THE USER` 开头，附退出码与终止前的输出尾巴），模型下一
+  轮就会看到「这条后台任务是被用户停掉的，不要再等它、也不要擅自重跑」。
+  正常退出仍走原来的 `from=bg-task`、`topic=background-task-finished`
+- 通知**在 `kill` 返回之前**就已写进会话的待投队列：用户停掉任务后立刻发下一条消息，
+  那一回合也能拿到这条 notice（不会漏到再下一轮）
+- 快照里的 `killed:true` 表示该任务是用户终止的（面板据此显示「已终止」而不是退出码）
+
+### tool.cancel {ws?, call} → {ok}
+
+终止**单个正在运行的工具调用**（工具列表行右侧的停止按钮），回合本身继续：
+
+~~~json
+POST /api/cmd/tool.cancel   {"call":"c7"}
+-> {"ok":true}
+~~~
+
+- `call` 是 `tool_begin` / `tool_end` 事件里的调用句柄（`c1`、`c2`… 每回合单调递增）；
+  它只在该批工具执行期间有效，跑完后再发会得到
+  `{"ok":false,"error":"no running tool call 'c7' - it may already have finished"}`
+- 命中后引擎把这一次调用的结果**固定**为 `User terminated this toolcall`（状态
+  `terminated`，前端按「已终止」的黄点显示），其余调用与后续轮次照常
+- `exec` 的等待循环每 ~50 ms 轮询令牌，命中即杀掉整棵进程树；`edit`/`write` 这类
+  短调用会在开始前/结束后检查令牌
+- 同一消息里的多个 `exec` 会排队请求审批（一次只问一张卡）；若某次调用在**排队期间**
+  被终止，轮到它时不再弹卡，直接按已终止结算
+- 事件流会先推一条 `{"t":"tool_terminating","ws":…,"call":"c7"}`（多客户端同步「终止中」），
+  随后照常推 `tool_end`
+- 与 `stop` 的区别：`stop` 是整回合停止（含杀掉正在跑的 exec、拒绝后续调用），
+  `tool.cancel` 只针对一行
 
 ## 安全约定
 - fs.*：路径先 canonical（跟随 symlink/junction）再做 cwd 前缀校验；".." 或绝对路径越界返回

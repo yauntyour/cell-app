@@ -1469,6 +1469,73 @@ namespace app::tools
     }
 
     // =====================================================================
+    //  fs.snapshot — a lightweight, recursive inventory of the workspace used
+    //  by the frontend to detect files created/modified/removed during an agent
+    //  turn (including files written by exec, which git.numstat never sees).
+    //  Each file is {path (relative to the workspace), size, mt (raw file_time
+    //  ticks)}. Noise directories are skipped, same set as gather_files. Bounded
+    //  to kMaxFiles entries.
+    // =====================================================================
+    inline json do_fs_snapshot(const json &args, const std::string &default_cwd)
+    {
+        fs::path base;
+        std::string err;
+        if (!resolve_base(args, default_cwd, base, err))
+            return fail(err);
+        constexpr size_t kMaxFiles = 20000;
+        json files = json::array();
+        bool truncated = false;
+        std::error_code ec;
+        for (fs::recursive_directory_iterator it(base, fs::directory_options::skip_permission_denied, ec), end;
+             !ec && it != end; it.increment(ec))
+        {
+            std::error_code entry_ec;
+            if (it->is_directory(entry_ec))
+            {
+                // prune noise trees (and never follow symlinks out of the workspace)
+                if (it->is_symlink(entry_ec))
+                {
+                    it.disable_recursion_pending();
+                    continue;
+                }
+                bool skip = false;
+                const std::string name = js::lower_ascii(it->path().filename().string());
+                static constexpr std::string_view kNoiseDirs[] = {
+                    ".git", "node_modules", "build", ".cell", ".worktrees", ".cache", "dist", "out",
+                    "target", "__pycache__", ".venv", "venv", ".idea", ".vscode", ".next", ".gradle"};
+                for (auto d : kNoiseDirs)
+                    if (name == d)
+                    {
+                        skip = true;
+                        break;
+                    }
+                if (skip)
+                    it.disable_recursion_pending();
+                continue;
+            }
+            if (it->is_symlink(entry_ec)) // don't count links as files
+                continue;
+            if (files.size() >= kMaxFiles)
+            {
+                truncated = true;
+                break;
+            }
+            long long size = 0;
+            if (const auto sz = it->file_size(entry_ec); !entry_ec)
+                size = (long long)sz;
+            const auto ft = it->last_write_time(entry_ec);
+            const long long mt = entry_ec ? 0 : (long long)ft.time_since_epoch().count();
+            files.push_back({{"path", rel_display(base, it->path())},
+                             {"size", size},
+                             {"mt", mt}});
+        }
+        json out = ok();
+        out["files"] = std::move(files);
+        out["truncated"] = truncated;
+        return out;
+    }
+
+    // =====================================================================
     //  term.exec — one shell command, bounded and timed out
     // =====================================================================
     inline json do_term_exec(const json &args, const std::string &default_cwd)
@@ -1525,6 +1592,7 @@ namespace app::tools
         {"fs.list", do_fs_list},
         {"fs.read", do_fs_read},
         {"fs.find", do_fs_find},
+        {"fs.snapshot", do_fs_snapshot},
         {"term.exec", do_term_exec},
     };
 
