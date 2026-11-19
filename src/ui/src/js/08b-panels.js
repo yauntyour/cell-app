@@ -1342,35 +1342,39 @@ function pnlRenderFiles(body, ctx) {
   var wrap = pnlEl('div', 'pnl pnl-files');
   pnlFit(wrap, body);
   var head = pnlEl('div', 'pnl-head fp-head');
+  var up = pnlIconBtn('arrowUp', '返回上一级', function () { pnlFileGo(PNL.files.stack.length - 1); });
+  up.classList.add('fp-up');
   var crumbs = pnlEl('div', 'fp-crumbs');
   var refresh = pnlIconBtn('refresh', '刷新目录', function () { pnlLoadFiles(true); });
   refresh.classList.add('fp-refresh');
-  head.append(crumbs, pnlEl('span', 'grow'), refresh);
+  // crumbs 自己 flex:1 把 refresh 推到右边；再放 grow 会和 crumbs 平分宽度
+  head.append(up, crumbs, refresh);
   var list = pnlEl('div', 'fp-list');
   wrap.append(head, list);
   body.appendChild(wrap);
   if (!ctx.cwd) {
-    pnlPaintFileCrumbs(crumbs, ctx);
+    pnlPaintFileCrumbs(crumbs, ctx, up);
     list.appendChild(pnlEmptyBox('folderOpen', '没有打开的工作区',
       '打开一个工作区后，这里会显示它的文件。', '打开工作区', function () {
         if (typeof openWsDialog === 'function') openWsDialog();
       }));
     return;
   }
-  pnlPaintFileCrumbs(crumbs, ctx);
+  pnlPaintFileCrumbs(crumbs, ctx, up);
   if (!PNL.files.data && !PNL.files.err && !PNL.files.loading) pnlLoadFiles(false);
   pnlPaintFileList(list, ctx);
   if (PNL.files.loading) refresh.classList.add('spin');
 }
 
-function pnlPaintFileCrumbs(box, ctx) {
+function pnlPaintFileCrumbs(box, ctx, up) {
   box.replaceChildren();
-  if (!ctx.cwd) { box.appendChild(pnlEl('span', 'fp-crumb-root', '文件')); return; }
   var st = PNL.files;
+  if (up) up.disabled = !ctx.cwd || !st.stack.length;
+  if (!ctx.cwd) { box.appendChild(pnlEl('span', 'fp-crumb-root', '文件')); return; }
   var rootBtn = pnlEl('button', 'fp-crumb fp-crumb-root');
   rootBtn.type = 'button';
   rootBtn.title = ctx.cwd;
-  rootBtn.innerHTML = pnlIcon('folder') + '<span>' + pnlEsc(pnlBase(ctx.cwd) || '工作区') + '</span>';
+  rootBtn.innerHTML = pnlIcon('folder') + '<span class="trunc">' + pnlEsc(pnlBase(ctx.cwd) || '工作区') + '</span>';
   rootBtn.onclick = function () { pnlFileGo(0); };
   box.appendChild(rootBtn);
   for (var i = 0; i < st.stack.length; i++) {
@@ -1380,12 +1384,14 @@ function pnlPaintFileCrumbs(box, ctx) {
     (function (idx) {
       var b = pnlEl('button', 'fp-crumb');
       b.type = 'button';
-      b.textContent = st.stack[idx].name;
+      b.innerHTML = '<span class="trunc">' + pnlEsc(st.stack[idx].name) + '</span>';
       b.title = st.stack[idx].path || st.stack[idx].name;
       b.onclick = function () { pnlFileGo(idx + 1); };
       box.appendChild(b);
     })(i);
   }
+  // 窄面板里把当前目录滚进视野，否则末级面包屑被裁掉、看不到自己在哪
+  box.scrollLeft = box.scrollWidth;
 }
 
 function pnlFileGo(depth) {

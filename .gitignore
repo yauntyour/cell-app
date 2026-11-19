@@ -1,8 +1,7 @@
 .workbuddy
 .vscode
 bin
-build
-build-check
+build*
 _scratch
 .cell
 .workbuddy-ai

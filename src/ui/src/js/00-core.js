@@ -379,7 +379,8 @@ function newTab(ws, cwd) {
     unread: 0, approval: null,
     wins: new Map(), // worker 浮窗
     thinkingSince: 0,
-    composer: { mode: 'text', text: '', attachments: [], workflow: defaultWorkflow() },
+    // queue：运行中按 Enter 存下来的待发消息（见 05-composer.js §I5a）
+    composer: { mode: 'text', text: '', attachments: [], queue: [], workflow: defaultWorkflow() },
     draft: '',
   };
 }
@@ -985,10 +986,15 @@ function onTurnEnd(e) {
   // 工作完成 → 以落盘转录为准重载当前会话：压缩后的自动摘要、思考块、工具
   // 结果都只在磁盘上是权威形态；重载完再把回合小结与通知气泡补到流末尾
   reloadSessionDetail(e.ws, () => {
-    if (S.tabs.get(e.ws) !== t || t.session !== sid) return; // 已切走
-    for (const m of notices) pushMsgSilent(e.ws, m);
-    for (const m of errors) pushMsgSilent(e.ws, m);
-    pushMsg(e.ws, { role: 'status', text: statusText });
+    if (S.tabs.get(e.ws) === t && t.session === sid) { // 没切走才补回合小结
+      for (const m of notices) pushMsgSilent(e.ws, m);
+      for (const m of errors) pushMsgSilent(e.ws, m);
+      pushMsg(e.ws, { role: 'status', text: statusText });
+    }
+    // 队列优先：回合真正收了尾（转录已重载）才把队列里的下一条发出去 ——
+    // 所以这一步必须排在小结之后，否则「回合结束」会落在新消息下方。
+    // 被中断的回合不发：用户按了停止，队列停在原地等他处置。
+    if (e.natural !== false) pumpQueue(e.ws);
   });
   markChat(e.ws); schedule('tabbar', renderTabbar); markComposer(e.ws); // 切回「发送」
   refreshSessions();
@@ -1017,7 +1023,7 @@ function onCompactEnd(e) {
   if (e.state === 'idle') toast('上下文还很小，不需要压缩', 'ok');
   else if (e.state === 'done') toast('上下文已压缩', 'ok');
   else toast('压缩未完成：' + (e.d || '未知原因'), 'bad', 5200);
-  reloadSessionDetail(e.ws);
+  reloadSessionDetail(e.ws, () => pumpQueue(e.ws));
   markChat(e.ws); schedule('tabbar', renderTabbar); markComposer(e.ws);
   refreshSessions();
 }
@@ -1155,7 +1161,7 @@ function onNotice(e) {
 /* ---------- 审批 --------------------------------------------------- */
 function onApproval(e) {
   const t = ensureTab(e.ws);
-  t.approval = { id: e.id, tool: e.tool, args: e.args, ws: e.ws };
+  t.approval = { id: e.id, tool: e.tool, args: e.args, ws: e.ws, note: e.note || '' };
   if (e.ws === S.active) { renderApproval(); }
   else { t.unread++; schedule('tabbar', renderTabbar); }
   S.pendingApprovals = Array.from(S.tabs.values()).filter(x => x.approval).length;

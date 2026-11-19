@@ -338,6 +338,8 @@ select{appearance:none;background-image:url("data:image/svg+xml;charset=utf-8,%3
 .empty{padding:28px 18px;text-align:center;color:var(--fg3);font-size:12.5px;line-height:1.7}
 .empty .uico{width:26px;height:26px;margin:0 auto 10px;color:var(--fg4)}
 .spin{animation:spin 1s linear infinite}
+.icon-btn.spin{animation:none}
+.icon-btn.spin .uico{animation:spin 1s linear infinite}
 
 /* ==== css/03-molecules.css ============================================ */
 
@@ -1089,6 +1091,8 @@ body.locked{overflow:hidden}
 .aphead .aptitle{font-size:13px;font-weight:650;color:var(--fg)}
 .aphead .apmono{font-size:12px;color:var(--fg2)}
 .apbody{padding:0}
+.apbody .ap-why{border:0;border-bottom:1px solid var(--line);border-radius:0;
+  background:color-mix(in srgb,var(--warn) 7%,var(--bg2));padding:9px 14px}
 .apbody pre{margin:0;padding:10px 14px;background:var(--code-bg);border-bottom:1px solid var(--line);
   font-family:var(--mono);font-size:11.5px;line-height:1.6;color:var(--fg2);
   white-space:pre-wrap;word-break:break-word;max-height:180px;overflow:auto}
@@ -1615,19 +1619,46 @@ body.locked{overflow:hidden}
 .cmp-send[disabled]{background:rgba(255,255,255,.05);color:var(--fg4);
   box-shadow:none;opacity:.6;pointer-events:none}
 
-/* 运行中插话：默认隐藏，busy 时由 .show 露出。两颗小胶囊贴在发送键左边。 */
-.cmp-live{display:none;align-items:center;gap:5px;flex:none}
-.cmp-live.show{display:inline-flex}
-.cmp-live-btn{
-  height:28px;padding:0 10px;border-radius:var(--radius-full);
-  font-family:var(--sans);font-size:11.5px;font-weight:600;line-height:1;
-  color:var(--fg2);background:var(--glass-face-hover);
-  border:1px solid var(--glass-hair);cursor:pointer;white-space:nowrap;
-  transition:background var(--dur) var(--ease),color var(--dur) var(--ease),border-color var(--dur) var(--ease);
+/* ---------- 5b.3b 排队消息（运行中按 Enter 只入队，见 05-composer §I5a） ----
+   与 #slashPanel 同一个宿主（.composer-stack 的绝对定位层），贴在卡片上方：
+   卡片高度是固定的，队列不能挤占编辑区，只能往外长。
+   每条一行：序号 · 截断后的正文 · 「插入 / 编辑 / ×」三个动作。 */
+.cmp-queue{
+  position:absolute;left:0;right:0;bottom:100%;margin-bottom:8px;z-index:25;
+  display:none;flex-direction:column;overflow:hidden;
+  background:var(--panel2);border:1px solid var(--line2);border-radius:var(--radius);
+  box-shadow:var(--shadow);pointer-events:auto;
 }
-.cmp-live-btn:hover{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 45%,transparent);
-  background:color-mix(in srgb,var(--accent) 12%,var(--glass-face-hover))}
-#interjectNow{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 35%,transparent)}
+.cmp-queue.show{display:flex;animation:popIn 150ms var(--ease)}
+.cq-head{display:flex;align-items:center;gap:8px;flex:none;
+  padding:7px 11px 6px;border-bottom:1px solid var(--line)}
+.cq-title{font-size:11px;font-weight:650;letter-spacing:.04em;color:var(--fg3)}
+.cq-note{margin-left:auto;font-size:10.5px;color:var(--fg4);white-space:nowrap}
+.cq-list{display:flex;flex-direction:column;gap:1px;min-height:0;overflow-y:auto;
+  max-height:min(34vh,236px);padding:5px}
+.cq-item{display:flex;align-items:center;gap:8px;padding:4px 6px;border-radius:var(--radius-s);
+  transition:background var(--dur) var(--ease)}
+.cq-item:hover{background:var(--raise)}
+.cq-idx{flex:none;width:14px;text-align:right;font-family:var(--mono);font-size:10px;color:var(--fg4)}
+.cq-text{flex:1;min-width:0;font-size:12.5px;line-height:1.5;color:var(--fg2);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cq-item:hover .cq-text{color:var(--fg)}
+.cq-acts{display:flex;align-items:center;gap:2px;flex:none}
+.cq-btn{
+  display:inline-flex;align-items:center;gap:4px;height:23px;padding:0 7px;
+  border:1px solid transparent;border-radius:var(--radius-s);background:transparent;
+  color:var(--fg3);font-family:var(--sans);font-size:11.5px;line-height:1;
+  transition:background var(--dur) var(--ease),color var(--dur) var(--ease);
+}
+.cq-btn .uico{width:12px;height:12px;stroke-width:1.9}
+.cq-btn:hover{background:var(--raise2);color:var(--fg)}
+.cq-btn.ins{color:var(--accent);
+  border-color:color-mix(in srgb,var(--accent) 30%,transparent)}
+.cq-btn.ins:hover{background:var(--accent-soft)}
+.cq-btn.ins[disabled]{color:var(--fg4);border-color:var(--line);background:transparent;
+  cursor:not-allowed}
+.cq-btn.x{padding:0 5px;color:var(--fg4)}
+.cq-btn.x:hover{color:var(--bad);background:color-mix(in srgb,var(--bad) 14%,transparent)}
 
 /* ---------- 5b.4 弹出菜单（模式 / 沙箱 / 模型） --------------------- */
 .cmp-menu{
@@ -2766,7 +2797,7 @@ html[data-anim="0"] *{animation:none!important;transition:none!important}
    所有浮在内容之上的小面板在这里统一补一层磨砂，各自只负责底色和阴影。 */
 .toast,.modalbox,.searchbox-lg,.hmenu,.tabmenu,.thkmenu,.cmp-menu,.wwin,.usage-pop,
 .sess-usage-pop,
-.slash-panel,#slashPanel{
+.slash-panel,#slashPanel,#cmpQueue{
   -webkit-backdrop-filter:var(--glass-float-blur);
   backdrop-filter:var(--glass-float-blur);
 }
@@ -2868,6 +2899,14 @@ html[data-anim="0"] *{animation:none!important;transition:none!important}
   border:1px solid var(--line);color:var(--fg2);font-size:11.5px;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .approval-body{gap:12px}
+/* 模型给出的调用理由：审批类工具必填，紧贴参数块上方 */
+.ap-why{display:flex;gap:8px;align-items:flex-start;padding:9px 12px;border-radius:10px;
+  background:color-mix(in srgb,var(--warn) 8%,var(--bg3));
+  border:1px solid color-mix(in srgb,var(--warn) 30%,var(--line))}
+.ap-why-tag{flex:none;font-size:10.5px;font-weight:700;letter-spacing:.04em;color:var(--warn);
+  padding-top:1px}
+.ap-why-text{min-width:0;font-size:12px;line-height:1.6;color:var(--fg);
+  white-space:pre-wrap;word-break:break-word}
 .ap-call{border:1px solid var(--line2);border-radius:10px;overflow:hidden;background:var(--bg3)}
 .ap-call-head{display:flex;align-items:center;gap:8px;padding:8px 12px;
   border-bottom:1px solid var(--line);font-size:11px;color:var(--fg3)}
@@ -3010,8 +3049,9 @@ mark{background:var(--accent-soft);color:var(--accent);border-radius:3px;padding
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #ctxmenu .sep{height:1px;background:var(--line);margin:4px 6px}
 
-/* 通用浮层兜底：Spinner（搜索正在加载） */
-.spin{width:12px;height:12px;border-radius:50%;border:2px solid var(--line2);
+/* 通用浮层兜底：Spinner（搜索正在加载）。只作用于独立 span，
+   避免把 .spin 加到按钮上时把按钮缩成圆环 */
+span.spin{width:12px;height:12px;border-radius:50%;border:2px solid var(--line2);
   border-top-color:var(--fg2);animation:spin .8s linear infinite;flex:none;display:inline-block}
 
 /* reduced-motion：浮层只保留淡入，不做位移动画 */
@@ -3093,14 +3133,16 @@ mark{background:var(--accent-soft);color:var(--accent);border-radius:3px;padding
    ===================================================================== */
 .pnl-files .pnl-head{padding-right:10px}
 .fp-head{gap:6px}
+.fp-up{flex:none}
 .fp-crumbs{display:flex;align-items:center;gap:1px;min-width:0;overflow-x:auto;
   scrollbar-width:none;flex:1;padding:2px 0}
 .fp-crumbs::-webkit-scrollbar{display:none}
 .fp-crumb{display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 7px;flex:none;
-  border-radius:6px;font-size:12.5px;color:var(--fg2);white-space:nowrap;
+  max-width:100%;border-radius:6px;font-size:12.5px;color:var(--fg2);white-space:nowrap;
   transition:background var(--dur) var(--ease),color var(--dur) var(--ease)}
+.fp-crumb .trunc{min-width:0}
 .fp-crumb:hover{background:var(--raise);color:var(--fg)}
-.fp-crumb-root{color:var(--fg);font-weight:600}
+.fp-crumb-root{color:var(--fg);font-weight:600;flex:0 1 auto;min-width:26px}
 .fp-crumb-root .uico{width:14px;height:14px;color:var(--fi-dir,#e5b567)}
 .fp-crumb-sep{display:inline-flex;align-items:center;color:var(--fg4,var(--fg3));flex:none}
 .fp-crumb-sep .uico{width:12px;height:12px;stroke-width:2}
@@ -4366,10 +4408,31 @@ html[data-theme="light"] #splash::before{opacity:.5}
 .sh-src-t{font-size:12px;font-weight:600;color:var(--fg)}
 .sh-src-btn.on .sh-src-t{color:var(--accent)}
 .sh-src-s{font-size:10.5px;color:var(--fg4);min-width:0}
-.sh-select{height:30px}
 .sh-hint{margin:0;font-size:11px;line-height:1.6;color:var(--fg4)}
 .sh-warn{padding:7px 10px;border-radius:8px;border:1px solid var(--warn);background:rgba(210,153,34,.1);
   font-size:11.5px;line-height:1.6;color:var(--warn)}
+/* 已存档会话选择器：搜索框 + 两行式列表（替代原生 select —— 会话标题常是一整段
+   摘要，原生下拉会被压成一条省略号，展开后长文本还会溢出弹窗） */
+.sh-pick{display:flex;flex-direction:column;gap:6px;min-width:0}
+.sh-pick .sh-search{flex:none}
+.sh-list{display:flex;flex-direction:column;gap:2px;max-height:min(46vh,268px);overflow-y:auto;
+  padding:4px;border-radius:var(--radius-s);border:1px solid var(--line2);background:var(--bg3)}
+.sh-item{display:flex;flex-direction:column;gap:3px;min-width:0;padding:6px 8px;border-radius:var(--radius-s);
+  border:1px solid transparent;background:transparent;text-align:left;cursor:pointer;
+  transition:background var(--dur) var(--ease),border-color var(--dur) var(--ease)}
+.sh-item:hover{background:var(--raise)}
+.sh-item.on{background:var(--accent-soft);border-color:color-mix(in srgb,var(--accent) 42%,transparent)}
+.sh-item-t{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;
+  font-size:12px;line-height:1.45;color:var(--fg2);overflow-wrap:anywhere}
+.sh-item.on .sh-item-t{color:var(--accent)}
+.sh-item-m{display:flex;align-items:center;gap:8px;font-size:10.5px;color:var(--fg4);
+  font-variant-numeric:tabular-nums}
+.sh-item-m .mono{font-family:var(--mono);font-size:10px}
+.sh-item-ck{display:inline-flex;align-items:center;justify-content:center;margin-left:auto;
+  width:13px;height:13px;flex:none;color:var(--accent)}
+.sh-item-ck .uico{width:13px;height:13px;stroke-width:2.4}
+.sh-item-live{color:var(--ok)}
+.sh-empty{padding:14px 8px;text-align:center;font-size:11.5px;color:var(--fg4)}
 /* 弹窗不在 #flowlinkPage 里，表单字段的样式要在这里补一份 */
 .sh-dlg .fl-field{display:flex;flex-direction:column;gap:4px}
 .sh-dlg .fl-field-label{font-size:11.5px;color:var(--fg4)}
@@ -4397,6 +4460,9 @@ html[data-theme="light"] #splash::before{opacity:.5}
 #flowWsSection .fl-mon{opacity:.55}
 #flowWsSection .sgroup-head:hover .fl-mon{opacity:1}
 #flowWsSection .fl-mon:hover{background:var(--accent-soft);color:var(--accent)}
+/* 连接范围徽章（同主机/局域网/跨网段）：中性色，不与状态徽章抢注意力 */
+.pill.scope{color:var(--fg3);border-color:var(--line2);background:transparent}
+#flowWsSection .fl-scope{color:var(--fg3)}
 
 @media (max-width:980px){
   #flowlinkPage .fl-side{width:200px}
@@ -5061,7 +5127,8 @@ function newTab(ws, cwd) {
     unread: 0, approval: null,
     wins: new Map(), // worker 浮窗
     thinkingSince: 0,
-    composer: { mode: 'text', text: '', attachments: [], workflow: defaultWorkflow() },
+    // queue：运行中按 Enter 存下来的待发消息（见 05-composer.js §I5a）
+    composer: { mode: 'text', text: '', attachments: [], queue: [], workflow: defaultWorkflow() },
     draft: '',
   };
 }
@@ -5667,10 +5734,15 @@ function onTurnEnd(e) {
   // 工作完成 → 以落盘转录为准重载当前会话：压缩后的自动摘要、思考块、工具
   // 结果都只在磁盘上是权威形态；重载完再把回合小结与通知气泡补到流末尾
   reloadSessionDetail(e.ws, () => {
-    if (S.tabs.get(e.ws) !== t || t.session !== sid) return; // 已切走
-    for (const m of notices) pushMsgSilent(e.ws, m);
-    for (const m of errors) pushMsgSilent(e.ws, m);
-    pushMsg(e.ws, { role: 'status', text: statusText });
+    if (S.tabs.get(e.ws) === t && t.session === sid) { // 没切走才补回合小结
+      for (const m of notices) pushMsgSilent(e.ws, m);
+      for (const m of errors) pushMsgSilent(e.ws, m);
+      pushMsg(e.ws, { role: 'status', text: statusText });
+    }
+    // 队列优先：回合真正收了尾（转录已重载）才把队列里的下一条发出去 ——
+    // 所以这一步必须排在小结之后，否则「回合结束」会落在新消息下方。
+    // 被中断的回合不发：用户按了停止，队列停在原地等他处置。
+    if (e.natural !== false) pumpQueue(e.ws);
   });
   markChat(e.ws); schedule('tabbar', renderTabbar); markComposer(e.ws); // 切回「发送」
   refreshSessions();
@@ -5699,7 +5771,7 @@ function onCompactEnd(e) {
   if (e.state === 'idle') toast('上下文还很小，不需要压缩', 'ok');
   else if (e.state === 'done') toast('上下文已压缩', 'ok');
   else toast('压缩未完成：' + (e.d || '未知原因'), 'bad', 5200);
-  reloadSessionDetail(e.ws);
+  reloadSessionDetail(e.ws, () => pumpQueue(e.ws));
   markChat(e.ws); schedule('tabbar', renderTabbar); markComposer(e.ws);
   refreshSessions();
 }
@@ -5837,7 +5909,7 @@ function onNotice(e) {
 /* ---------- 审批 --------------------------------------------------- */
 function onApproval(e) {
   const t = ensureTab(e.ws);
-  t.approval = { id: e.id, tool: e.tool, args: e.args, ws: e.ws };
+  t.approval = { id: e.id, tool: e.tool, args: e.args, ws: e.ws, note: e.note || '' };
   if (e.ws === S.active) { renderApproval(); }
   else { t.unread++; schedule('tabbar', renderTabbar); }
   S.pendingApprovals = Array.from(S.tabs.values()).filter(x => x.approval).length;
@@ -8755,6 +8827,12 @@ function makeApprovalCard() {
   head.appendChild(el('span', 'badge warn', '待确认'));
   card.appendChild(head);
   const body = el('div', 'apbody');
+  if (a.note) {
+    const why = el('div', 'ap-why');
+    why.appendChild(el('span', 'ap-why-tag', '理由'));
+    why.appendChild(el('span', 'ap-why-text', a.note));
+    body.appendChild(why);
+  }
   const pre = el('pre');
   pre.textContent = typeof a.args === 'string' ? a.args : JSON.stringify(a.args || {}, null, 2);
   body.appendChild(pre);
@@ -11889,6 +11967,7 @@ function highlightBody(body) {
 
 const CMP_PLACEHOLDER = '描述你想构建的内容，/ 调用指令，@ 文件或对话';
 const CMP_ATTACH_PLACEHOLDER = '为附件添加说明，或直接发送…';
+const CMP_BUSY_PLACEHOLDER = '运行中 · Enter 把消息排进队列，回合结束后自动发送（停止请按发送钮）';
 
 /* 模式 / 沙箱 / 图标映射（图标名取自 00-core.js 的 ICON_PATHS） */
 const CMP_MODES = [
@@ -11960,6 +12039,19 @@ function ensureSlashPanel() {
   if (panel) return panel;
   panel = el('div', 'slash');
   panel.id = 'slashPanel';
+  const stack = cmpStack(null) || $('#composer');
+  if (!stack) return null;
+  stack.insertBefore(panel, stack.firstChild);
+  return panel;
+}
+
+/* 队列面板与 #slashPanel 同宿主：绝对定位在卡片上方（bottom:100%），
+   占用的是会话区，不挤占固定高度的输入卡。 */
+function ensureQueuePanel() {
+  let panel = $('#cmpQueue');
+  if (panel) return panel;
+  panel = el('div', 'cmp-queue');
+  panel.id = 'cmpQueue';
   const stack = cmpStack(null) || $('#composer');
   if (!stack) return null;
   stack.insertBefore(panel, stack.firstChild);
@@ -12088,21 +12180,6 @@ function buildComposerDom() {
   send.innerHTML = CMP_ICON_SEND;
   right.appendChild(send);
 
-  // 运行中插话：仅在回合进行时出现。「立即」注入正在跑的回合，
-  // 「排队」等本回合结束后自动开新回合。两者都取输入框当前文本。
-  const liveWrap = el('div', 'cmp-live');
-  liveWrap.id = 'cmpLive';
-  const liveNow = el('button', 'cmp-live-btn', '插话');
-  liveNow.type = 'button'; liveNow.id = 'interjectNow';
-  liveNow.title = '立即插入：把输入内容注入正在运行的回合（下一轮生效）';
-  liveNow.onclick = () => interjectCurrent(true);
-  const liveQueue = el('button', 'cmp-live-btn', '排队');
-  liveQueue.type = 'button'; liveQueue.id = 'interjectQueue';
-  liveQueue.title = '排队：本回合结束后自动发送输入内容';
-  liveQueue.onclick = () => interjectCurrent(false);
-  liveWrap.appendChild(liveNow); liveWrap.appendChild(liveQueue);
-  right.appendChild(liveWrap);
-
   bar.appendChild(left);
   bar.appendChild(right);
   host.appendChild(bar);
@@ -12116,6 +12193,7 @@ function buildComposerDom() {
   }
 
   ensureSlashPanel();
+  ensureQueuePanel();
   host.classList.remove('glass-refract');   // 旧类名（已废弃）
   setupLens(host);
   host.__cmpBuilt = true;
@@ -12408,7 +12486,7 @@ function bindComposer() {
     });
     ta.addEventListener('keydown', onComposerKeydown);
   }
-  if (send) send.addEventListener('click', () => sendCurrent());
+  if (send) send.addEventListener('click', () => onSendClick());
   if (add && fin) add.addEventListener('click', () => { if (!add.disabled) fin.click(); });
   if (pick && fin) pick.addEventListener('click', () => fin.click());
   if (fin) fin.addEventListener('change', () => {
@@ -12826,15 +12904,27 @@ function toggleTools() {
 }
 
 
+/* 发送钮：运行中它是**停止**（点击即终止，Enter 不终止 —— Enter 只入队，
+   见 §I5a）。所以「停止」必须留在这个唯一的显式入口上。 */
+function onSendClick() {
+  const t = curTab();
+  if (!t) return;
+  if (!t.busy) { sendCurrent(); return; }
+  closeSlash();
+  if (t.remote) {
+    cmd('flowlink.ws.stop', { cell: t.remote.cell, cwd: t.remote.cwd, rid: t.remote.rid });
+    focusInput();
+    return;
+  }
+  stopAllActivity(t);
+}
+
 function paintSendState(t) {
   const send = $('#sendBtn');
   if (!send) return;
   const mode = t ? (t.composer.mode || 'text') : 'text';
   send.classList.toggle('stop', !!(t && t.busy));
   send.classList.remove('dim');
-  // 运行中才显示「插话 / 排队」；远程/监视页签不显示（对端回合由对端处理）
-  const live = $('#cmpLive');
-  if (live) live.classList.toggle('show', !!(t && t.busy && !t.remote));
   if (!t) {
     send.disabled = true;
     send.innerHTML = CMP_ICON_SEND;
@@ -12844,7 +12934,7 @@ function paintSendState(t) {
   send.disabled = false;
   if (t.busy) {
     send.innerHTML = CMP_ICON_STOP;
-    send.title = '停止：中断当前回合与该工作区的全部 Teamwork 任务';
+    send.title = '停止：中断当前回合与该工作区的全部 Teamwork 任务\n（Enter 不再停止：运行中按 Enter 是「加入队列」）';
     send.setAttribute('aria-label', '停止');
     return;
   }
@@ -12855,7 +12945,7 @@ function paintSendState(t) {
     return;
   }
   send.innerHTML = CMP_ICON_SEND;
-  send.title = '发送 (Enter)';
+  send.title = queueOf(t).length ? '发送 (Enter) · 队列里还有 ' + queueOf(t).length + ' 条' : '发送 (Enter)';
   const has = !!(String(t.composer.text || '').trim() || (t.composer.attachments || []).length);
   if (!has) send.classList.add('dim');
 }
@@ -12911,6 +13001,7 @@ function renderComposer() {
     if (teamHost) { teamHost.hidden = true; teamHost.replaceChildren(); teamHost.__builtFor = ''; }
     if (attachBar) attachBar.hidden = true;
     renderChips(null);
+    paintQueue(null);
     if (send) { send.disabled = true; send.classList.remove('stop'); send.innerHTML = CMP_ICON_SEND; send.title = '先打开一个工作区'; }
     ['#modeChip', '#sandboxChip', '#toolsChip', '#providerChip', '#modelChip', '#thinkChip', '#btnAttach']
       .forEach(s => { const b = $(s); if (b) b.disabled = true; });
@@ -12954,11 +13045,14 @@ function renderComposer() {
     if (attachBar) attachBar.hidden = mode !== 'attach';
     if (ta) {
       if (ta.value !== (t.composer.text || '')) ta.value = t.composer.text || '';
-      ta.placeholder = mode === 'attach' ? CMP_ATTACH_PLACEHOLDER : CMP_PLACEHOLDER;
+      // 运行中的占位符要交代 Enter 的新语义（入队，不是终止回合）
+      ta.placeholder = mode === 'attach' ? CMP_ATTACH_PLACEHOLDER
+        : (t.busy ? CMP_BUSY_PLACEHOLDER : CMP_PLACEHOLDER);
         }
   }
 
   renderChips(t);
+  paintQueue(t);
   paintSendState(t);
   // 远程会话：这些设置属于对端（可读可改，走对端 RPC）；监视模式没有输入
   if (t.remote) {
@@ -13173,25 +13267,190 @@ function fileToB64(file) {
   });
 }
 
-/* ---------- I5. 发送 / 停止 ---------------------------------------- */
-/* 运行中插话（点「插话」/「排队」）：取输入框当前非空文本，immediate=true 走
-   agent.interject（注入正在跑的回合），否则走 send 排队（本回合结束后处理）。
-   发送后清空输入框，行为与普通发送一致。 */
-async function interjectCurrent(immediate) {
-  const t = curTab();
-  if (!t) return;
-  closeSlash();
-  const text = (t.composer.text || '').trim();
-  if (!text) { toast('先输入要插话的内容', 'info'); focusInput(); return; }
-  t.composer.text = ''; t.composer.attachments = [];
-  const ta = $('#ta'); if (ta) ta.value = '';
-  renderChips(t); paintSendState(t); markChat(t.ws);
-  const out = immediate
-    ? await cmd('agent.interject', { ws: t.ws, text })
-    : await cmd('send', { ws: t.ws, text });
-  if (out && out.ok === false) toast((out && out.error) || '插话失败', 'bad');
-  else toast(immediate ? '已插入当前回合' : '已排队，本回合结束后发送', 'ok');
+/* ---------- I5a. 发送队列 -------------------------------------------
+   Enter 只有一种语义：**把输入框的内容交给这个页签的队列**。
+     · 空闲 → 入队后立刻把队首发出去（与「直接发送」完全等价）；
+     · 运行中 → 只入队，队列在输入卡上方以列表显示，等回合结束自动发。
+   以前运行中按 Enter 走的是 sendCurrent 的 busy 分支 —— 那是「终止任务」，
+   用户想补一句话却把正在跑的回合杀掉了。停止只留在发送钮（它在运行中就是
+   停止图标）。队列项单独可以「插入」（agent.interject，注入正在跑的回合）、
+   「编辑」（换回输入框）、删除。 */
+function queueOf(t) {
+  if (!t) return [];
+  const c = t.composer;
+  if (!Array.isArray(c.queue)) c.queue = [];
+  return c.queue;
+}
+
+/* 排队项的文本与发送时同形：正文 + 附件路径块。附件本身不跟着排队
+   （入队即释放预览 URL），所以插入 / 编辑 / 发送三条路径都只处理字符串。 */
+function queueCleanText(t) {
+  const atts = (t.composer.attachments || []).filter(a => a.path);
+  let text = String(t.composer.text || '').trim();
+  if (atts.length) text += (text ? '\n\n' : '') + '[附件]\n' + atts.map(a => '- ' + a.path).join('\n');
+  return text;
+}
+
+/* 入队并从输入框清掉刚排进去的内容；返回是否真的有条目入队 */
+function queueOutgoing(t) {
+  const text = queueCleanText(t);
+  if (!text) return false;
+  queueOf(t).push({ id: uid(), text });
+  for (const a of (t.composer.attachments || [])) dropAttachPreview(a); // 释放预览用的 object URL
+  t.composer.text = '';
+  t.composer.attachments = [];
+  const ta = $('#ta');
+  if (ta) ta.value = '';
+  renderChips(t);
+  paintSendState(t);
+  buildSlash(true);
+  markChat(t.ws);
+  paintQueue(t);
+  return true;
+}
+
+/* 指定的一条出队并发出（空闲时才动作）。失败时把条目放回队首，不静默丢失。
+   preferId 只给「空闲时点某一条的发送」用：跳过队首直接发那一条。 */
+async function pumpQueue(ws, preferId) {
+  const t = S.tabs.get(ws || S.active);
+  if (!t || t.busy || t.queuePumping) return;
+  const q = queueOf(t);
+  if (!q.length) return;
+  // 没选模型就发出去只会白跑一个回合：条目留在队列里，等用户选完
+  if (!t.remote && S.provider && S.modelSet === false) {
+    if (t.ws === S.active) demandModel('队列里的消息要先选一个模型才会发出');
+    return;
+  }
+  if (t.remote && t.remote.mode === 'watch') return;
+  t.queuePumping = true;
+  const pick = preferId ? q.findIndex(x => x.id === preferId) : 0;
+  const item = q.splice(pick > 0 ? pick : 0, 1)[0];
+  paintQueue(t);
+  try {
+    if (t.remote) {
+      // 忙态由 flSendRemote 自己置位（它在第一个 await 之前就设好，不会漏拍）
+      const okRemote = await flSendRemote(t, item.text);
+      if (okRemote === false) { q.unshift(item); paintQueue(t); }
+      return;
+    }
+    // 乐观落一条 user（回合开始后由 turn_begin 接管；转录重载时会替换成权威形态）
+    t.msgs.push({ id: uid(), role: 'user', text: item.text, ts: nowSec() });
+    t.busy = true;
+    t.thinkingSince = Date.now();
+    markChat(t.ws);
+    markComposer(t.ws);
+    const out = await cmd('send', { ws: t.ws, text: item.text });
+    if (out && out.ok === false) {
+      t.busy = false;
+      t.thinkingSince = 0;
+      q.unshift(item);
+      paintQueue(t);
+      markChat(t.ws);
+      markComposer(t.ws);
+      toast((out && out.error) || '发送失败，消息已留在队列里', 'bad', 4200);
+    }
+  } finally {
+    t.queuePumping = false;
+  }
+}
+
+/* 队列项「插入」：运行中注入正在跑的回合（agent.interject，下一轮生效）；
+   空闲时就是普通发送。远程页签没这条通道，按钮会禁用。 */
+async function interjectQueued(t, id) {
+  const q = queueOf(t);
+  const i = q.findIndex(x => x.id === id);
+  if (i < 0) return;
+  if (!t.busy) { pumpQueue(t.ws, id); return; }
+  if (t.remote) { toast('对端会话不支持中途插入', 'info'); return; }
+  const item = q[i];
+  const out = await cmd('agent.interject', { ws: t.ws, text: item.text });
+  if (!out || out.ok === false) { toast((out && out.error) || '插入失败', 'bad', 4200); return; }
+  q.splice(i, 1);
+  paintQueue(t);
+  toast(out.mode === 'injected' ? '已插入当前回合' : '已排队，本回合结束后发送', 'ok', 2600);
+}
+
+/* 队列项「编辑」：文本换回输入框；输入框里原有的草稿回队列原位（不丢东西） */
+function editQueued(t, id) {
+  const q = queueOf(t);
+  const i = q.findIndex(x => x.id === id);
+  if (i < 0) return;
+  const item = q[i];
+  const draft = String(t.composer.text || '').trim();
+  q.splice(i, 1);
+  if (draft) q.splice(i, 0, { id: uid(), text: draft });
+  syncComposerText(item.text);
+  paintQueue(t);
   focusInput();
+}
+
+function removeQueued(t, id) {
+  const q = queueOf(t);
+  const i = q.findIndex(x => x.id === id);
+  if (i < 0) return;
+  q.splice(i, 1);
+  paintQueue(t);
+}
+
+/* 队列面板：卡片上方的一条列表。每条都带「插入 / 编辑 / 删除」。 */
+function paintQueue(t) {
+  const panel = ensureQueuePanel();
+  if (!panel) return;
+  // 面板只有一份（输入卡是共享的）：后台页签的队列变动不画在这里 ——
+  // 切过去时 renderComposer 会按它的队列重画
+  if (t && t.ws !== S.active) return;
+  const q = queueOf(t);
+  panel.classList.toggle('show', q.length > 0);
+  if (!q.length) { panel.replaceChildren(); return; }
+
+  const head = el('div', 'cq-head');
+  head.appendChild(el('span', 'cq-title', '队列 · ' + q.length + ' 条'));
+  head.appendChild(el('span', 'cq-note', t.busy ? '本回合结束后按顺序发送' : '空闲中，点「发送」立刻送出'));
+  panel.replaceChildren(head);
+
+  const list = el('div', 'cq-list');
+  q.forEach((item, i) => {
+    const row = el('div', 'cq-item');
+    row.appendChild(el('span', 'cq-idx', String(i + 1)));
+
+    const txt = el('div', 'cq-text', item.text.replace(/\s+/g, ' ').trim());
+    txt.title = item.text;
+    row.appendChild(txt);
+
+    const acts = el('div', 'cq-acts');
+    const ins = el('button', 'cq-btn ins');
+    ins.type = 'button';
+    ins.innerHTML = iconHtml('send') + '<span>' + (t.busy ? '插入' : '发送') + '</span>';
+    if (t.busy && t.remote) {
+      ins.disabled = true;
+      ins.title = '对端会话不支持中途插入 —— 等它这一回合结束会自动发送';
+    } else {
+      ins.title = t.busy
+        ? '立即插入：把这条消息送进正在运行的回合（下一轮生效）'
+        : '立刻发送这一条';
+      ins.onclick = () => interjectQueued(t, item.id);
+    }
+    acts.appendChild(ins);
+
+    const ed = el('button', 'cq-btn');
+    ed.type = 'button';
+    ed.innerHTML = iconHtml('pencil') + '<span>编辑</span>';
+    ed.title = '取回输入框修改（输入框里已有的草稿会回到这一条的位置）';
+    ed.onclick = () => editQueued(t, item.id);
+    acts.appendChild(ed);
+
+    const rm = el('button', 'cq-btn x');
+    rm.type = 'button';
+    rm.innerHTML = iconHtml('x');
+    rm.title = '从队列里删除';
+    rm.setAttribute('aria-label', '删除');
+    rm.onclick = () => removeQueued(t, item.id);
+    acts.appendChild(rm);
+
+    row.appendChild(acts);
+    list.appendChild(row);
+  });
+  panel.appendChild(list);
 }
 
 async function sendCurrent() {
@@ -13202,15 +13461,24 @@ async function sendCurrent() {
   if (t.remote) {
     closeSlash();
     if (t.remote.mode === 'watch') { toast('监视模式不能输入', 'info'); return; }
-    if (t.busy) { cmd('flowlink.ws.stop', { cell: t.remote.cell, cwd: t.remote.cwd, rid: t.remote.rid }); return; }
     // 对端没选模型同样是「发出去也白跑」：当场拦住并弹对端的模型菜单
     if (needsModel()) { demandModel('对端还没有选择模型 —— 先选一个才能开始会话'); return; }
-    await flSendRemote(t);
+    if (t.busy) {
+      if (queueOutgoing(t)) toast('已加入队列 · 对端回合结束后发送', 'ok', 2400);
+      focusInput();
+      return;
+    }
+    if (!queueOutgoing(t)) return;
+    await pumpQueue(t.ws);
     focusInput();
     return;
   }
-  if (t.busy) { closeSlash(); stopAllActivity(t); return; }
-  if (t.composer.mode === 'team') { closeSlash(); await submitWorkflow(t, 'run'); return; }
+  if (t.composer.mode === 'team') {
+    closeSlash();
+    if (t.busy) { toast('当前回合还在跑 —— 等它结束再运行工作流', 'info', 3200); return; }
+    await submitWorkflow(t, 'run');
+    return;
+  }
   let text = (t.composer.text || '').trim();
   const atts = (t.composer.attachments || []).filter(a => a.path);
   if (!text && !atts.length) return;
@@ -13224,26 +13492,17 @@ async function sendCurrent() {
     runSlash(t, it);
     return;
   }
-  if (atts.length) {
-    text += (text ? '\n\n' : '') + '[附件]\n' + atts.map(a => '- ' + a.path).join('\n');
-  }
   // 没选模型就发出去只会白跑一个回合（引擎报错的那行还会被转录重载冲掉），
   // 所以在这里截住：内容留在输入框里，弹菜单让用户当场选
   if (needsModel()) { closeSlash(); demandModel(); return; }
   closeSlash();
-  const optimistic = { id: uid(), role: 'user', text: text, ts: nowSec() };
-  t.msgs.push(optimistic);
-  for (const a of (t.composer.attachments || [])) dropAttachPreview(a); // 释放预览用的 object URL
-  t.composer.text = '';
-  t.composer.attachments = [];
-  const ta = $('#ta');
-  if (ta) ta.value = '';
-  renderChips(t);
-  paintSendState(t);
-  buildSlash(true);
-  markChat(t.ws);
-  const out = await cmd('send', { ws: t.ws, text: text });
-  if (out && out.ok === false) { markChat(t.ws); }
+  if (!queueOutgoing(t)) return;         // 附件路径块在入队时拼进 text
+  if (t.busy) {
+    toast('已加入队列 · 本回合结束后自动发送', 'ok', 2400);
+    focusInput();
+    return;
+  }
+  await pumpQueue(t.ws);
   focusInput();
 }
 
@@ -16215,6 +16474,13 @@ function renderApproval() {
   box.appendChild(head);
 
   const body = el('div', 'modalbody approval-body');
+  // 模型给出的调用理由（审批类工具必填）：放在参数上方，一眼看清为什么
+  if (a.note) {
+    const why = el('div', 'ap-why');
+    why.appendChild(el('span', 'ap-why-tag', '理由'));
+    why.appendChild(el('span', 'ap-why-text', a.note));
+    body.appendChild(why);
+  }
   const call = el('div', 'ap-call');
   const callHead = el('div', 'ap-call-head');
   callHead.appendChild(el('span', null, '工具'));
@@ -16997,6 +17263,7 @@ const Mock = {
     if (this.demo === 'approval') {
       setTimeout(() => this.emit({
         t: 'approval', ws: this.A, id: 'ap' + (++this._seq), tool: 'write_file',
+        note: '把清洗逻辑拆到独立函数，方便单测复用',
         args: '{\n  "path": "src/ui/src/js/02-render2-chat.js",\n  "bytes": 128430\n}',
       }), 1200);
       return;
@@ -18677,35 +18944,39 @@ function pnlRenderFiles(body, ctx) {
   var wrap = pnlEl('div', 'pnl pnl-files');
   pnlFit(wrap, body);
   var head = pnlEl('div', 'pnl-head fp-head');
+  var up = pnlIconBtn('arrowUp', '返回上一级', function () { pnlFileGo(PNL.files.stack.length - 1); });
+  up.classList.add('fp-up');
   var crumbs = pnlEl('div', 'fp-crumbs');
   var refresh = pnlIconBtn('refresh', '刷新目录', function () { pnlLoadFiles(true); });
   refresh.classList.add('fp-refresh');
-  head.append(crumbs, pnlEl('span', 'grow'), refresh);
+  // crumbs 自己 flex:1 把 refresh 推到右边；再放 grow 会和 crumbs 平分宽度
+  head.append(up, crumbs, refresh);
   var list = pnlEl('div', 'fp-list');
   wrap.append(head, list);
   body.appendChild(wrap);
   if (!ctx.cwd) {
-    pnlPaintFileCrumbs(crumbs, ctx);
+    pnlPaintFileCrumbs(crumbs, ctx, up);
     list.appendChild(pnlEmptyBox('folderOpen', '没有打开的工作区',
       '打开一个工作区后，这里会显示它的文件。', '打开工作区', function () {
         if (typeof openWsDialog === 'function') openWsDialog();
       }));
     return;
   }
-  pnlPaintFileCrumbs(crumbs, ctx);
+  pnlPaintFileCrumbs(crumbs, ctx, up);
   if (!PNL.files.data && !PNL.files.err && !PNL.files.loading) pnlLoadFiles(false);
   pnlPaintFileList(list, ctx);
   if (PNL.files.loading) refresh.classList.add('spin');
 }
 
-function pnlPaintFileCrumbs(box, ctx) {
+function pnlPaintFileCrumbs(box, ctx, up) {
   box.replaceChildren();
-  if (!ctx.cwd) { box.appendChild(pnlEl('span', 'fp-crumb-root', '文件')); return; }
   var st = PNL.files;
+  if (up) up.disabled = !ctx.cwd || !st.stack.length;
+  if (!ctx.cwd) { box.appendChild(pnlEl('span', 'fp-crumb-root', '文件')); return; }
   var rootBtn = pnlEl('button', 'fp-crumb fp-crumb-root');
   rootBtn.type = 'button';
   rootBtn.title = ctx.cwd;
-  rootBtn.innerHTML = pnlIcon('folder') + '<span>' + pnlEsc(pnlBase(ctx.cwd) || '工作区') + '</span>';
+  rootBtn.innerHTML = pnlIcon('folder') + '<span class="trunc">' + pnlEsc(pnlBase(ctx.cwd) || '工作区') + '</span>';
   rootBtn.onclick = function () { pnlFileGo(0); };
   box.appendChild(rootBtn);
   for (var i = 0; i < st.stack.length; i++) {
@@ -18715,12 +18986,14 @@ function pnlPaintFileCrumbs(box, ctx) {
     (function (idx) {
       var b = pnlEl('button', 'fp-crumb');
       b.type = 'button';
-      b.textContent = st.stack[idx].name;
+      b.innerHTML = '<span class="trunc">' + pnlEsc(st.stack[idx].name) + '</span>';
       b.title = st.stack[idx].path || st.stack[idx].name;
       b.onclick = function () { pnlFileGo(idx + 1); };
       box.appendChild(b);
     })(i);
   }
+  // 窄面板里把当前目录滚进视野，否则末级面包屑被裁掉、看不到自己在哪
+  box.scrollLeft = box.scrollWidth;
 }
 
 function pnlFileGo(depth) {
@@ -21912,7 +22185,7 @@ function wireEvents() {
 /* 旧输入栏兜底绑定：ComposerUI 未加载时保持页面可用 */
 function wireComposerLegacy() {
   const send = $('#sendBtn');
-  if (send) send.onclick = () => sendCurrent();
+  if (send) send.onclick = () => onSendClick();
   const pick = $('#btnPickFile'), fin = $('#fileInput');
   if (pick && fin) {
     pick.onclick = () => fin.click();
@@ -22768,6 +23041,7 @@ function flDevices() {
       pairing: !!p.pairing,
       discovered: !!p.discovered,
       last_seen: p.last_seen || 0,
+      scope: p.scope || 'lan',
     });
   }
   // 最近一次扫描里发现、但状态还没刷新的设备
@@ -22936,6 +23210,17 @@ function flIconBtn(icon, title, fn, cls) {
   return b;
 }
 function flPill(text, cls) { return el('span', 'pill ' + (cls || ''), text); }
+/* 连接范围：host=同主机（WSL 或双实例），lan=局域网，routed=跨网段/VPN */
+function flScopeLabel(d, short) {
+  const s = (d && d.scope) || 'lan';
+  if (s === 'host') {
+    const cross = /windows/i.test(String((d && d.os) || '')) !== /windows/i.test(navigator.userAgent);
+    return cross ? (short ? 'WSL' : '同主机 · WSL') : '同主机';
+  }
+  if (s === 'routed') return '跨网段';
+  return short ? 'LAN' : '局域网';
+}
+function flScopePill(d) { return flPill(flScopeLabel(d), 'scope'); }
 function flField(label, input, hint) {
   const w = el('label', 'fl-field');
   w.appendChild(el('span', 'fl-field-label', label));
@@ -23004,6 +23289,7 @@ function flDeviceRow(d) {
   if (d.paired) line1.appendChild(flPill('已配对', 'ok'));
   else if (d.pairing) line1.appendChild(flPill('可配对', 'accent'));
   if (d.online) line1.appendChild(flPill('在线', 'ok'));
+  line1.appendChild(flScopePill(d));
   main.appendChild(line1);
   const meta = el('div', 'fl-dev-meta');
   const bits = [d.os || '未知系统', d.tz || '本地时区', d.lang || '—'];
@@ -23445,6 +23731,7 @@ function flPaintLinks(main) {
     const pstate = flPeerState(d);
     head.appendChild(flPill(FL_PEER_LABEL[pstate], pstate === 'online' ? 'ok' : pstate === 'retry' ? 'warn' : ''));
     head.appendChild(flPill(d.os || '未知系统'));
+    head.appendChild(flScopePill(d));
     head.onclick = () => { FL.sel = d.client_id; flPaint(); flLoadRemote(d.client_id); };
     card.appendChild(head);
 
@@ -24299,15 +24586,18 @@ function openShareDialog(ws) {
     const srcRow = el('div', 'sh-row');
     srcRow.appendChild(el('span', 'sh-k', '分享内容'));
     const srcBox = el('div', 'sh-src');
+    let archiveSub = null;   // 「已存档会话」那张卡的第二行：显示当前选中了哪一条
     const mkRadio = (val, label, sub) => {
       const b = el('button', 'sh-src-btn' + (source === val ? ' on' : ''));
       b.type = 'button';
       b.appendChild(el('span', 'sh-src-t', label));
-      b.appendChild(el('span', 'sh-src-s trunc', sub));
+      const s = el('span', 'sh-src-s trunc', sub);
+      b.appendChild(s);
+      if (val === 'archive') archiveSub = s;
       b.onclick = () => {
         source = val;
         $$('#genericModal .sh-src-btn').forEach(x => x.classList.toggle('on', x === b));
-        sel.style.display = val === 'archive' ? '' : 'none';
+        pick.style.display = val === 'archive' ? '' : 'none';
       };
       return b;
     };
@@ -24316,24 +24606,58 @@ function openShareDialog(ws) {
     srcRow.appendChild(srcBox);
     wrap.appendChild(srcRow);
 
-    // 已存档会话下拉
-    const sel = el('select', 'fl-input sh-select');
-    const list = (S.sessions || []).filter(s => s.id);
-    for (const s of list) {
-      const o = el('option', null, (s.title || s.id) + ' · ' + relTime(s.mtime));
-      o.value = s.id;
-      sel.appendChild(o);
-    }
-    if (!list.length) {
-      const o = el('option', null, '（没有已存档的会话）');
-      o.value = '';
-      sel.appendChild(o);
-    }
-    sel.value = picked || (list[0] && list[0].id) || '';
-    picked = sel.value;
-    sel.onchange = () => { picked = sel.value; };
-    sel.style.display = source === 'archive' ? '' : 'none';
-    wrap.appendChild(sel);
+    /* 已存档会话选择器：原生 select 撑不住会话标题 —— 标题往往是一整段摘要，
+       选中行会被压成一条省略号，展开后整列长文本直接糊满弹窗（用户 2026-11-18
+       的截图就是这个）。换成「搜索框 + 两行式列表」：标题最多两行，第二行是
+       时间 / 消息数 / id；选中的一条挂强调色边框。 */
+    const pick = el('div', 'sh-pick');
+    const pickSearch = flInput('搜索会话标题或 id', '');
+    pickSearch.classList.add('sh-search');
+    const pickList = el('div', 'sh-list');
+    pick.appendChild(pickSearch);
+    pick.appendChild(pickList);
+    pick.style.display = source === 'archive' ? '' : 'none';
+
+    const all = (S.sessions || []).filter(s => s.id);
+    if (!picked || !all.some(s => s.id === picked)) picked = (all[0] && all[0].id) || '';
+    const pickedOf = id => all.find(s => s.id === id);
+
+    const paintPick = () => {
+      const q = String(pickSearch.value || '').trim().toLowerCase();
+      const rows = q ? all.filter(s => (String(s.title || '') + ' ' + s.id + ' ' + (s.cwd || ''))
+        .toLowerCase().includes(q)) : all;
+      const nodes = rows.map(s => {
+        const it = el('button', 'sh-item' + (s.id === picked ? ' on' : ''));
+        it.type = 'button';
+        const ttl = el('div', 'sh-item-t', String(s.title || '').trim() || shortId(s.id));
+        ttl.title = String(s.title || s.id);
+        it.appendChild(ttl);
+        const meta = el('div', 'sh-item-m');
+        meta.appendChild(el('span', null, relTime(s.mtime) || '—'));
+        meta.appendChild(el('span', null, Number(s.msgs || 0) + ' 条'));
+        meta.appendChild(el('span', 'mono', shortId(s.id)));
+        if (s.busy) meta.appendChild(el('span', 'sh-item-live', '运行中'));
+        if (s.id === picked) {
+          const ck = el('span', 'sh-item-ck');
+          ck.innerHTML = iconHtml('check');
+          ck.title = '当前选中的会话';
+          meta.appendChild(ck);
+        }
+        it.appendChild(meta);
+        it.title = (s.title || s.id) + '\n' + (s.cwd || '');
+        it.onclick = () => { picked = s.id; paintPick(); };
+        return it;
+      });
+      pickList.replaceChildren(...(nodes.length ? nodes
+        : [el('div', 'sh-empty', all.length ? '没有匹配的会话' : '还没有已存档的会话')]));
+      if (archiveSub) {
+        const cur = pickedOf(picked);
+        archiveSub.textContent = cur ? (cur.title || shortId(cur.id)) : '本机任意会话的转录';
+      }
+    };
+    pickSearch.oninput = paintPick;
+    paintPick();
+    wrap.appendChild(pick);
 
     // 主题 / 备注
     const subj = flInput('主题（默认「Shared conversation」）', '');
@@ -24795,6 +25119,7 @@ function flFinishRemoteTurn(t, session, opts) {
   markChat(t.ws);
   markComposer(t.ws);
   schedule('tabbar', renderTabbar);
+  pumpQueue(t.ws);   // 对端这一回合收尾：把队列里的下一条发出去（见 §I5a）
   const sid = session || t.remote.session || '';
   if (sid && sid !== t.remote.session) t.remote.session = sid;
   if (sid) {
@@ -25057,18 +25382,23 @@ async function flRefreshRemoteTasks(t) {
   return t.remote.tasks;
 }
 
-/* 输入框里的发送：远程工作区走 flowlink.ws.send，回合在对端跑 */
-async function flSendRemote(t) {
-  const text = (t.composer.text || '').trim();
+/* 输入框里的发送：远程工作区走 flowlink.ws.send，回合在对端跑。
+   textOverride：队列里的条目（见 05-composer.js §I5a）—— 文本来自队列而非
+   输入框，这时只发它，不去动输入框里的草稿。 */
+async function flSendRemote(t, textOverride) {
+  const fromQueue = textOverride != null;
+  const text = String(fromQueue ? textOverride : (t.composer.text || '')).trim();
   if (!text) return;
   if (t.remote && t.remote.mode === 'watch') { toast('监视模式不能输入', 'info'); return; }
-  if (t.busy) {
+  if (t.busy && !fromQueue) {
     cmd('flowlink.ws.stop', { cell: t.remote.cell, cwd: t.remote.cwd, rid: t.remote.rid });
     return;
   }
-  t.composer.text = '';
-  const ta = $('#ta');
-  if (ta) ta.value = '';
+  if (!fromQueue) {
+    t.composer.text = '';
+    const ta = $('#ta');
+    if (ta) ta.value = '';
+  }
   t.msgs.push({ id: uid(), role: 'user', text: text, ts: nowSec() });
   // 正文占位**不预建**：一条空 assistant 消息会渲染成「只有头像、没有内容」的
   // 空行，紧挨着等待指示器就成了两个 cell 图标并排（用户看到的就是这个）。
@@ -25097,7 +25427,7 @@ async function flSendRemote(t) {
     markChat(t.ws);
     markComposer(t.ws);
     schedule('tabbar', renderTabbar);
-    return;
+    return false;
   }
   // the peer tells us which session the turn landed in (it may have opened a
   // new one): the chips and the next turn's "session" must follow it
@@ -25105,6 +25435,7 @@ async function flSendRemote(t) {
     if (out.session) t.remote.session = out.session;
     if (out.ws) t.remote.peerWs = out.ws;
   }
+  return true;
 }
 
 /* 对端正文增量：走本地回合同一条流式路径。
@@ -25285,6 +25616,7 @@ function renderFlowWsSidebar(force) {
     gname.title = g.cwd;
     head.appendChild(gname);
     head.appendChild(el('span', 'cnt', String(sessions.length)));
+    if (peer) head.appendChild(el('span', 'cnt fl-scope', flScopeLabel(peer, true)));
     const pstate = flPeerState(peer);
     if (pstate !== 'online') {
       const tag = el('span', 'cnt', pstate === 'retry' ? '重连中' : '离线');

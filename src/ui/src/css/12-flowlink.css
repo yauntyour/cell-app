@@ -338,10 +338,31 @@
 .sh-src-t{font-size:12px;font-weight:600;color:var(--fg)}
 .sh-src-btn.on .sh-src-t{color:var(--accent)}
 .sh-src-s{font-size:10.5px;color:var(--fg4);min-width:0}
-.sh-select{height:30px}
 .sh-hint{margin:0;font-size:11px;line-height:1.6;color:var(--fg4)}
 .sh-warn{padding:7px 10px;border-radius:8px;border:1px solid var(--warn);background:rgba(210,153,34,.1);
   font-size:11.5px;line-height:1.6;color:var(--warn)}
+/* 已存档会话选择器：搜索框 + 两行式列表（替代原生 select —— 会话标题常是一整段
+   摘要，原生下拉会被压成一条省略号，展开后长文本还会溢出弹窗） */
+.sh-pick{display:flex;flex-direction:column;gap:6px;min-width:0}
+.sh-pick .sh-search{flex:none}
+.sh-list{display:flex;flex-direction:column;gap:2px;max-height:min(46vh,268px);overflow-y:auto;
+  padding:4px;border-radius:var(--radius-s);border:1px solid var(--line2);background:var(--bg3)}
+.sh-item{display:flex;flex-direction:column;gap:3px;min-width:0;padding:6px 8px;border-radius:var(--radius-s);
+  border:1px solid transparent;background:transparent;text-align:left;cursor:pointer;
+  transition:background var(--dur) var(--ease),border-color var(--dur) var(--ease)}
+.sh-item:hover{background:var(--raise)}
+.sh-item.on{background:var(--accent-soft);border-color:color-mix(in srgb,var(--accent) 42%,transparent)}
+.sh-item-t{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;
+  font-size:12px;line-height:1.45;color:var(--fg2);overflow-wrap:anywhere}
+.sh-item.on .sh-item-t{color:var(--accent)}
+.sh-item-m{display:flex;align-items:center;gap:8px;font-size:10.5px;color:var(--fg4);
+  font-variant-numeric:tabular-nums}
+.sh-item-m .mono{font-family:var(--mono);font-size:10px}
+.sh-item-ck{display:inline-flex;align-items:center;justify-content:center;margin-left:auto;
+  width:13px;height:13px;flex:none;color:var(--accent)}
+.sh-item-ck .uico{width:13px;height:13px;stroke-width:2.4}
+.sh-item-live{color:var(--ok)}
+.sh-empty{padding:14px 8px;text-align:center;font-size:11.5px;color:var(--fg4)}
 /* 弹窗不在 #flowlinkPage 里，表单字段的样式要在这里补一份 */
 .sh-dlg .fl-field{display:flex;flex-direction:column;gap:4px}
 .sh-dlg .fl-field-label{font-size:11.5px;color:var(--fg4)}
@@ -369,6 +390,9 @@
 #flowWsSection .fl-mon{opacity:.55}
 #flowWsSection .sgroup-head:hover .fl-mon{opacity:1}
 #flowWsSection .fl-mon:hover{background:var(--accent-soft);color:var(--accent)}
+/* 连接范围徽章（同主机/局域网/跨网段）：中性色，不与状态徽章抢注意力 */
+.pill.scope{color:var(--fg3);border-color:var(--line2);background:transparent}
+#flowWsSection .fl-scope{color:var(--fg3)}
 
 @media (max-width:980px){
   #flowlinkPage .fl-side{width:200px}

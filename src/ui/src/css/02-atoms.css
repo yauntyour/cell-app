@@ -106,3 +106,5 @@ select{appearance:none;background-image:url("data:image/svg+xml;charset=utf-8,%3
 .empty{padding:28px 18px;text-align:center;color:var(--fg3);font-size:12.5px;line-height:1.7}
 .empty .uico{width:26px;height:26px;margin:0 auto 10px;color:var(--fg4)}
 .spin{animation:spin 1s linear infinite}
+.icon-btn.spin{animation:none}
+.icon-btn.spin .uico{animation:spin 1s linear infinite}

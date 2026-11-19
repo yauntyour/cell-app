@@ -131,6 +131,7 @@ function flDevices() {
       pairing: !!p.pairing,
       discovered: !!p.discovered,
       last_seen: p.last_seen || 0,
+      scope: p.scope || 'lan',
     });
   }
   // 最近一次扫描里发现、但状态还没刷新的设备
@@ -299,6 +300,17 @@ function flIconBtn(icon, title, fn, cls) {
   return b;
 }
 function flPill(text, cls) { return el('span', 'pill ' + (cls || ''), text); }
+/* 连接范围：host=同主机（WSL 或双实例），lan=局域网，routed=跨网段/VPN */
+function flScopeLabel(d, short) {
+  const s = (d && d.scope) || 'lan';
+  if (s === 'host') {
+    const cross = /windows/i.test(String((d && d.os) || '')) !== /windows/i.test(navigator.userAgent);
+    return cross ? (short ? 'WSL' : '同主机 · WSL') : '同主机';
+  }
+  if (s === 'routed') return '跨网段';
+  return short ? 'LAN' : '局域网';
+}
+function flScopePill(d) { return flPill(flScopeLabel(d), 'scope'); }
 function flField(label, input, hint) {
   const w = el('label', 'fl-field');
   w.appendChild(el('span', 'fl-field-label', label));
@@ -367,6 +379,7 @@ function flDeviceRow(d) {
   if (d.paired) line1.appendChild(flPill('已配对', 'ok'));
   else if (d.pairing) line1.appendChild(flPill('可配对', 'accent'));
   if (d.online) line1.appendChild(flPill('在线', 'ok'));
+  line1.appendChild(flScopePill(d));
   main.appendChild(line1);
   const meta = el('div', 'fl-dev-meta');
   const bits = [d.os || '未知系统', d.tz || '本地时区', d.lang || '—'];
@@ -808,6 +821,7 @@ function flPaintLinks(main) {
     const pstate = flPeerState(d);
     head.appendChild(flPill(FL_PEER_LABEL[pstate], pstate === 'online' ? 'ok' : pstate === 'retry' ? 'warn' : ''));
     head.appendChild(flPill(d.os || '未知系统'));
+    head.appendChild(flScopePill(d));
     head.onclick = () => { FL.sel = d.client_id; flPaint(); flLoadRemote(d.client_id); };
     card.appendChild(head);
 
@@ -1662,15 +1676,18 @@ function openShareDialog(ws) {
     const srcRow = el('div', 'sh-row');
     srcRow.appendChild(el('span', 'sh-k', '分享内容'));
     const srcBox = el('div', 'sh-src');
+    let archiveSub = null;   // 「已存档会话」那张卡的第二行：显示当前选中了哪一条
     const mkRadio = (val, label, sub) => {
       const b = el('button', 'sh-src-btn' + (source === val ? ' on' : ''));
       b.type = 'button';
       b.appendChild(el('span', 'sh-src-t', label));
-      b.appendChild(el('span', 'sh-src-s trunc', sub));
+      const s = el('span', 'sh-src-s trunc', sub);
+      b.appendChild(s);
+      if (val === 'archive') archiveSub = s;
       b.onclick = () => {
         source = val;
         $$('#genericModal .sh-src-btn').forEach(x => x.classList.toggle('on', x === b));
-        sel.style.display = val === 'archive' ? '' : 'none';
+        pick.style.display = val === 'archive' ? '' : 'none';
       };
       return b;
     };
@@ -1679,24 +1696,58 @@ function openShareDialog(ws) {
     srcRow.appendChild(srcBox);
     wrap.appendChild(srcRow);
 
-    // 已存档会话下拉
-    const sel = el('select', 'fl-input sh-select');
-    const list = (S.sessions || []).filter(s => s.id);
-    for (const s of list) {
-      const o = el('option', null, (s.title || s.id) + ' · ' + relTime(s.mtime));
-      o.value = s.id;
-      sel.appendChild(o);
-    }
-    if (!list.length) {
-      const o = el('option', null, '（没有已存档的会话）');
-      o.value = '';
-      sel.appendChild(o);
-    }
-    sel.value = picked || (list[0] && list[0].id) || '';
-    picked = sel.value;
-    sel.onchange = () => { picked = sel.value; };
-    sel.style.display = source === 'archive' ? '' : 'none';
-    wrap.appendChild(sel);
+    /* 已存档会话选择器：原生 select 撑不住会话标题 —— 标题往往是一整段摘要，
+       选中行会被压成一条省略号，展开后整列长文本直接糊满弹窗（用户 2026-11-18
+       的截图就是这个）。换成「搜索框 + 两行式列表」：标题最多两行，第二行是
+       时间 / 消息数 / id；选中的一条挂强调色边框。 */
+    const pick = el('div', 'sh-pick');
+    const pickSearch = flInput('搜索会话标题或 id', '');
+    pickSearch.classList.add('sh-search');
+    const pickList = el('div', 'sh-list');
+    pick.appendChild(pickSearch);
+    pick.appendChild(pickList);
+    pick.style.display = source === 'archive' ? '' : 'none';
+
+    const all = (S.sessions || []).filter(s => s.id);
+    if (!picked || !all.some(s => s.id === picked)) picked = (all[0] && all[0].id) || '';
+    const pickedOf = id => all.find(s => s.id === id);
+
+    const paintPick = () => {
+      const q = String(pickSearch.value || '').trim().toLowerCase();
+      const rows = q ? all.filter(s => (String(s.title || '') + ' ' + s.id + ' ' + (s.cwd || ''))
+        .toLowerCase().includes(q)) : all;
+      const nodes = rows.map(s => {
+        const it = el('button', 'sh-item' + (s.id === picked ? ' on' : ''));
+        it.type = 'button';
+        const ttl = el('div', 'sh-item-t', String(s.title || '').trim() || shortId(s.id));
+        ttl.title = String(s.title || s.id);
+        it.appendChild(ttl);
+        const meta = el('div', 'sh-item-m');
+        meta.appendChild(el('span', null, relTime(s.mtime) || '—'));
+        meta.appendChild(el('span', null, Number(s.msgs || 0) + ' 条'));
+        meta.appendChild(el('span', 'mono', shortId(s.id)));
+        if (s.busy) meta.appendChild(el('span', 'sh-item-live', '运行中'));
+        if (s.id === picked) {
+          const ck = el('span', 'sh-item-ck');
+          ck.innerHTML = iconHtml('check');
+          ck.title = '当前选中的会话';
+          meta.appendChild(ck);
+        }
+        it.appendChild(meta);
+        it.title = (s.title || s.id) + '\n' + (s.cwd || '');
+        it.onclick = () => { picked = s.id; paintPick(); };
+        return it;
+      });
+      pickList.replaceChildren(...(nodes.length ? nodes
+        : [el('div', 'sh-empty', all.length ? '没有匹配的会话' : '还没有已存档的会话')]));
+      if (archiveSub) {
+        const cur = pickedOf(picked);
+        archiveSub.textContent = cur ? (cur.title || shortId(cur.id)) : '本机任意会话的转录';
+      }
+    };
+    pickSearch.oninput = paintPick;
+    paintPick();
+    wrap.appendChild(pick);
 
     // 主题 / 备注
     const subj = flInput('主题（默认「Shared conversation」）', '');
@@ -2158,6 +2209,7 @@ function flFinishRemoteTurn(t, session, opts) {
   markChat(t.ws);
   markComposer(t.ws);
   schedule('tabbar', renderTabbar);
+  pumpQueue(t.ws);   // 对端这一回合收尾：把队列里的下一条发出去（见 §I5a）
   const sid = session || t.remote.session || '';
   if (sid && sid !== t.remote.session) t.remote.session = sid;
   if (sid) {
@@ -2420,18 +2472,23 @@ async function flRefreshRemoteTasks(t) {
   return t.remote.tasks;
 }
 
-/* 输入框里的发送：远程工作区走 flowlink.ws.send，回合在对端跑 */
-async function flSendRemote(t) {
-  const text = (t.composer.text || '').trim();
+/* 输入框里的发送：远程工作区走 flowlink.ws.send，回合在对端跑。
+   textOverride：队列里的条目（见 05-composer.js §I5a）—— 文本来自队列而非
+   输入框，这时只发它，不去动输入框里的草稿。 */
+async function flSendRemote(t, textOverride) {
+  const fromQueue = textOverride != null;
+  const text = String(fromQueue ? textOverride : (t.composer.text || '')).trim();
   if (!text) return;
   if (t.remote && t.remote.mode === 'watch') { toast('监视模式不能输入', 'info'); return; }
-  if (t.busy) {
+  if (t.busy && !fromQueue) {
     cmd('flowlink.ws.stop', { cell: t.remote.cell, cwd: t.remote.cwd, rid: t.remote.rid });
     return;
   }
-  t.composer.text = '';
-  const ta = $('#ta');
-  if (ta) ta.value = '';
+  if (!fromQueue) {
+    t.composer.text = '';
+    const ta = $('#ta');
+    if (ta) ta.value = '';
+  }
   t.msgs.push({ id: uid(), role: 'user', text: text, ts: nowSec() });
   // 正文占位**不预建**：一条空 assistant 消息会渲染成「只有头像、没有内容」的
   // 空行，紧挨着等待指示器就成了两个 cell 图标并排（用户看到的就是这个）。
@@ -2460,7 +2517,7 @@ async function flSendRemote(t) {
     markChat(t.ws);
     markComposer(t.ws);
     schedule('tabbar', renderTabbar);
-    return;
+    return false;
   }
   // the peer tells us which session the turn landed in (it may have opened a
   // new one): the chips and the next turn's "session" must follow it
@@ -2468,6 +2525,7 @@ async function flSendRemote(t) {
     if (out.session) t.remote.session = out.session;
     if (out.ws) t.remote.peerWs = out.ws;
   }
+  return true;
 }
 
 /* 对端正文增量：走本地回合同一条流式路径。
@@ -2648,6 +2706,7 @@ function renderFlowWsSidebar(force) {
     gname.title = g.cwd;
     head.appendChild(gname);
     head.appendChild(el('span', 'cnt', String(sessions.length)));
+    if (peer) head.appendChild(el('span', 'cnt fl-scope', flScopeLabel(peer, true)));
     const pstate = flPeerState(peer);
     if (pstate !== 'online') {
       const tag = el('span', 'cnt', pstate === 'retry' ? '重连中' : '离线');

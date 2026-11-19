@@ -1673,6 +1673,12 @@ function makeApprovalCard() {
   head.appendChild(el('span', 'badge warn', '待确认'));
   card.appendChild(head);
   const body = el('div', 'apbody');
+  if (a.note) {
+    const why = el('div', 'ap-why');
+    why.appendChild(el('span', 'ap-why-tag', '理由'));
+    why.appendChild(el('span', 'ap-why-text', a.note));
+    body.appendChild(why);
+  }
   const pre = el('pre');
   pre.textContent = typeof a.args === 'string' ? a.args : JSON.stringify(a.args || {}, null, 2);
   body.appendChild(pre);

@@ -28,6 +28,7 @@
 
 const CMP_PLACEHOLDER = '描述你想构建的内容，/ 调用指令，@ 文件或对话';
 const CMP_ATTACH_PLACEHOLDER = '为附件添加说明，或直接发送…';
+const CMP_BUSY_PLACEHOLDER = '运行中 · Enter 把消息排进队列，回合结束后自动发送（停止请按发送钮）';
 
 /* 模式 / 沙箱 / 图标映射（图标名取自 00-core.js 的 ICON_PATHS） */
 const CMP_MODES = [
@@ -99,6 +100,19 @@ function ensureSlashPanel() {
   if (panel) return panel;
   panel = el('div', 'slash');
   panel.id = 'slashPanel';
+  const stack = cmpStack(null) || $('#composer');
+  if (!stack) return null;
+  stack.insertBefore(panel, stack.firstChild);
+  return panel;
+}
+
+/* 队列面板与 #slashPanel 同宿主：绝对定位在卡片上方（bottom:100%），
+   占用的是会话区，不挤占固定高度的输入卡。 */
+function ensureQueuePanel() {
+  let panel = $('#cmpQueue');
+  if (panel) return panel;
+  panel = el('div', 'cmp-queue');
+  panel.id = 'cmpQueue';
   const stack = cmpStack(null) || $('#composer');
   if (!stack) return null;
   stack.insertBefore(panel, stack.firstChild);
@@ -227,21 +241,6 @@ function buildComposerDom() {
   send.innerHTML = CMP_ICON_SEND;
   right.appendChild(send);
 
-  // 运行中插话：仅在回合进行时出现。「立即」注入正在跑的回合，
-  // 「排队」等本回合结束后自动开新回合。两者都取输入框当前文本。
-  const liveWrap = el('div', 'cmp-live');
-  liveWrap.id = 'cmpLive';
-  const liveNow = el('button', 'cmp-live-btn', '插话');
-  liveNow.type = 'button'; liveNow.id = 'interjectNow';
-  liveNow.title = '立即插入：把输入内容注入正在运行的回合（下一轮生效）';
-  liveNow.onclick = () => interjectCurrent(true);
-  const liveQueue = el('button', 'cmp-live-btn', '排队');
-  liveQueue.type = 'button'; liveQueue.id = 'interjectQueue';
-  liveQueue.title = '排队：本回合结束后自动发送输入内容';
-  liveQueue.onclick = () => interjectCurrent(false);
-  liveWrap.appendChild(liveNow); liveWrap.appendChild(liveQueue);
-  right.appendChild(liveWrap);
-
   bar.appendChild(left);
   bar.appendChild(right);
   host.appendChild(bar);
@@ -255,6 +254,7 @@ function buildComposerDom() {
   }
 
   ensureSlashPanel();
+  ensureQueuePanel();
   host.classList.remove('glass-refract');   // 旧类名（已废弃）
   setupLens(host);
   host.__cmpBuilt = true;
@@ -547,7 +547,7 @@ function bindComposer() {
     });
     ta.addEventListener('keydown', onComposerKeydown);
   }
-  if (send) send.addEventListener('click', () => sendCurrent());
+  if (send) send.addEventListener('click', () => onSendClick());
   if (add && fin) add.addEventListener('click', () => { if (!add.disabled) fin.click(); });
   if (pick && fin) pick.addEventListener('click', () => fin.click());
   if (fin) fin.addEventListener('change', () => {
@@ -965,15 +965,27 @@ function toggleTools() {
 }
 
 
+/* 发送钮：运行中它是**停止**（点击即终止，Enter 不终止 —— Enter 只入队，
+   见 §I5a）。所以「停止」必须留在这个唯一的显式入口上。 */
+function onSendClick() {
+  const t = curTab();
+  if (!t) return;
+  if (!t.busy) { sendCurrent(); return; }
+  closeSlash();
+  if (t.remote) {
+    cmd('flowlink.ws.stop', { cell: t.remote.cell, cwd: t.remote.cwd, rid: t.remote.rid });
+    focusInput();
+    return;
+  }
+  stopAllActivity(t);
+}
+
 function paintSendState(t) {
   const send = $('#sendBtn');
   if (!send) return;
   const mode = t ? (t.composer.mode || 'text') : 'text';
   send.classList.toggle('stop', !!(t && t.busy));
   send.classList.remove('dim');
-  // 运行中才显示「插话 / 排队」；远程/监视页签不显示（对端回合由对端处理）
-  const live = $('#cmpLive');
-  if (live) live.classList.toggle('show', !!(t && t.busy && !t.remote));
   if (!t) {
     send.disabled = true;
     send.innerHTML = CMP_ICON_SEND;
@@ -983,7 +995,7 @@ function paintSendState(t) {
   send.disabled = false;
   if (t.busy) {
     send.innerHTML = CMP_ICON_STOP;
-    send.title = '停止：中断当前回合与该工作区的全部 Teamwork 任务';
+    send.title = '停止：中断当前回合与该工作区的全部 Teamwork 任务\n（Enter 不再停止：运行中按 Enter 是「加入队列」）';
     send.setAttribute('aria-label', '停止');
     return;
   }
@@ -994,7 +1006,7 @@ function paintSendState(t) {
     return;
   }
   send.innerHTML = CMP_ICON_SEND;
-  send.title = '发送 (Enter)';
+  send.title = queueOf(t).length ? '发送 (Enter) · 队列里还有 ' + queueOf(t).length + ' 条' : '发送 (Enter)';
   const has = !!(String(t.composer.text || '').trim() || (t.composer.attachments || []).length);
   if (!has) send.classList.add('dim');
 }
@@ -1050,6 +1062,7 @@ function renderComposer() {
     if (teamHost) { teamHost.hidden = true; teamHost.replaceChildren(); teamHost.__builtFor = ''; }
     if (attachBar) attachBar.hidden = true;
     renderChips(null);
+    paintQueue(null);
     if (send) { send.disabled = true; send.classList.remove('stop'); send.innerHTML = CMP_ICON_SEND; send.title = '先打开一个工作区'; }
     ['#modeChip', '#sandboxChip', '#toolsChip', '#providerChip', '#modelChip', '#thinkChip', '#btnAttach']
       .forEach(s => { const b = $(s); if (b) b.disabled = true; });
@@ -1093,11 +1106,14 @@ function renderComposer() {
     if (attachBar) attachBar.hidden = mode !== 'attach';
     if (ta) {
       if (ta.value !== (t.composer.text || '')) ta.value = t.composer.text || '';
-      ta.placeholder = mode === 'attach' ? CMP_ATTACH_PLACEHOLDER : CMP_PLACEHOLDER;
+      // 运行中的占位符要交代 Enter 的新语义（入队，不是终止回合）
+      ta.placeholder = mode === 'attach' ? CMP_ATTACH_PLACEHOLDER
+        : (t.busy ? CMP_BUSY_PLACEHOLDER : CMP_PLACEHOLDER);
         }
   }
 
   renderChips(t);
+  paintQueue(t);
   paintSendState(t);
   // 远程会话：这些设置属于对端（可读可改，走对端 RPC）；监视模式没有输入
   if (t.remote) {
@@ -1312,25 +1328,190 @@ function fileToB64(file) {
   });
 }
 
-/* ---------- I5. 发送 / 停止 ---------------------------------------- */
-/* 运行中插话（点「插话」/「排队」）：取输入框当前非空文本，immediate=true 走
-   agent.interject（注入正在跑的回合），否则走 send 排队（本回合结束后处理）。
-   发送后清空输入框，行为与普通发送一致。 */
-async function interjectCurrent(immediate) {
-  const t = curTab();
-  if (!t) return;
-  closeSlash();
-  const text = (t.composer.text || '').trim();
-  if (!text) { toast('先输入要插话的内容', 'info'); focusInput(); return; }
-  t.composer.text = ''; t.composer.attachments = [];
-  const ta = $('#ta'); if (ta) ta.value = '';
-  renderChips(t); paintSendState(t); markChat(t.ws);
-  const out = immediate
-    ? await cmd('agent.interject', { ws: t.ws, text })
-    : await cmd('send', { ws: t.ws, text });
-  if (out && out.ok === false) toast((out && out.error) || '插话失败', 'bad');
-  else toast(immediate ? '已插入当前回合' : '已排队，本回合结束后发送', 'ok');
+/* ---------- I5a. 发送队列 -------------------------------------------
+   Enter 只有一种语义：**把输入框的内容交给这个页签的队列**。
+     · 空闲 → 入队后立刻把队首发出去（与「直接发送」完全等价）；
+     · 运行中 → 只入队，队列在输入卡上方以列表显示，等回合结束自动发。
+   以前运行中按 Enter 走的是 sendCurrent 的 busy 分支 —— 那是「终止任务」，
+   用户想补一句话却把正在跑的回合杀掉了。停止只留在发送钮（它在运行中就是
+   停止图标）。队列项单独可以「插入」（agent.interject，注入正在跑的回合）、
+   「编辑」（换回输入框）、删除。 */
+function queueOf(t) {
+  if (!t) return [];
+  const c = t.composer;
+  if (!Array.isArray(c.queue)) c.queue = [];
+  return c.queue;
+}
+
+/* 排队项的文本与发送时同形：正文 + 附件路径块。附件本身不跟着排队
+   （入队即释放预览 URL），所以插入 / 编辑 / 发送三条路径都只处理字符串。 */
+function queueCleanText(t) {
+  const atts = (t.composer.attachments || []).filter(a => a.path);
+  let text = String(t.composer.text || '').trim();
+  if (atts.length) text += (text ? '\n\n' : '') + '[附件]\n' + atts.map(a => '- ' + a.path).join('\n');
+  return text;
+}
+
+/* 入队并从输入框清掉刚排进去的内容；返回是否真的有条目入队 */
+function queueOutgoing(t) {
+  const text = queueCleanText(t);
+  if (!text) return false;
+  queueOf(t).push({ id: uid(), text });
+  for (const a of (t.composer.attachments || [])) dropAttachPreview(a); // 释放预览用的 object URL
+  t.composer.text = '';
+  t.composer.attachments = [];
+  const ta = $('#ta');
+  if (ta) ta.value = '';
+  renderChips(t);
+  paintSendState(t);
+  buildSlash(true);
+  markChat(t.ws);
+  paintQueue(t);
+  return true;
+}
+
+/* 指定的一条出队并发出（空闲时才动作）。失败时把条目放回队首，不静默丢失。
+   preferId 只给「空闲时点某一条的发送」用：跳过队首直接发那一条。 */
+async function pumpQueue(ws, preferId) {
+  const t = S.tabs.get(ws || S.active);
+  if (!t || t.busy || t.queuePumping) return;
+  const q = queueOf(t);
+  if (!q.length) return;
+  // 没选模型就发出去只会白跑一个回合：条目留在队列里，等用户选完
+  if (!t.remote && S.provider && S.modelSet === false) {
+    if (t.ws === S.active) demandModel('队列里的消息要先选一个模型才会发出');
+    return;
+  }
+  if (t.remote && t.remote.mode === 'watch') return;
+  t.queuePumping = true;
+  const pick = preferId ? q.findIndex(x => x.id === preferId) : 0;
+  const item = q.splice(pick > 0 ? pick : 0, 1)[0];
+  paintQueue(t);
+  try {
+    if (t.remote) {
+      // 忙态由 flSendRemote 自己置位（它在第一个 await 之前就设好，不会漏拍）
+      const okRemote = await flSendRemote(t, item.text);
+      if (okRemote === false) { q.unshift(item); paintQueue(t); }
+      return;
+    }
+    // 乐观落一条 user（回合开始后由 turn_begin 接管；转录重载时会替换成权威形态）
+    t.msgs.push({ id: uid(), role: 'user', text: item.text, ts: nowSec() });
+    t.busy = true;
+    t.thinkingSince = Date.now();
+    markChat(t.ws);
+    markComposer(t.ws);
+    const out = await cmd('send', { ws: t.ws, text: item.text });
+    if (out && out.ok === false) {
+      t.busy = false;
+      t.thinkingSince = 0;
+      q.unshift(item);
+      paintQueue(t);
+      markChat(t.ws);
+      markComposer(t.ws);
+      toast((out && out.error) || '发送失败，消息已留在队列里', 'bad', 4200);
+    }
+  } finally {
+    t.queuePumping = false;
+  }
+}
+
+/* 队列项「插入」：运行中注入正在跑的回合（agent.interject，下一轮生效）；
+   空闲时就是普通发送。远程页签没这条通道，按钮会禁用。 */
+async function interjectQueued(t, id) {
+  const q = queueOf(t);
+  const i = q.findIndex(x => x.id === id);
+  if (i < 0) return;
+  if (!t.busy) { pumpQueue(t.ws, id); return; }
+  if (t.remote) { toast('对端会话不支持中途插入', 'info'); return; }
+  const item = q[i];
+  const out = await cmd('agent.interject', { ws: t.ws, text: item.text });
+  if (!out || out.ok === false) { toast((out && out.error) || '插入失败', 'bad', 4200); return; }
+  q.splice(i, 1);
+  paintQueue(t);
+  toast(out.mode === 'injected' ? '已插入当前回合' : '已排队，本回合结束后发送', 'ok', 2600);
+}
+
+/* 队列项「编辑」：文本换回输入框；输入框里原有的草稿回队列原位（不丢东西） */
+function editQueued(t, id) {
+  const q = queueOf(t);
+  const i = q.findIndex(x => x.id === id);
+  if (i < 0) return;
+  const item = q[i];
+  const draft = String(t.composer.text || '').trim();
+  q.splice(i, 1);
+  if (draft) q.splice(i, 0, { id: uid(), text: draft });
+  syncComposerText(item.text);
+  paintQueue(t);
   focusInput();
+}
+
+function removeQueued(t, id) {
+  const q = queueOf(t);
+  const i = q.findIndex(x => x.id === id);
+  if (i < 0) return;
+  q.splice(i, 1);
+  paintQueue(t);
+}
+
+/* 队列面板：卡片上方的一条列表。每条都带「插入 / 编辑 / 删除」。 */
+function paintQueue(t) {
+  const panel = ensureQueuePanel();
+  if (!panel) return;
+  // 面板只有一份（输入卡是共享的）：后台页签的队列变动不画在这里 ——
+  // 切过去时 renderComposer 会按它的队列重画
+  if (t && t.ws !== S.active) return;
+  const q = queueOf(t);
+  panel.classList.toggle('show', q.length > 0);
+  if (!q.length) { panel.replaceChildren(); return; }
+
+  const head = el('div', 'cq-head');
+  head.appendChild(el('span', 'cq-title', '队列 · ' + q.length + ' 条'));
+  head.appendChild(el('span', 'cq-note', t.busy ? '本回合结束后按顺序发送' : '空闲中，点「发送」立刻送出'));
+  panel.replaceChildren(head);
+
+  const list = el('div', 'cq-list');
+  q.forEach((item, i) => {
+    const row = el('div', 'cq-item');
+    row.appendChild(el('span', 'cq-idx', String(i + 1)));
+
+    const txt = el('div', 'cq-text', item.text.replace(/\s+/g, ' ').trim());
+    txt.title = item.text;
+    row.appendChild(txt);
+
+    const acts = el('div', 'cq-acts');
+    const ins = el('button', 'cq-btn ins');
+    ins.type = 'button';
+    ins.innerHTML = iconHtml('send') + '<span>' + (t.busy ? '插入' : '发送') + '</span>';
+    if (t.busy && t.remote) {
+      ins.disabled = true;
+      ins.title = '对端会话不支持中途插入 —— 等它这一回合结束会自动发送';
+    } else {
+      ins.title = t.busy
+        ? '立即插入：把这条消息送进正在运行的回合（下一轮生效）'
+        : '立刻发送这一条';
+      ins.onclick = () => interjectQueued(t, item.id);
+    }
+    acts.appendChild(ins);
+
+    const ed = el('button', 'cq-btn');
+    ed.type = 'button';
+    ed.innerHTML = iconHtml('pencil') + '<span>编辑</span>';
+    ed.title = '取回输入框修改（输入框里已有的草稿会回到这一条的位置）';
+    ed.onclick = () => editQueued(t, item.id);
+    acts.appendChild(ed);
+
+    const rm = el('button', 'cq-btn x');
+    rm.type = 'button';
+    rm.innerHTML = iconHtml('x');
+    rm.title = '从队列里删除';
+    rm.setAttribute('aria-label', '删除');
+    rm.onclick = () => removeQueued(t, item.id);
+    acts.appendChild(rm);
+
+    row.appendChild(acts);
+    list.appendChild(row);
+  });
+  panel.appendChild(list);
 }
 
 async function sendCurrent() {
@@ -1341,15 +1522,24 @@ async function sendCurrent() {
   if (t.remote) {
     closeSlash();
     if (t.remote.mode === 'watch') { toast('监视模式不能输入', 'info'); return; }
-    if (t.busy) { cmd('flowlink.ws.stop', { cell: t.remote.cell, cwd: t.remote.cwd, rid: t.remote.rid }); return; }
     // 对端没选模型同样是「发出去也白跑」：当场拦住并弹对端的模型菜单
     if (needsModel()) { demandModel('对端还没有选择模型 —— 先选一个才能开始会话'); return; }
-    await flSendRemote(t);
+    if (t.busy) {
+      if (queueOutgoing(t)) toast('已加入队列 · 对端回合结束后发送', 'ok', 2400);
+      focusInput();
+      return;
+    }
+    if (!queueOutgoing(t)) return;
+    await pumpQueue(t.ws);
     focusInput();
     return;
   }
-  if (t.busy) { closeSlash(); stopAllActivity(t); return; }
-  if (t.composer.mode === 'team') { closeSlash(); await submitWorkflow(t, 'run'); return; }
+  if (t.composer.mode === 'team') {
+    closeSlash();
+    if (t.busy) { toast('当前回合还在跑 —— 等它结束再运行工作流', 'info', 3200); return; }
+    await submitWorkflow(t, 'run');
+    return;
+  }
   let text = (t.composer.text || '').trim();
   const atts = (t.composer.attachments || []).filter(a => a.path);
   if (!text && !atts.length) return;
@@ -1363,26 +1553,17 @@ async function sendCurrent() {
     runSlash(t, it);
     return;
   }
-  if (atts.length) {
-    text += (text ? '\n\n' : '') + '[附件]\n' + atts.map(a => '- ' + a.path).join('\n');
-  }
   // 没选模型就发出去只会白跑一个回合（引擎报错的那行还会被转录重载冲掉），
   // 所以在这里截住：内容留在输入框里，弹菜单让用户当场选
   if (needsModel()) { closeSlash(); demandModel(); return; }
   closeSlash();
-  const optimistic = { id: uid(), role: 'user', text: text, ts: nowSec() };
-  t.msgs.push(optimistic);
-  for (const a of (t.composer.attachments || [])) dropAttachPreview(a); // 释放预览用的 object URL
-  t.composer.text = '';
-  t.composer.attachments = [];
-  const ta = $('#ta');
-  if (ta) ta.value = '';
-  renderChips(t);
-  paintSendState(t);
-  buildSlash(true);
-  markChat(t.ws);
-  const out = await cmd('send', { ws: t.ws, text: text });
-  if (out && out.ok === false) { markChat(t.ws); }
+  if (!queueOutgoing(t)) return;         // 附件路径块在入队时拼进 text
+  if (t.busy) {
+    toast('已加入队列 · 本回合结束后自动发送', 'ok', 2400);
+    focusInput();
+    return;
+  }
+  await pumpQueue(t.ws);
   focusInput();
 }
 

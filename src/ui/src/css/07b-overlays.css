@@ -10,7 +10,7 @@
    所有浮在内容之上的小面板在这里统一补一层磨砂，各自只负责底色和阴影。 */
 .toast,.modalbox,.searchbox-lg,.hmenu,.tabmenu,.thkmenu,.cmp-menu,.wwin,.usage-pop,
 .sess-usage-pop,
-.slash-panel,#slashPanel{
+.slash-panel,#slashPanel,#cmpQueue{
   -webkit-backdrop-filter:var(--glass-float-blur);
   backdrop-filter:var(--glass-float-blur);
 }
@@ -112,6 +112,14 @@
   border:1px solid var(--line);color:var(--fg2);font-size:11.5px;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .approval-body{gap:12px}
+/* 模型给出的调用理由：审批类工具必填，紧贴参数块上方 */
+.ap-why{display:flex;gap:8px;align-items:flex-start;padding:9px 12px;border-radius:10px;
+  background:color-mix(in srgb,var(--warn) 8%,var(--bg3));
+  border:1px solid color-mix(in srgb,var(--warn) 30%,var(--line))}
+.ap-why-tag{flex:none;font-size:10.5px;font-weight:700;letter-spacing:.04em;color:var(--warn);
+  padding-top:1px}
+.ap-why-text{min-width:0;font-size:12px;line-height:1.6;color:var(--fg);
+  white-space:pre-wrap;word-break:break-word}
 .ap-call{border:1px solid var(--line2);border-radius:10px;overflow:hidden;background:var(--bg3)}
 .ap-call-head{display:flex;align-items:center;gap:8px;padding:8px 12px;
   border-bottom:1px solid var(--line);font-size:11px;color:var(--fg3)}
@@ -254,8 +262,9 @@ mark{background:var(--accent-soft);color:var(--accent);border-radius:3px;padding
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #ctxmenu .sep{height:1px;background:var(--line);margin:4px 6px}
 
-/* 通用浮层兜底：Spinner（搜索正在加载） */
-.spin{width:12px;height:12px;border-radius:50%;border:2px solid var(--line2);
+/* 通用浮层兜底：Spinner（搜索正在加载）。只作用于独立 span，
+   避免把 .spin 加到按钮上时把按钮缩成圆环 */
+span.spin{width:12px;height:12px;border-radius:50%;border:2px solid var(--line2);
   border-top-color:var(--fg2);animation:spin .8s linear infinite;flex:none;display:inline-block}
 
 /* reduced-motion：浮层只保留淡入，不做位移动画 */

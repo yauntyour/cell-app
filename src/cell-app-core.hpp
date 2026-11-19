@@ -560,7 +560,8 @@ namespace app
                                      {"lang", m.value("lang", "")},
                                      {"trusted", true},
                                      {"discovered", false},
-                                     {"pairing", false}});
+                                     {"pairing", false},
+                                     {"scope", cell::flowlink::classify_scope(m.value("addr", ""))}});
                 }
                 st["peers"] = peers;
                 st["pairing"] = {{"open", false}, {"state", "idle"}, {"code", ""},
@@ -663,7 +664,8 @@ namespace app
                                {"trusted", p.value("trusted", p.value("paired", false))},
                                {"pairing", p.value("pairing", false)},
                                {"discovered", p.value("discovered", false)},
-                               {"last_seen", p.value("last_seen", 0)}});
+                               {"last_seen", p.value("last_seen", 0)},
+                               {"scope", p.value("scope", "lan")}});
             }
             return out;
         }
@@ -1511,7 +1513,7 @@ namespace app
                         return false;
                     }
                     std::string reason;
-                    if (rt.approval_prompt("fl", j.dump(), reason))
+                    if (rt.approval_prompt("fl", j.dump(), "", reason))
                         return true;
                     out.text = reason.empty() ? (what + " was rejected by the user") : reason;
                     return false;
@@ -2258,7 +2260,8 @@ namespace app
         // -----------------------------------------------------------------
         //  approval routing (any client answers; every client hears it)
         // -----------------------------------------------------------------
-        bool request_approval(workspace_ctx &ctx, const std::string &tool, const std::string &args, std::string &reason)
+        bool request_approval(workspace_ctx &ctx, const std::string &tool, const std::string &args,
+                              const std::string &note, std::string &reason)
         {
             if (shutting_down.load())
             {
@@ -2274,6 +2277,7 @@ namespace app
                                 {"id", id},
                                 {"ws", ctx.cwd_key},
                                 {"tool", tool},
+                                {"note", note},
                                 {"args", args.size() > 4096 ? args.substr(0, 4096) + "..." : args}};
             bus.post(e);
             bool answered = false;
@@ -2406,8 +2410,8 @@ namespace app
                     {"sec", tv.sec},
                     {"chars", tv.chars},
                     {"multimodal", tv.multimodal}}); };
-            ev.on_approval = [this, &ctx](const std::string &tool, const std::string &args, std::string &reason) -> bool
-            { return request_approval(ctx, tool, args, reason); };
+            ev.on_approval = [this, &ctx](const std::string &tool, const std::string &args, const std::string &note, std::string &reason) -> bool
+            { return request_approval(ctx, tool, args, note, reason); };
             ev.cancelled = [this, &ctx]() -> bool
             { return ctx.stop.load() || shutting_down.load(); };
             ev.take_input = [&ctx]() -> std::string

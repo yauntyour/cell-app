@@ -830,6 +830,9 @@ namespace app
         // instance (both cells share it — that is how they find each other)
         oa.announce = true;
         oa.mdns_port = 47851;
+        // throwaway beacon drop-box: the smoke must not pollute the real
+        // same-host rendezvous directory on this machine
+        oa.beacon_dir = base / "beacons";
         // CELL_FLOWLINK_SMOKE_VERBOSE=1 traces the handshake/session decisions of
         // a failing smoke run without changing the pass/fail output.
         if (const char *verbose = std::getenv("CELL_FLOWLINK_SMOKE_VERBOSE"); verbose && *verbose)
@@ -952,6 +955,19 @@ namespace app
                                      sa.value("rx_query", 0LL), sb.value("rx_query", 0LL),
                                      sa.value("rx_response", 0LL), sb.value("rx_response", 0LL),
                                      b.discovered().size()));
+        // ---- discovery: B finds A through the same-host beacon -------------
+        {
+            bool beacon_a = false;
+            for (int i = 0; i < 40 && !beacon_a; i++)
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(200));
+                for (const auto &f : b.discovered())
+                    if (f.value("client_id", "") == a.client_id() &&
+                        f.value("scope", "") == "host" && f.value("port", 0) == port_a)
+                        beacon_a = true;
+            }
+            check(beacon_a, "B discovers A via the host beacon (scope=host, real port)");
+        }
         // ---- mutual pairing: one code each, then a link exists ------------
         {
             auto code_a = a.pair_begin(120);

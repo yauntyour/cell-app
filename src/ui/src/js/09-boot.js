@@ -51,7 +51,7 @@ function wireEvents() {
 /* 旧输入栏兜底绑定：ComposerUI 未加载时保持页面可用 */
 function wireComposerLegacy() {
   const send = $('#sendBtn');
-  if (send) send.onclick = () => sendCurrent();
+  if (send) send.onclick = () => onSendClick();
   const pick = $('#btnPickFile'), fin = $('#fileInput');
   if (pick && fin) {
     pick.onclick = () => fin.click();

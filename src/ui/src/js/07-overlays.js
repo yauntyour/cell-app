@@ -127,6 +127,13 @@ function renderApproval() {
   box.appendChild(head);
 
   const body = el('div', 'modalbody approval-body');
+  // 模型给出的调用理由（审批类工具必填）：放在参数上方，一眼看清为什么
+  if (a.note) {
+    const why = el('div', 'ap-why');
+    why.appendChild(el('span', 'ap-why-tag', '理由'));
+    why.appendChild(el('span', 'ap-why-text', a.note));
+    body.appendChild(why);
+  }
   const call = el('div', 'ap-call');
   const callHead = el('div', 'ap-call-head');
   callHead.appendChild(el('span', null, '工具'));

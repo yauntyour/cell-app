@@ -370,6 +370,7 @@ const Mock = {
     if (this.demo === 'approval') {
       setTimeout(() => this.emit({
         t: 'approval', ws: this.A, id: 'ap' + (++this._seq), tool: 'write_file',
+        note: '把清洗逻辑拆到独立函数，方便单测复用',
         args: '{\n  "path": "src/ui/src/js/02-render2-chat.js",\n  "bytes": 128430\n}',
       }), 1200);
       return;
