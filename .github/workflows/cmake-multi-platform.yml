@@ -10,11 +10,10 @@
 #
 # Artifacts:
 #   cell-app-windows-x64.exe   MSYS2 UCRT64 static build — zero third-party DLLs
-#   cell-app-linux-x86_64      plain ELF — glibc, libstdc++ and libgcc are
-#                              linked into the binary (static C++ runtime);
-#                              the only runtime left is the distro GTK3 +
-#                              WebKitGTK 4.1 stack (+ libcurl + libsodium),
-#                              smoke-tested under xvfb
+#   cell-app-linux-x86_64      plain ELF — libstdc++ and libgcc are linked
+#                              into the binary; the runtime is the distro
+#                              GTK3 + WebKitGTK 4.1 stack (+ libcurl +
+#                              libsodium), smoke-tested under xvfb
 #   cell-app-macos-arm64       system frameworks + system libcurl, static
 #                              libsodium, system libc++ (Homebrew LLVM Clang —
 #                              supports C++26 and Apple SDK headers)
@@ -200,20 +199,21 @@ jobs:
       - name: Build
         run: cmake --build build
 
-      # the point of the static C++/glibc build: the executable itself must
-      # not appear in the link as libc/libstdc++/libgcc — only the distro
-      # GTK3/WebKitGTK stack may remain dynamic. readelf comes with binutils
-      # (a gcc dependency, so it is installed on the runner).
-      - name: Check the shipped ELF is static for the C++/glibc runtime
+      # the point of the static C++/libgcc build: the executable itself must
+      # not appear in the link as libstdc++/libgcc (the GLIBCXX/CXXABI/GCC_
+      # version refs); the distro GTK3/WebKitGTK stack may stay dynamic.
+      # readelf comes with binutils (a gcc dependency, so it is installed on
+      # the runner).
+      - name: Check the shipped ELF has no toolchain runtime deps
         run: |
           bad="$(readelf -d build/cell-app 2>/dev/null \
-              | grep -E 'NEEDED.*(libc\.so\.6|libstdc[+][+]\.so\.6|libgcc_s\.so\.1|libgcc\.so\.1)' || true)"
+              | grep -E 'NEEDED.*(libstdc[+][+]\.so\.6|libgcc_s\.so\.1|libgcc\.so\.1)' || true)"
           if [ -n "$bad" ]; then
-            echo "::error::the Linux build still depends on the C++/glibc runtime:"
+            echo "::error::the Linux build still depends on the C++ runtime:"
             echo "$bad"
             exit 1
           fi
-          echo "no libc/libstdc++/libgcc needed by the executable itself"
+          echo "no libstdc++/libgcc needed by the executable itself"
 
       # the GTK/WebKitGTK stack only ships shared — the distro stack is the
       # remaining runtime dep; stripping is all we can do there
@@ -357,7 +357,7 @@ jobs:
           | platform | file | runtime dependencies |
           |---|---|---|
           | Windows 10/11 x64 | `cell-app-windows-x64.exe` | none — statically linked; the WebView2 runtime ships with Edge/Windows 11 |
-          | Linux x86_64 | `cell-app-linux-x86_64` | the distro GTK3 + WebKitGTK 4.1 stack (`libgtk-3-0`, `libwebkit2gtk-4.1-0`) — glibc, libstdc++ and libgcc are linked into the binary |
+          | Linux x86_64 | `cell-app-linux-x86_64` | the distro GTK3 + WebKitGTK 4.1 stack (`libgtk-3-0`, `libwebkit2gtk-4.1-0`) — libstdc++ and libgcc are linked into the binary |
           | macOS arm64 | `cell-app-macos-arm64` | none — system frameworks + system libcurl; libsodium is linked in; uses the system libc++ |
 
           Config, sessions, the credential vault and third-party themes live next

@@ -160,7 +160,7 @@ found) the committed `src/cell-ui.hpp` is used unchanged.
 | platform | window backend | status | build notes |
 |---|---|---|---|
 | Windows 10/11 | WebView2 (Edge) | **verified** | MSYS2 UCRT64 g++; statically linked by default — zero third-party DLLs |
-| Linux | GTK3 + WebKitGTK | code-complete, not yet tested on hardware | g++ (or clang++); install `gtk+-3.0` + `webkit2gtk-4.1` (fallback `4.0`) dev packages + `libsodium-dev` + `libcurl-dev`; the shipped binary links glibc, libstdc++ and libgcc in statically |
+| Linux | GTK3 + WebKitGTK | code-complete, not yet tested on hardware | g++ (or clang++); install `gtk+-3.0` + `webkit2gtk-4.1` (fallback `4.0`) dev packages + `libsodium-dev` + `libcurl-dev`; the shipped binary links libstdc++ and libgcc in statically |
 | macOS | Cocoa + WKWebView | code-complete, not yet tested on hardware | Homebrew LLVM clang++ + static libsodium — libc++ lacks `<generator>` and `std::move_only_function`, so `third_party/compat` backfills both; curl and the Cocoa/WebKit frameworks are system libraries |
 
 **Toolchain floor**: a C++23-capable compiler — GCC 14+ or Clang 17+. The
@@ -531,15 +531,15 @@ executable on all three platforms and publishes it as a GitHub Release:
 | artifact | platform | runtime requirements |
 |---|---|---|
 | `cell-app-windows-x64.exe` | Windows 10/11 x64 | none — statically linked; the WebView2 runtime ships with Edge |
-| `cell-app-linux-x86_64` | Linux x86_64 | the distro GTK3 + WebKitGTK 4.1 stack — glibc, libstdc++ and libgcc are linked into the binary |
+| `cell-app-linux-x86_64` | Linux x86_64 | the distro GTK3 + WebKitGTK 4.1 stack — libstdc++ and libgcc are linked into the binary |
 | `cell-app-macos-arm64` | macOS (Apple silicon) | none — system frameworks + system libcurl; libsodium is linked in |
 
 Every run is validated before anything is uploaded: the Linux binary is
 smoke-tested under `xvfb` (window → HTTP page → the first `state` command),
-the Linux build is checked for dependencies on the C++/glibc runtime
-(`libc.so.6`, `libstdc++`, `libgcc_s`), the Windows import table is checked
-for stray DLLs, and the macOS link is checked for Homebrew libraries. The
-macOS build uses Homebrew LLVM clang++
+the Linux build is checked for toolchain dependencies on `libstdc++` /
+`libgcc_s`, the Windows import table is checked for stray DLLs, and the
+macOS link is checked for Homebrew libraries. The macOS build uses
+Homebrew LLVM clang++
 (Homebrew GCC cannot parse the Apple SDK headers) with `third_party/compat`
 backfilling the two C++23 pieces libc++ lacks; Windows and Linux use
 GCC 14+ either way.
