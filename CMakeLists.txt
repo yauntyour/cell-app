@@ -19,8 +19,11 @@
 # Platforms:
 #   Windows (MSYS2 UCRT64): WebView2 window, statically linked by default —
 #       the only imports left are Windows system DLLs (zero third-party DLLs).
-#   Linux:   GTK3 + WebKitGTK window. The GTK stack only ships shared, so the
-#       runtime deps come from the distro (same as any native Linux app).
+#   Linux:   GTK3 + WebKitGTK window. glibc, libstdc++ and libgcc are linked
+#       into the executable itself (see the static flags set in the Linux
+#       branch below); the GTK3 + WebKitGTK stack only ships shared, so the
+#       distro GTK stack remains the runtime dependency (as for any native
+#       Linux app).
 #   macOS:   Cocoa + WKWebView (system frameworks), clang++, libsodium via brew.
 #
 # The code needs C++23 (std::generator / expected / move_only_function) and
@@ -308,6 +311,23 @@ else()          # Linux — GTK3 + WebKitGTK
 
     find_package(CURL REQUIRED)
     find_library(SODIUM_LIBRARY NAMES sodium REQUIRED)
+
+    # Static C++ runtime + glibc: the shipped executable must not depend on
+    # libstdc++, libgcc or libc, so it runs on older distros than the one that
+    # builds it. The flags land where they need to on the ld command line:
+    #   * CMAKE_EXE_LINKER_FLAGS is placed before the objects and the CMake
+    #     libraries, so -static-libstdc++/-static-libgcc force the toolchain's
+    #     -lstdc++/-lgcc (wherever the driver lists them) to the static
+    #     archives;
+    #   * CMAKE_CXX_STANDARD_LIBRARIES is appended at the very end of the link
+    #     line, so the driver's default "-lc" comes after "-static": glibc
+    #     itself is linked in. ld's -static means "Do not link against shared
+    #     libraries … affects library searching for -l options which follow
+    #     it", and since the CMake libraries (GTK3 + WebKitGTK, the stack that
+    #     only ships shared) are listed before it, they stay dynamic — the
+    #     distro GTK stack remains the runtime dependency.
+    set(CMAKE_EXE_LINKER_FLAGS "-static-libstdc++ -static-libgcc")
+    set(CMAKE_CXX_STANDARD_LIBRARIES "-static")
 
     # util: forkpty for the terminal panel's pty sessions (glibc)
     target_link_libraries(cell-app PRIVATE
